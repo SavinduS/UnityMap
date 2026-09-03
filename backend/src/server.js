@@ -8,8 +8,10 @@ const connectDB = require('./config/db');
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
 // Connect to MongoDB
-connectDB();
-
+connectDB().catch((err) => {
+  console.error('❌ Failed to connect to MongoDB:', err);
+  process.exit(1);
+});
 const app = express();
 
 // Middleware
