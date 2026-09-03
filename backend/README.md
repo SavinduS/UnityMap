@@ -9,7 +9,7 @@ The database connection parameters are defined in `.env`:
 ```env
 PORT=5000
 NODE_ENV=development
-MONGO_URI=mongodb+srv://it23586598_db_user:UnityMap2003@cluster0.ue1tazd.mongodb.net/UnityMap?appName=Cluster0
+MONGO_URI=mongodb+srv://<db_user>:<db_password>@cluster0.ue1tazd.mongodb.net/UnityMap?appName=Cluster0
 DB_NAME=UnityMap
 ```
 
