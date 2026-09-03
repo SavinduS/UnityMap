@@ -19,7 +19,7 @@ const STREAMS = [
 ];
 
 export const AppNavigator = () => {
-  const [activeStream, setActiveStream] = useState('wheelchair_route');
+  const [activeStream, setActiveStream] = useState('osm_canvas');
 
   const ActiveComponent = STREAMS.find(s => s.id === activeStream)?.component || WheelchairRoutingScreen;
 
