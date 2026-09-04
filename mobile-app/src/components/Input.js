@@ -1,23 +1,61 @@
 import React from 'react';
 import { View, TextInput, Text, StyleSheet } from 'react-native';
+import { useTheme } from '../theme/ThemeContext';
 
 /**
  * Standard text input field with accessibility support.
+ * SPT-005: 48dp minHeight, high-contrast border 2px, placeholder 5.7:1, error not color-only.
  */
-export const Input = ({ label, value, onChangeText, placeholder, secureTextEntry, error }) => {
+export const Input = ({ label, value, onChangeText, placeholder, secureTextEntry, error, accessibilityHint }) => {
+  const { colors, radii, isHighContrast } = useTheme();
+  const hasError = !!error;
+  const inputId = label ? `input-${label.replace(/\s+/g, '-').toLowerCase()}` : undefined;
+
   return (
     <View style={styles.container}>
-      {label && <Text style={styles.label}>{label}</Text>}
+      {label && (
+        <Text
+          allowFontScaling
+          maxFontSizeMultiplier={1.3}
+          style={[styles.label, { color: colors.textSecondary }]}
+          nativeID={inputId ? `${inputId}-label` : undefined}
+        >
+          {label}
+        </Text>
+      )}
       <TextInput
-        style={[styles.input, error && styles.inputError]}
+        style={[
+          styles.input,
+          {
+            minHeight: 48,
+            backgroundColor: colors.surface,
+            borderColor: hasError ? colors.error : colors.borderDefault,
+            borderWidth: isHighContrast ? 2 : 1,
+            borderRadius: radii.md,
+            color: colors.textPrimary,
+          },
+        ]}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#9CA3AF"
+        placeholderTextColor={colors.placeholder}
         secureTextEntry={secureTextEntry}
         accessibilityLabel={label || placeholder}
+        accessibilityHint={accessibilityHint}
+        accessibilityState={{ invalid: hasError }}
+        accessibilityInvalid={hasError}
+        allowFontScaling
       />
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {hasError && (
+        <Text
+          allowFontScaling
+          maxFontSizeMultiplier={1.3}
+          style={[styles.errorText, { color: colors.error }]}
+          accessibilityLiveRegion="polite"
+        >
+          ⚠ {error}
+        </Text>
+      )}
     </View>
   );
 };
@@ -30,26 +68,17 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#374151',
     marginBottom: 6,
   },
   input: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#1F2937',
-  },
-  inputError: {
-    borderColor: '#EF4444',
   },
   errorText: {
-    color: '#EF4444',
     fontSize: 12,
     marginTop: 4,
+    fontWeight: '600',
   },
 });
 

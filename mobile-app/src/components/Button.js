@@ -1,22 +1,63 @@
 import React from 'react';
 import { TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { useTheme } from '../theme/ThemeContext';
+import { HIT_SLOP_48, getA11yProps } from '../theme/a11y';
 
 /**
  * Primary action button component for UnityMap design system.
+ * SPT-005: enforces 48dp min touch target, high-contrast support, and a11y roles.
  */
-export const Button = ({ title, onPress, variant = 'primary', style, textStyle }) => {
+export const Button = ({
+  title,
+  onPress,
+  variant = 'primary',
+  style,
+  textStyle,
+  accessibilityLabel,
+  accessibilityHint,
+  disabled,
+}) => {
+  const { colors, isHighContrast, radii, shadows } = useTheme();
   const isSecondary = variant === 'secondary';
+
+  const a11yProps = getA11yProps('button', {
+    label: accessibilityLabel || title,
+    hint: accessibilityHint,
+    disabled,
+  });
+
   return (
     <TouchableOpacity
       onPress={onPress}
+      disabled={disabled}
+      hitSlop={HIT_SLOP_48}
+      activeOpacity={0.8}
+      {...a11yProps}
       style={[
         styles.button,
-        isSecondary ? styles.secondaryButton : styles.primaryButton,
+        {
+          minHeight: 48,
+          minWidth: 48,
+          borderRadius: radii.lg,
+          backgroundColor: isSecondary ? colors.surface : colors.primaryBg,
+          borderColor: isSecondary ? colors.borderDefault : colors.primaryBorder,
+          borderWidth: isHighContrast ? 2 : isSecondary ? 1 : 0,
+          ...(isHighContrast ? shadows.card : shadows.card),
+          opacity: disabled ? 0.5 : 1,
+        },
         style,
       ]}
-      activeOpacity={0.8}
     >
-      <Text style={[styles.text, isSecondary ? styles.secondaryText : styles.primaryText, textStyle]}>
+      <Text
+        allowFontScaling
+        maxFontSizeMultiplier={1.4}
+        style={[
+          styles.text,
+          { color: isSecondary ? colors.textPrimary : colors.primaryFg },
+          isHighContrast && { fontWeight: '700' },
+          textStyle,
+        ]}
+      >
         {title}
       </Text>
     </TouchableOpacity>
@@ -27,33 +68,14 @@ const styles = StyleSheet.create({
   button: {
     paddingVertical: 14,
     paddingHorizontal: 24,
-    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  primaryButton: {
-    backgroundColor: '#2563EB',
-  },
-  secondaryButton: {
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
   },
   text: {
     fontSize: 16,
     fontWeight: '600',
-  },
-  primaryText: {
-    color: '#FFFFFF',
-  },
-  secondaryText: {
-    color: '#1F2937',
+    textAlign: 'center',
   },
 });
 
