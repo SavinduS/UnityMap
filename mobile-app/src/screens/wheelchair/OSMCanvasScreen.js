@@ -2,7 +2,7 @@ import React from 'react';
 import UnityMapScreen from './UnityMapScreen';
 
 /**
- * Wishwa Stream: OSM Map Canvas Screen
+ * OSM Map Canvas Screen
  * Delegates to UnityMapScreen which renders the full
  * react-native-maps + OpenStreetMap interactive map.
  */

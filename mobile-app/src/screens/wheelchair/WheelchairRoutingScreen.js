@@ -4,13 +4,12 @@ import Card from '../../components/Card';
 import Button from '../../components/Button';
 
 /**
- * Wishwa Stream: Barrier Avoidance Routing Screen
+ * Barrier Avoidance Routing Screen
  */
 export const WheelchairRoutingScreen = () => {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Card style={styles.card}>
-        <Text style={styles.badge}>Developer: Wishwa</Text>
         <Text style={styles.title}>♿ Barrier Avoidance Routing</Text>
         <Text style={styles.description}>
           Calculates accessible navigation paths for wheelchair users by actively avoiding steep inclines, stairs, high curbs, and sidewalk obstructions.
@@ -30,7 +29,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   content: { padding: 16 },
   card: { borderColor: '#DBEAFE', borderWidth: 1 },
-  badge: { fontSize: 12, fontWeight: '700', color: '#2563EB', textTransform: 'uppercase', marginBottom: 6 },
   title: { fontSize: 20, fontWeight: '700', color: '#1E293B', marginBottom: 8 },
   description: { fontSize: 14, color: '#475569', lineHeight: 20, marginBottom: 14 },
   infoBox: { backgroundColor: '#EFF6FF', padding: 12, borderRadius: 8, marginBottom: 16 },

@@ -4,13 +4,12 @@ import Card from '../../components/Card';
 import Button from '../../components/Button';
 
 /**
- * Wathsika Stream: Voice-Guided Navigation Screen
+ * Voice-Guided Navigation Screen
  */
 export const VoiceNavigationScreen = () => {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Card style={styles.card}>
-        <Text style={styles.badge}>Developer: Wathsika</Text>
         <Text style={styles.title}>🎙️ Voice-Guided Navigation</Text>
         <Text style={styles.description}>
           Hands-free turn-by-turn navigation tailored for visually impaired users with step counts, landmark cues, and spatial audio feedback.
@@ -30,7 +29,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC' },
   content: { padding: 16 },
   card: { borderColor: '#FBCFE8', borderWidth: 1 },
-  badge: { fontSize: 12, fontWeight: '700', color: '#DB2777', textTransform: 'uppercase', marginBottom: 6 },
   title: { fontSize: 20, fontWeight: '700', color: '#1E293B', marginBottom: 8 },
   description: { fontSize: 14, color: '#475569', lineHeight: 20, marginBottom: 14 },
   infoBox: { backgroundColor: '#FDF2F8', padding: 12, borderRadius: 8, marginBottom: 16 },

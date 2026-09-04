@@ -18,9 +18,9 @@ UnityMap/
     │   ├── components/     # Reusable UI elements (Button, Input, Card)
     │   ├── navigation/     # AppNavigator orchestrator
     │   ├── screens/        # Feature streams:
-    │   │   ├── wheelchair/ # Wishwa: Barrier avoidance routing & OSM canvas
-    │   │   ├── audio/      # Wathsika: Voice-guided navigation & TTS interfaces
-    │   │   └── volunteer/  # Dulmi: 3-tap reporting & EXIF capture screens
+    │   │   ├── wheelchair/ # Barrier avoidance routing & OSM canvas
+    │   │   ├── audio/      # Voice-guided navigation & TTS interfaces
+    │   │   └── volunteer/  # 3-tap reporting & EXIF capture screens
     │   ├── services/       # Axios / Fetch API wrappers to Node.js backend
     │   ├── utils/          # EXIF parsing helpers, GeoJSON, and map math
     │   └── hooks/          # Custom React hooks (GPS location, Speech API)
@@ -30,14 +30,14 @@ UnityMap/
 
 ---
 
-## 👥 Multi-Developer Team Assignments
+## Feature Streams
 
-| Developer | Feature Stream | Core Modules & Screens |
-| :--- | :--- | :--- |
-| **Wishwa** | Wheelchair Stream | `WheelchairRoutingScreen.js`, `OSMCanvasScreen.js` |
-| **Wathsika** | Audio Stream | `VoiceNavigationScreen.js`, `TTSInterfaceScreen.js` |
-| **Dulmi** | Volunteer Stream | `ThreeTapReportScreen.js`, `EXIFCaptureScreen.js` |
-| **Savindu** | Architecture & DevOps | Core structure, design components, navigation, services, utils, hooks |
+| Feature Stream | Core Modules & Screens |
+| :--- | :--- |
+| Wheelchair Stream | `WheelchairRoutingScreen.js`, `OSMCanvasScreen.js` |
+| Audio Stream | `VoiceNavigationScreen.js`, `TTSInterfaceScreen.js` |
+| Volunteer Stream | `ThreeTapReportScreen.js`, `EXIFCaptureScreen.js` |
+| Architecture & DevOps | Core structure, design components, navigation, services, utils, hooks |
 
 ---
 
