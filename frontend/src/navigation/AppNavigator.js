@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, ScrollView } from 'react-native';
+import { useTheme } from '../theme/ThemeContext';
+import { getTextStyle, textProps } from '../theme/typography';
 
 // Import Feature Screens
 import WheelchairRoutingScreen from '../screens/wheelchair/WheelchairRoutingScreen';
@@ -32,35 +34,51 @@ const TAB_ICONS = {
 
 export const AppNavigator = () => {
   const [activeStream, setActiveStream] = useState('osm_canvas');
+  const { palette, borderWidth, isHighContrast } = useTheme();
 
   const ActiveComponent = STREAMS.find(s => s.id === activeStream)?.component || WheelchairRoutingScreen;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>UnityMap</Text>
+    <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
+      <View style={[styles.header, { backgroundColor: palette.surface, borderBottomColor: palette.cardBorder, borderBottomWidth: borderWidth }]}>
+        <Text {...textProps} style={[styles.headerTitle, getTextStyle('lg', { isHighContrast }), { color: palette.textPrimary }]}>
+          UnityMap
+        </Text>
       </View>
 
-      <View style={styles.screenContainer}>
+      <View style={[styles.screenContainer, { backgroundColor: palette.background }]}>
         <ActiveComponent />
       </View>
 
-      <View style={styles.bottomTabBar}>
+      <View
+        style={[
+          styles.bottomTabBar,
+          { backgroundColor: palette.surface, borderTopColor: palette.cardBorder, borderTopWidth: borderWidth },
+          isHighContrast && { shadowOpacity: 0, elevation: 0 },
+        ]}
+      >
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>
           {STREAMS.map(stream => {
             const isActive = activeStream === stream.id;
             return (
               <TouchableOpacity
                 key={stream.id}
-                style={[styles.tabButton, isActive && styles.activeTabButton]}
+                style={[styles.tabButton, isActive && [styles.activeTabButton, { backgroundColor: isHighContrast ? '#FFFFFF' : '#ECFDF5', borderColor: palette.border, borderWidth: isActive && isHighContrast ? borderWidth : 0 }]]}
                 onPress={() => setActiveStream(stream.id)}
                 activeOpacity={0.7}
                 accessibilityRole="button"
+                accessibilityLabel={stream.title}
                 accessibilityState={{ selected: isActive }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Text style={[styles.tabIcon, isActive && styles.activeTabIcon]}>{TAB_ICONS[stream.id]}</Text>
-                <Text style={[styles.tabText, isActive && styles.activeTabText]} numberOfLines={1}>
+                <Text style={[styles.tabIcon, { color: isActive ? palette.primary : palette.textMuted }]}>
+                  {TAB_ICONS[stream.id]}
+                </Text>
+                <Text
+                  {...textProps}
+                  style={[styles.tabText, getTextStyle('xs', { isHighContrast }), { color: isActive ? palette.primary : palette.textMuted }]}
+                  numberOfLines={1}
+                >
                   {stream.title}
                 </Text>
               </TouchableOpacity>
@@ -75,27 +93,17 @@ export const AppNavigator = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 14,
     paddingBottom: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
     alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#0F172A',
     letterSpacing: 0.3,
   },
   bottomTabBar: {
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
     paddingTop: 6,
     paddingBottom: 8,
     minHeight: 62,
@@ -119,31 +127,17 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: 10,
   },
-  activeTabButton: {
-    backgroundColor: '#ECFDF5',
-  },
+  activeTabButton: {},
   tabIcon: {
     fontSize: 18,
-    color: '#94A3B8',
     marginBottom: 2,
     lineHeight: 20,
   },
-  activeTabIcon: {
-    color: '#0F3D30',
-  },
   tabText: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#6B7280',
     textAlign: 'center',
-  },
-  activeTabText: {
-    color: '#0F3D30',
-    fontWeight: '700',
   },
   screenContainer: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
   },
 });
 

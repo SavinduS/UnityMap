@@ -1,23 +1,46 @@
 import React from 'react';
 import { View, TextInput, Text, StyleSheet } from 'react-native';
+import { useTheme } from '../theme/ThemeContext';
+import { getTextStyle, textProps } from '../theme/typography';
 
 /**
- * Standard text input field with accessibility support.
+ * Input — SPT-005: 48dp, high-contrast, scalable type.
  */
-export const Input = ({ label, value, onChangeText, placeholder, secureTextEntry, error }) => {
+export const Input = ({ label, value, onChangeText, placeholder, secureTextEntry, error, accessibilityLabel }) => {
+  const { isHighContrast, palette, borderWidth } = useTheme();
   return (
     <View style={styles.container}>
-      {label && <Text style={styles.label}>{label}</Text>}
+      {label && (
+        <Text {...textProps} style={[styles.label, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>
+          {label}
+        </Text>
+      )}
       <TextInput
-        style={[styles.input, error && styles.inputError]}
+        style={[
+          styles.input,
+          {
+            backgroundColor: palette.surface,
+            borderColor: error ? palette.error : palette.border,
+            borderWidth,
+            color: palette.textPrimary,
+          },
+          error && styles.inputError,
+        ]}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#9CA3AF"
+        placeholderTextColor={palette.placeholder}
         secureTextEntry={secureTextEntry}
-        accessibilityLabel={label || placeholder}
+        accessible
+        accessibilityLabel={accessibilityLabel || label || placeholder}
+        accessibilityState={{}}
+        {...textProps}
       />
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && (
+        <Text {...textProps} style={[styles.errorText, getTextStyle('xs', { isHighContrast }), { color: palette.error }]}>
+          {error}
+        </Text>
+      )}
     </View>
   );
 };
@@ -28,28 +51,19 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
     marginBottom: 6,
   },
   input: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
+    minHeight: 48,
     borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#1F2937',
   },
-  inputError: {
-    borderColor: '#EF4444',
-  },
+  inputError: {},
   errorText: {
-    color: '#EF4444',
-    fontSize: 12,
     marginTop: 4,
+    fontWeight: '600',
   },
 });
 
