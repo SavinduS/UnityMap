@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, ScrollView } from 'react-native';
+import { useTheme } from '../theme/ThemeContext';
+import { HIT_SLOP_48 } from '../theme/a11y';
 
 // Import Feature Screens
 import WheelchairRoutingScreen from '../screens/wheelchair/WheelchairRoutingScreen';
@@ -20,28 +22,58 @@ const STREAMS = [
 
 export const AppNavigator = () => {
   const [activeStream, setActiveStream] = useState('wheelchair_route');
+  const { colors, isHighContrast, toggleMode, mode } = useTheme();
 
   const ActiveComponent = STREAMS.find(s => s.id === activeStream)?.component || WheelchairRoutingScreen;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>UnityMap Infrastructure</Text>
-        <Text style={styles.headerSubtitle}>Multi-Stream Developer Preview</Text>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[styles.header, { backgroundColor: isHighContrast ? '#000000' : colors.secondaryBg, borderBottomWidth: isHighContrast ? 2 : 0, borderBottomColor: colors.borderDefault }]}>
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text allowFontScaling maxFontSizeMultiplier={1.3} style={[styles.headerTitle, { color: isHighContrast ? '#FFFF00' : '#FFFFFF' }]}>UnityMap Infrastructure</Text>
+            <Text allowFontScaling maxFontSizeMultiplier={1.3} style={[styles.headerSubtitle, { color: isHighContrast ? '#FFFFFF' : '#94A3B8' }]}>Multi-Stream Developer Preview</Text>
+          </View>
+          <TouchableOpacity
+            onPress={toggleMode}
+            hitSlop={HIT_SLOP_48}
+            accessibilityRole="button"
+            accessibilityLabel={`Toggle high contrast, currently ${mode}`}
+            accessibilityHint="Switches between light and high contrast theme"
+            style={[styles.contrastToggle, { backgroundColor: isHighContrast ? '#FFFF00' : colors.primaryBg, borderColor: colors.borderDefault, borderWidth: isHighContrast ? 2 : 0, minHeight: 48, minWidth: 48 }]}
+          >
+            <Text allowFontScaling maxFontSizeMultiplier={1.3} style={[styles.contrastToggleText, { color: isHighContrast ? '#000000' : '#FFFFFF' }]}>{isHighContrast ? 'HC ON' : 'HC OFF'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <View style={styles.tabContainer}>
+      <View style={[styles.tabContainer, { backgroundColor: isHighContrast ? '#000000' : '#0F172A', borderBottomWidth: isHighContrast ? 2 : 0, borderBottomColor: '#FFFFFF' }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>
           {STREAMS.map(stream => (
             <TouchableOpacity
               key={stream.id}
-              style={[styles.tabButton, activeStream === stream.id && styles.activeTabButton]}
+              accessible
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeStream === stream.id }}
+              accessibilityLabel={`${stream.title} by ${stream.author}`}
+              accessibilityHint={activeStream === stream.id ? 'Currently selected' : 'Double tap to switch stream'}
+              hitSlop={HIT_SLOP_48}
+              style={[
+                styles.tabButton,
+                {
+                  minHeight: 48,
+                  minWidth: 48,
+                  borderWidth: isHighContrast ? 2 : 0,
+                  borderColor: activeStream === stream.id ? (isHighContrast ? '#FFFF00' : colors.primaryBg) : (isHighContrast ? '#FFFFFF' : 'transparent'),
+                  backgroundColor: activeStream === stream.id ? (isHighContrast ? '#FFFF00' : colors.primaryBg) : (isHighContrast ? '#000000' : '#1E293B'),
+                },
+              ]}
               onPress={() => setActiveStream(stream.id)}
             >
-              <Text style={[styles.tabText, activeStream === stream.id && styles.activeTabText]}>
+              <Text allowFontScaling maxFontSizeMultiplier={1.3} style={[styles.tabText, { color: activeStream === stream.id ? (isHighContrast ? '#000000' : '#FFFFFF') : (isHighContrast ? '#FFFFFF' : '#94A3B8') }]}>
                 {stream.title}
               </Text>
-              <Text style={styles.authorBadge}>{stream.author}</Text>
+              <Text allowFontScaling maxFontSizeMultiplier={1.3} style={[styles.authorBadge, { color: activeStream === stream.id ? (isHighContrast ? '#000000' : '#DBEAFE') : (isHighContrast ? '#FFFF00' : '#CBD5E1') }]}>{stream.author}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -57,26 +89,38 @@ export const AppNavigator = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 12,
-    backgroundColor: '#1E293B',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
   },
   headerTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
   headerSubtitle: {
-    fontSize: 13,
-    color: '#94A3B8',
+    fontSize: 14,
     marginTop: 2,
   },
+  contrastToggle: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contrastToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   tabContainer: {
-    backgroundColor: '#0F172A',
     paddingVertical: 8,
   },
   tabScroll: {
@@ -86,24 +130,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#1E293B',
     marginRight: 8,
     alignItems: 'center',
-  },
-  activeTabButton: {
-    backgroundColor: '#2563EB',
+    justifyContent: 'center',
   },
   tabText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#94A3B8',
-  },
-  activeTabText: {
-    color: '#FFFFFF',
   },
   authorBadge: {
-    fontSize: 10,
-    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '600',
     marginTop: 2,
   },
   screenContainer: {
