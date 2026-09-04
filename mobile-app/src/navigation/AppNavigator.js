@@ -18,6 +18,15 @@ const STREAMS = [
   { id: 'exif_capture', title: 'EXIF Capture', component: EXIFCaptureScreen },
 ];
 
+const TAB_ICONS = {
+  wheelchair_route: '♿',
+  osm_canvas: '⌖',
+  voice_nav: '🎙',
+  tts_interface: '🔊',
+  volunteer_report: '✚',
+  exif_capture: '◉',
+};
+
 export const AppNavigator = () => {
   const [activeStream, setActiveStream] = useState('osm_canvas');
 
@@ -29,24 +38,32 @@ export const AppNavigator = () => {
         <Text style={styles.headerTitle}>UnityMap</Text>
       </View>
 
-      <View style={styles.tabContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>
-          {STREAMS.map(stream => (
-            <TouchableOpacity
-              key={stream.id}
-              style={[styles.tabButton, activeStream === stream.id && styles.activeTabButton]}
-              onPress={() => setActiveStream(stream.id)}
-            >
-              <Text style={[styles.tabText, activeStream === stream.id && styles.activeTabText]}>
-                {stream.title}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
       <View style={styles.screenContainer}>
         <ActiveComponent />
+      </View>
+
+      <View style={styles.bottomTabBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>
+          {STREAMS.map(stream => {
+            const isActive = activeStream === stream.id;
+            return (
+              <TouchableOpacity
+                key={stream.id}
+                style={[styles.tabButton, isActive && styles.activeTabButton]}
+                onPress={() => setActiveStream(stream.id)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isActive }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={[styles.tabIcon, isActive && styles.activeTabIcon]}>{TAB_ICONS[stream.id]}</Text>
+                <Text style={[styles.tabText, isActive && styles.activeTabText]} numberOfLines={1}>
+                  {stream.title}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
     </SafeAreaView>
   );
@@ -55,52 +72,70 @@ export const AppNavigator = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F8FAFC',
   },
   header: {
     paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingTop: 14,
     paddingBottom: 12,
-    backgroundColor: '#1E293B',
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  tabContainer: {
-    backgroundColor: '#0F172A',
-    paddingVertical: 8,
-  },
-  tabScroll: {
-    paddingHorizontal: 12,
-  },
-  tabButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#1E293B',
-    marginRight: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
     alignItems: 'center',
   },
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0F172A',
+    letterSpacing: 0.3,
+  },
+  bottomTabBar: {
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    paddingTop: 6,
+    paddingBottom: 8,
+    minHeight: 62,
+  },
+  tabScroll: {
+    paddingHorizontal: 8,
+    alignItems: 'center',
+  },
+  tabButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    marginRight: 4,
+    minWidth: 64,
+    minHeight: 48,
+    borderRadius: 10,
+  },
   activeTabButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#ECFDF5',
+  },
+  tabIcon: {
+    fontSize: 18,
+    color: '#94A3B8',
+    marginBottom: 2,
+    lineHeight: 20,
+  },
+  activeTabIcon: {
+    color: '#0F3D30',
   },
   tabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '500',
+    color: '#6B7280',
+    textAlign: 'center',
   },
   activeTabText: {
-    color: '#FFFFFF',
+    color: '#0F3D30',
+    fontWeight: '700',
   },
   screenContainer: {
     flex: 1,
+    backgroundColor: '#F8FAFC',
   },
 });
 
