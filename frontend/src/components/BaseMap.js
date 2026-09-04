@@ -14,6 +14,8 @@ const BaseMap = ({
   onMapClick,
   onReady,
   style,
+  isHighContrast = false,
+  palette = null,
 }) => {
   const webViewRef = useRef(null);
 
@@ -26,6 +28,12 @@ const BaseMap = ({
     return [6.9271, 79.8612];
   }, [center]);
 
+  const themeBg = palette?.background || (isHighContrast ? '#FFFFFF' : '#E9F1EE');
+  const surface = palette?.surface || '#FFFFFF';
+  const primary = palette?.primary || (isHighContrast ? '#000000' : '#1E6F50');
+  const cardBorder = palette?.cardBorder || (isHighContrast ? '#000000' : '#F1F5F9');
+  const textPrimary = palette?.textPrimary || (isHighContrast ? '#000000' : '#1E293B');
+
   const mapHtml = useMemo(() => `
 <!DOCTYPE html>
 <html>
@@ -36,11 +44,11 @@ const BaseMap = ({
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body, #map { height: 100%; width: 100%; background: #E9F1EE; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    html, body, #map { height: 100%; width: 100%; background: ${themeBg}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; ${isHighContrast ? 'filter: contrast(1.25);' : ''} }
     
     .leaflet-control-attribution { font-size: 8px; opacity: 0.5; }
-    .leaflet-bar { border: none !important; box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; }
-    .leaflet-bar a { background: #FFFFFF !important; color: #1E6F50 !important; border-bottom: 1px solid #F1F5F9 !important; }
+    .leaflet-bar { border: ${isHighContrast ? '2px solid #000000' : 'none'} !important; box-shadow: ${isHighContrast ? 'none' : '0 4px 12px rgba(0,0,0,0.1)'} !important; }
+    .leaflet-bar a { background: ${surface} !important; color: ${primary} !important; border-bottom: 1px solid ${cardBorder} !important; }
 
     /* Custom Pin Marker Wrapper */
     .custom-pin {
@@ -81,45 +89,46 @@ const BaseMap = ({
       border-top: 6px solid currentColor;
     }
 
-    .pin-bubble.orange { background: #F59E0B; color: #F59E0B; }
+    .pin-bubble.orange { background: ${isHighContrast ? '#000000' : '#F59E0B'}; color: ${isHighContrast ? '#000000' : '#F59E0B'}; ${isHighContrast ? 'border: 2px solid #000000;' : ''} }
     .pin-bubble.orange svg { stroke: #FFFFFF; fill: none; }
 
-    .pin-bubble.red { background: #EF4444; color: #EF4444; }
+    .pin-bubble.red { background: ${isHighContrast ? '#000000' : '#EF4444'}; color: ${isHighContrast ? '#000000' : '#EF4444'}; ${isHighContrast ? 'border: 2px solid #000000;' : ''} }
     .pin-bubble.red svg { stroke: #FFFFFF; fill: #FFFFFF; }
 
-    .pin-bubble.green { background: #10B981; color: #10B981; }
+    .pin-bubble.green { background: ${isHighContrast ? '#000000' : '#10B981'}; color: ${isHighContrast ? '#000000' : '#10B981'}; ${isHighContrast ? 'border: 2px solid #000000;' : ''} }
     .pin-bubble.green svg { stroke: #FFFFFF; fill: none; }
 
-    .pin-bubble.amber { background: #D97706; color: #D97706; }
+    .pin-bubble.amber { background: ${isHighContrast ? '#000000' : '#D97706'}; color: ${isHighContrast ? '#000000' : '#D97706'}; ${isHighContrast ? 'border: 2px solid #000000;' : ''} }
     .pin-bubble.amber svg { stroke: #FFFFFF; fill: none; }
 
     /* Floating label tags above pins (e.g. CITY HALL, MP) */
     .pin-label-tag {
       position: absolute;
       top: -24px;
-      background: #334155;
+      background: ${isHighContrast ? '#000000' : '#334155'};
       color: #FFFFFF;
       font-size: 10px;
       font-weight: 700;
       padding: 2px 7px;
       border-radius: 6px;
       white-space: nowrap;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      box-shadow: ${isHighContrast ? 'none' : '0 2px 6px rgba(0,0,0,0.25)'};
       letter-spacing: 0.5px;
       display: flex;
       align-items: center;
       gap: 3px;
+      ${isHighContrast ? 'border: 1px solid #FFFFFF;' : ''}
     }
 
-    /* User GPS Blue/White Pulsing Dot */
+    /* User GPS Blue/White Pulsing Dot — High-Contrast black border */
     .user-dot {
       width: 22px;
       height: 22px;
       background: #FFFFFF;
-      border: 4px solid #2563EB;
+      border: 4px solid ${isHighContrast ? '#000000' : '#2563EB'};
       border-radius: 50%;
-      box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.25), 0 3px 8px rgba(0,0,0,0.3);
-      animation: pulse 2.5s infinite;
+      box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 6px rgba(37, 99, 235, 0.25), 0 3px 8px rgba(0,0,0,0.3)'};
+      animation: ${isHighContrast ? 'none' : 'pulse 2.5s infinite'};
     }
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.45); }
@@ -127,17 +136,18 @@ const BaseMap = ({
       100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
     }
 
-    /* Popup Styling */
+    /* Popup Styling — High-Contrast */
     .unity-popup .leaflet-popup-content-wrapper {
-      background: #FFFFFF;
-      color: #1E293B;
+      background: ${surface};
+      color: ${textPrimary};
       border-radius: 14px;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
+      box-shadow: ${isHighContrast ? 'none' : '0 10px 25px -5px rgba(0, 0, 0, 0.15)'};
       padding: 4px 6px;
+      ${isHighContrast ? 'border: 2px solid #000000;' : ''}
     }
-    .unity-popup .leaflet-popup-tip { background: #FFFFFF; }
-    .popup-title { font-size: 13px; font-weight: 700; color: #0F172A; }
-    .popup-sub { font-size: 11px; color: #64748B; margin-top: 2px; }
+    .unity-popup .leaflet-popup-tip { background: ${surface}; }
+    .popup-title { font-size: 13px; font-weight: 700; color: ${textPrimary}; }
+    .popup-sub { font-size: 11px; color: ${isHighContrast ? '#000000' : '#64748B'}; margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -229,7 +239,7 @@ const BaseMap = ({
   </script>
 </body>
 </html>
-  `, [normalizedCenter, zoom]);
+  `, [normalizedCenter, zoom, themeBg, surface, primary, cardBorder, textPrimary, isHighContrast]);
 
   const handleMessage = useCallback((event) => {
     try {
@@ -241,12 +251,12 @@ const BaseMap = ({
   }, [onMapClick]);
 
   return (
-    <View style={[tw`flex-1 w-full h-full`, style]}>
+    <View style={[tw`flex-1 w-full h-full`, { backgroundColor: themeBg }, style]}>
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
         source={{ html: mapHtml }}
-        style={tw`flex-1 bg-[#E9F1EE]`}
+        style={[tw`flex-1`, { backgroundColor: themeBg }]}
         onMessage={handleMessage}
         onLoadEnd={() => {
           if (typeof onReady === 'function') onReady();
