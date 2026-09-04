@@ -53,7 +53,9 @@ app.use((req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err.message);
+  console.error('❌ Unhandled error:', err);
+  if (res.headersSent) return next(err);
+
   res.status(err.status || 500).json({
     success: false,
     message: err.message || 'Internal Server Error',
