@@ -12,7 +12,7 @@ Built using **React Native with Expo (Managed Workflow, JavaScript)**.
 ```text
 UnityMap/
 ├── create-branch.sh        # Jira-aligned GitFlow branch automation script
-└── mobile-app/             # Expo Managed Mobile Application
+└── frontend/               # Expo Managed Mobile Application
     ├── src/
     │   ├── assets/         # Icons, custom typography, map marker pins
     │   ├── components/     # Reusable UI elements (Button, Input, Card)
@@ -67,7 +67,7 @@ To create and checkout a standardized branch:
 
 ### Run Mobile App Locally
 ```bash
-cd mobile-app
+cd frontend
 npm install
 npx expo start
 ```
