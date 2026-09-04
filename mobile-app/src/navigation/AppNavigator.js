@@ -10,12 +10,12 @@ import ThreeTapReportScreen from '../screens/volunteer/ThreeTapReportScreen';
 import EXIFCaptureScreen from '../screens/volunteer/EXIFCaptureScreen';
 
 const STREAMS = [
-  { id: 'wheelchair_route', title: 'Barrier Routing', author: 'Wishwa', component: WheelchairRoutingScreen },
-  { id: 'osm_canvas', title: 'OSM Map Canvas', author: 'Wishwa', component: OSMCanvasScreen },
-  { id: 'voice_nav', title: 'Voice Navigation', author: 'Wathsika', component: VoiceNavigationScreen },
-  { id: 'tts_interface', title: 'TTS Interfaces', author: 'Wathsika', component: TTSInterfaceScreen },
-  { id: 'volunteer_report', title: '3-Tap Report', author: 'Dulmi', component: ThreeTapReportScreen },
-  { id: 'exif_capture', title: 'EXIF Capture', author: 'Dulmi', component: EXIFCaptureScreen },
+  { id: 'wheelchair_route', title: 'Barrier Routing', component: WheelchairRoutingScreen },
+  { id: 'osm_canvas', title: 'OSM Map Canvas', component: OSMCanvasScreen },
+  { id: 'voice_nav', title: 'Voice Navigation', component: VoiceNavigationScreen },
+  { id: 'tts_interface', title: 'TTS Interfaces', component: TTSInterfaceScreen },
+  { id: 'volunteer_report', title: '3-Tap Report', component: ThreeTapReportScreen },
+  { id: 'exif_capture', title: 'EXIF Capture', component: EXIFCaptureScreen },
 ];
 
 export const AppNavigator = () => {
@@ -26,8 +26,7 @@ export const AppNavigator = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>UnityMap Infrastructure</Text>
-        <Text style={styles.headerSubtitle}>Multi-Stream Developer Preview</Text>
+        <Text style={styles.headerTitle}>UnityMap</Text>
       </View>
 
       <View style={styles.tabContainer}>
@@ -41,7 +40,6 @@ export const AppNavigator = () => {
               <Text style={[styles.tabText, activeStream === stream.id && styles.activeTabText]}>
                 {stream.title}
               </Text>
-              <Text style={styles.authorBadge}>{stream.author}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -100,11 +98,6 @@ const styles = StyleSheet.create({
   },
   activeTabText: {
     color: '#FFFFFF',
-  },
-  authorBadge: {
-    fontSize: 10,
-    color: '#CBD5E1',
-    marginTop: 2,
   },
   screenContainer: {
     flex: 1,
