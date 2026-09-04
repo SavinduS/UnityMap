@@ -187,6 +187,14 @@ exports.updatePathway = async (req, res) => {
       data: pathway,
     });
   } catch (error) {
+    // Check for duplicate key error on { startNode, endNode }
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'A pathway connecting these two nodes already exists.',
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Failed to update pathway',
