@@ -1,11 +1,29 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
+import { useTheme } from '../theme/ThemeContext';
 
 /**
- * Card container component for structured UI items.
+ * Card — SPT-005: high-contrast border 2px, no shadow in hc.
  */
-export const Card = ({ children, style }) => {
-  return <View style={[styles.card, style]}>{children}</View>;
+export const Card = ({ children, style, accessible = false }) => {
+  const { isHighContrast, palette, borderWidth } = useTheme();
+  return (
+    <View
+      accessible={accessible}
+      style={[
+        styles.card,
+        {
+          backgroundColor: palette.surface,
+          borderColor: palette.cardBorder,
+          borderWidth,
+          ...(isHighContrast ? { shadowOpacity: 0, elevation: 0 } : null),
+        },
+        style,
+      ]}
+    >
+      {children}
+    </View>
+  );
 };
 
 const styles = StyleSheet.create({
