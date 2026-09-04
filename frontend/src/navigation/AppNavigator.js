@@ -8,8 +8,10 @@ import VoiceNavigationScreen from '../screens/audio/VoiceNavigationScreen';
 import TTSInterfaceScreen from '../screens/audio/TTSInterfaceScreen';
 import ThreeTapReportScreen from '../screens/volunteer/ThreeTapReportScreen';
 import EXIFCaptureScreen from '../screens/volunteer/EXIFCaptureScreen';
+import AdminPortalScaffoldScreen from '../screens/admin/AdminPortalScaffoldScreen';
 
 const STREAMS = [
+  { id: 'admin_portal', title: 'Admin Portal', component: AdminPortalScaffoldScreen },
   { id: 'wheelchair_route', title: 'Barrier Routing', component: WheelchairRoutingScreen },
   { id: 'osm_canvas', title: 'OSM Map Canvas', component: OSMCanvasScreen },
   { id: 'voice_nav', title: 'Voice Navigation', component: VoiceNavigationScreen },
@@ -19,6 +21,7 @@ const STREAMS = [
 ];
 
 const TAB_ICONS = {
+  admin_portal: '🏛️',
   wheelchair_route: '♿',
   osm_canvas: '⌖',
   voice_nav: '🎙',
