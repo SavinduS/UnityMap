@@ -47,10 +47,21 @@ exports.getNearbyObstacles = async (req, res) => {
   try {
     const { lng, lat, maxDistance = 500, obstacleType } = req.query;
 
-    if (!lng || !lat) {
+    const lngNum = Number(lng);
+    const latNum = Number(lat);
+    const maxDistanceNum = Number(maxDistance);
+
+    if (!Number.isFinite(lngNum) || !Number.isFinite(latNum)) {
       return res.status(400).json({
         success: false,
-        message: 'Query parameters lng (longitude) and lat (latitude) are required.',
+        message: 'Query parameters lng (longitude) and lat (latitude) must be valid numbers.',
+      });
+    }
+
+    if (!Number.isFinite(maxDistanceNum) || maxDistanceNum < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Query parameter maxDistance must be a non-negative number (meters).',
       });
     }
 
@@ -60,9 +71,9 @@ exports.getNearbyObstacles = async (req, res) => {
         $near: {
           $geometry: {
             type: 'Point',
-            coordinates: [parseFloat(lng), parseFloat(lat)],
+            coordinates: [lngNum, latNum],
           },
-          $maxDistance: Number(maxDistance),
+          $maxDistance: maxDistanceNum,
         },
       },
     };
