@@ -96,6 +96,11 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: 8,
     minHeight: 62,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 4,
   },
   tabScroll: {
     paddingHorizontal: 8,
