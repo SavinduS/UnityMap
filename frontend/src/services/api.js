@@ -91,6 +91,22 @@ export const createObstacle = (obstacleData) => {
 // Elevators & Pathways
 export const getElevators = () => apiRequest('/elevators');
 export const getPathways = () => apiRequest('/pathways');
+
+/**
+ * SPT-102 — Fetch a computed route between two nodes.
+ * @param {string} originNodeId
+ * @param {string} destinationNodeId
+ * @param {boolean} wheelchairAccessible — when true the backend runs the step-free filter
+ */
+export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible = false) => {
+  const params = new URLSearchParams({
+    originNodeId,
+    destinationNodeId,
+    wheelchairAccessible: String(wheelchairAccessible),
+  });
+  return apiRequest(`/pathways/route?${params.toString()}`);
+};
+
 export const checkHealth = () => apiRequest('/health');
 
 export default {
@@ -104,6 +120,7 @@ export default {
   createObstacle,
   getElevators,
   getPathways,
+  getRoute,
   checkHealth,
 };
 
