@@ -22,7 +22,7 @@ import { getTextStyle, textProps } from '../../theme/typography';
  */
 const UnityMapScreen = () => {
   const [activeTab, setActiveTab] = useState('Map');
-  const { palette, borderWidth, isHighContrast } = useTheme();
+  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled } = useTheme();
 
   return (
     <View style={[tw`flex-1`, { backgroundColor: palette.background }]}>
@@ -93,7 +93,7 @@ const UnityMapScreen = () => {
       ) : (
         <>
           <View style={tw`flex-1 relative`}>
-            <BaseMap isHighContrast={isHighContrast} palette={palette} />
+            <BaseMap isHighContrast={isHighContrast} isReduceMotionEnabled={isReduceMotionEnabled} palette={palette} />
 
             {/* Floating Navigation FAB — 52dp, High-Contrast border */}
             <TouchableOpacity
