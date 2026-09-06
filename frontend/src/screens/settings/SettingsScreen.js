@@ -1,11 +1,21 @@
 import React from 'react';
-import { View, Text, StyleSheet, Switch, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Switch, ScrollView, Platform } from 'react-native';
 import Card from '../../components/Card';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 
 export const SettingsScreen = () => {
-  const { isHighContrast, setHighContrast, isScreenReaderEnabled, isReduceMotionEnabled, screenReaderName, palette, borderWidth } = useTheme();
+  const {
+    isHighContrast,
+    setHighContrast,
+    isScreenReaderEnabled,
+    setIsScreenReaderEnabled,
+    isReduceMotionEnabled,
+    setIsReduceMotionEnabled,
+    screenReaderName,
+    palette,
+    borderWidth,
+  } = useTheme();
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: palette.background }]} contentContainerStyle={styles.content}>
@@ -80,9 +90,6 @@ export const SettingsScreen = () => {
             styles.row,
             { borderColor: palette.border, borderWidth, backgroundColor: palette.surface },
           ]}
-          accessible
-          accessibilityRole="text"
-          accessibilityLabel={`${screenReaderName} ${isScreenReaderEnabled ? 'enabled' : 'off'}`}
         >
           <View style={styles.rowText}>
             <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
@@ -91,17 +98,20 @@ export const SettingsScreen = () => {
             <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
               {isScreenReaderEnabled ? 'Enabled — announceForAccessibility active' : 'Off — standard speech'}
             </Text>
-          </View>
-          <View
-            style={[
-              styles.badge,
-              { backgroundColor: isScreenReaderEnabled ? palette.primary : palette.surfaceAlt, borderColor: palette.border, borderWidth: isScreenReaderEnabled ? borderWidth : 1 },
-            ]}
-          >
-            <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: isScreenReaderEnabled ? palette.primaryText : palette.textMuted, fontWeight: '700' }]}>
-              {isScreenReaderEnabled ? 'ON' : 'OFF'}
+            <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted, fontStyle: 'italic', marginTop: 2 }]}>
+              {Platform.OS === 'android' ? 'TalkBack (Android)' : Platform.OS === 'ios' ? 'VoiceOver (iOS)' : 'Screen reader'} via AccessibilityInfo + Platform.select
             </Text>
           </View>
+          <Switch
+            value={isScreenReaderEnabled}
+            onValueChange={setIsScreenReaderEnabled}
+            trackColor={{ false: '#E5E7EB', true: palette.primary }}
+            thumbColor="#FFFFFF"
+            accessibilityRole="switch"
+            accessibilityLabel={`${screenReaderName} toggle`}
+            accessibilityState={{ checked: isScreenReaderEnabled }}
+            style={styles.switch}
+          />
         </View>
 
         <View
@@ -109,9 +119,6 @@ export const SettingsScreen = () => {
             styles.row,
             { borderColor: palette.border, borderWidth, backgroundColor: palette.surface, marginTop: 12 },
           ]}
-          accessible
-          accessibilityRole="text"
-          accessibilityLabel={`Reduce Motion ${isReduceMotionEnabled ? 'enabled' : 'off'}`}
         >
           <View style={styles.rowText}>
             <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
@@ -121,16 +128,16 @@ export const SettingsScreen = () => {
               {isReduceMotionEnabled ? 'On — animations disabled in BaseMap' : 'Off — animations enabled'}
             </Text>
           </View>
-          <View
-            style={[
-              styles.badge,
-              { backgroundColor: isReduceMotionEnabled ? palette.primary : palette.surfaceAlt, borderColor: palette.border, borderWidth: isReduceMotionEnabled ? borderWidth : 1 },
-            ]}
-          >
-            <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: isReduceMotionEnabled ? palette.primaryText : palette.textMuted, fontWeight: '700' }]}>
-              {isReduceMotionEnabled ? 'ON' : 'OFF'}
-            </Text>
-          </View>
+          <Switch
+            value={isReduceMotionEnabled}
+            onValueChange={setIsReduceMotionEnabled}
+            trackColor={{ false: '#E5E7EB', true: palette.primary }}
+            thumbColor="#FFFFFF"
+            accessibilityRole="switch"
+            accessibilityLabel="Reduce Motion"
+            accessibilityState={{ checked: isReduceMotionEnabled }}
+            style={styles.switch}
+          />
         </View>
       </Card>
 
@@ -163,15 +170,6 @@ const styles = StyleSheet.create({
   rowLabel: {},
   rowHint: { marginTop: 2 },
   switch: { transform: [{ scaleX: 1.05 }, { scaleY: 1.05 }] },
-  badge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    minWidth: 48,
-    minHeight: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   preview: {
     marginTop: 16,
     borderRadius: 12,

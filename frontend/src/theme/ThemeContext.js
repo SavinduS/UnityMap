@@ -10,7 +10,11 @@ const ThemeContext = createContext({
   palette: palettes.light,
   borderWidth: 1,
   isScreenReaderEnabled: false,
+  setIsScreenReaderEnabled: () => {},
+  toggleScreenReader: () => {},
   isReduceMotionEnabled: false,
+  setIsReduceMotionEnabled: () => {},
+  toggleReduceMotion: () => {},
   screenReaderName: Platform.select({ android: 'TalkBack', ios: 'VoiceOver', default: 'Screen Reader' }),
   announce: () => {},
 });
@@ -85,6 +89,22 @@ export const ThemeProvider = ({ children }) => {
     });
   }, []);
 
+  const setIsScreenReaderEnabledCb = useCallback((value) => {
+    setIsScreenReaderEnabled(value);
+  }, []);
+
+  const toggleScreenReader = useCallback(() => {
+    setIsScreenReaderEnabled((prev) => !prev);
+  }, []);
+
+  const setIsReduceMotionEnabledCb = useCallback((value) => {
+    setIsReduceMotionEnabled(value);
+  }, []);
+
+  const toggleReduceMotion = useCallback(() => {
+    setIsReduceMotionEnabled((prev) => !prev);
+  }, []);
+
   const announce = useCallback((message) => {
     if (!message) return;
     try {
@@ -105,7 +125,11 @@ export const ThemeProvider = ({ children }) => {
       palette: getPalette(isHighContrast),
       borderWidth: getBorderWidth(isHighContrast),
       isScreenReaderEnabled,
+      setIsScreenReaderEnabled: setIsScreenReaderEnabledCb,
+      toggleScreenReader,
       isReduceMotionEnabled,
+      setIsReduceMotionEnabled: setIsReduceMotionEnabledCb,
+      toggleReduceMotion,
       screenReaderName,
       announce,
     }),
@@ -114,7 +138,11 @@ export const ThemeProvider = ({ children }) => {
       setHighContrast,
       toggleHighContrast,
       isScreenReaderEnabled,
+      setIsScreenReaderEnabledCb,
+      toggleScreenReader,
       isReduceMotionEnabled,
+      setIsReduceMotionEnabledCb,
+      toggleReduceMotion,
       screenReaderName,
       announce,
     ]
