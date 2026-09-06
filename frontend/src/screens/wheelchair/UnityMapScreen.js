@@ -13,7 +13,7 @@ import { Feather, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icon
 import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
-import WheelchairRoutingScreen from './WheelchairRoutingScreen';
+import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useLocation } from '../../hooks/useLocation';
@@ -369,7 +369,7 @@ const UnityMapScreen = () => {
         </View>
       ) : activeTab === 'Report' ? (
         <View style={tw`flex-1`}>
-          <WheelchairRoutingScreen />
+          <EXIFCaptureScreen />
         </View>
       ) : activeTab === 'Profile' ? (
         <ScrollView style={tw`flex-1 p-5`}>
@@ -857,29 +857,42 @@ const UnityMapScreen = () => {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[tw`items-center justify-center px-3 py-1`, { minHeight: 48, minWidth: 64 }]}
+          style={[
+            tw`items-center justify-center px-4 rounded-2xl mx-1`,
+            {
+              minHeight: 56,
+              minWidth: 84,
+              backgroundColor: palette.primary,
+              borderWidth: isHighContrast ? borderWidth : 0,
+              borderColor: palette.cardBorder,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: isHighContrast ? 0 : 0.18,
+              shadowRadius: 4,
+              elevation: isHighContrast ? 0 : 4,
+              paddingVertical: 6,
+            },
+          ]}
           onPress={() => setActiveTab('Report')}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
           accessible
-          accessibilityRole="tab"
+          accessibilityRole="button"
+          accessibilityLabel="Report Barrier"
+          accessibilityHint="Opens barrier reporting"
           accessibilityState={{ selected: activeTab === 'Report' }}
-          accessibilityLabel="Report tab"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Feather
-            name="alert-triangle"
-            size={22}
-            color={activeTab === 'Report' ? palette.primary : palette.textMuted}
-          />
+          <Feather name="alert-triangle" size={20} color={palette.primaryText} />
           <Text
             {...textProps}
             style={[
-              tw`mt-1`,
+              tw`mt-0.5 font-bold text-center`,
               getTextStyle('xs', { isHighContrast }),
-              { color: activeTab === 'Report' ? palette.primary : palette.textMuted },
+              { color: palette.primaryText },
             ]}
+            numberOfLines={1}
           >
-            Report
+            Report Barrier
           </Text>
         </TouchableOpacity>
 
