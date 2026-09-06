@@ -13,7 +13,7 @@ import { Feather, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icon
 import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
-import WheelchairRoutingScreen from './WheelchairRoutingScreen';
+import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useLocation } from '../../hooks/useLocation';
@@ -369,7 +369,7 @@ const UnityMapScreen = () => {
         </View>
       ) : activeTab === 'Report' ? (
         <View style={tw`flex-1`}>
-          <WheelchairRoutingScreen />
+          <EXIFCaptureScreen />
         </View>
       ) : activeTab === 'Profile' ? (
         <ScrollView style={tw`flex-1 p-5`}>
@@ -830,7 +830,20 @@ const UnityMapScreen = () => {
         ]}
       >
         <TouchableOpacity
-          style={[tw`items-center justify-center px-3 py-1`, { minHeight: 48, minWidth: 64 }]}
+          style={[
+            tw`items-center justify-center px-3 rounded-2xl mx-1`,
+            {
+              minHeight: 48,
+              minWidth: 64,
+              backgroundColor: activeTab === 'Map' ? palette.primary : 'transparent',
+              borderWidth: activeTab === 'Map' && isHighContrast ? borderWidth : 0,
+              borderColor: palette.cardBorder,
+              paddingVertical: 6,
+              ...(activeTab === 'Map' && !isHighContrast
+                ? { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4, elevation: 3 }
+                : {}),
+            },
+          ]}
           onPress={() => setActiveTab('Map')}
           activeOpacity={0.7}
           accessible
@@ -842,14 +855,14 @@ const UnityMapScreen = () => {
           <Feather
             name="map"
             size={22}
-            color={activeTab === 'Map' ? palette.primary : palette.textMuted}
+            color={activeTab === 'Map' ? palette.primaryText : palette.textMuted}
           />
           <Text
             {...textProps}
             style={[
-              tw`mt-1`,
+              tw`mt-1 text-center`,
               getTextStyle('xs', { isHighContrast }),
-              { color: activeTab === 'Map' ? palette.primary : palette.textMuted },
+              { color: activeTab === 'Map' ? palette.primaryText : palette.textMuted },
             ]}
           >
             Map
@@ -857,34 +870,61 @@ const UnityMapScreen = () => {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[tw`items-center justify-center px-3 py-1`, { minHeight: 48, minWidth: 64 }]}
+          style={[
+            tw`items-center justify-center px-3 rounded-2xl mx-1`,
+            {
+              minHeight: activeTab === 'Report' ? 56 : 48,
+              minWidth: activeTab === 'Report' ? 92 : 70,
+              backgroundColor: activeTab === 'Report' ? palette.primary : 'transparent',
+              borderWidth: activeTab === 'Report' && isHighContrast ? borderWidth : 0,
+              borderColor: palette.cardBorder,
+              paddingVertical: 6,
+              ...(activeTab === 'Report' && !isHighContrast
+                ? { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4, elevation: 4 }
+                : {}),
+            },
+          ]}
           onPress={() => setActiveTab('Report')}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
           accessible
-          accessibilityRole="tab"
+          accessibilityRole="button"
+          accessibilityLabel="Report Barrier"
+          accessibilityHint="Opens barrier reporting"
           accessibilityState={{ selected: activeTab === 'Report' }}
-          accessibilityLabel="Report tab"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Feather
             name="alert-triangle"
-            size={22}
-            color={activeTab === 'Report' ? palette.primary : palette.textMuted}
+            size={activeTab === 'Report' ? 20 : 22}
+            color={activeTab === 'Report' ? palette.primaryText : palette.textMuted}
           />
           <Text
             {...textProps}
             style={[
-              tw`mt-1`,
+              tw`mt-0.5 font-bold text-center`,
               getTextStyle('xs', { isHighContrast }),
-              { color: activeTab === 'Report' ? palette.primary : palette.textMuted },
+              { color: activeTab === 'Report' ? palette.primaryText : palette.textMuted },
             ]}
           >
-            Report
+            Report Barrier
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[tw`items-center justify-center px-3 py-1`, { minHeight: 48, minWidth: 64 }]}
+          style={[
+            tw`items-center justify-center px-3 rounded-2xl mx-1`,
+            {
+              minHeight: 48,
+              minWidth: 64,
+              backgroundColor: activeTab === 'Profile' ? palette.primary : 'transparent',
+              borderWidth: activeTab === 'Profile' && isHighContrast ? borderWidth : 0,
+              borderColor: palette.cardBorder,
+              paddingVertical: 6,
+              ...(activeTab === 'Profile' && !isHighContrast
+                ? { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4, elevation: 3 }
+                : {}),
+            },
+          ]}
           onPress={() => setActiveTab('Profile')}
           activeOpacity={0.7}
           accessible
@@ -896,14 +936,14 @@ const UnityMapScreen = () => {
           <Feather
             name="user"
             size={22}
-            color={activeTab === 'Profile' ? palette.primary : palette.textMuted}
+            color={activeTab === 'Profile' ? palette.primaryText : palette.textMuted}
           />
           <Text
             {...textProps}
             style={[
-              tw`mt-1`,
+              tw`mt-1 text-center`,
               getTextStyle('xs', { isHighContrast }),
-              { color: activeTab === 'Profile' ? palette.primary : palette.textMuted },
+              { color: activeTab === 'Profile' ? palette.primaryText : palette.textMuted },
             ]}
           >
             Profile
@@ -911,7 +951,20 @@ const UnityMapScreen = () => {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[tw`items-center justify-center px-3 py-1`, { minHeight: 48, minWidth: 64 }]}
+          style={[
+            tw`items-center justify-center px-3 rounded-2xl mx-1`,
+            {
+              minHeight: 48,
+              minWidth: 64,
+              backgroundColor: activeTab === 'Settings' ? palette.primary : 'transparent',
+              borderWidth: activeTab === 'Settings' && isHighContrast ? borderWidth : 0,
+              borderColor: palette.cardBorder,
+              paddingVertical: 6,
+              ...(activeTab === 'Settings' && !isHighContrast
+                ? { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4, elevation: 3 }
+                : {}),
+            },
+          ]}
           onPress={() => setActiveTab('Settings')}
           activeOpacity={0.7}
           accessible
@@ -923,14 +976,14 @@ const UnityMapScreen = () => {
           <Feather
             name="settings"
             size={22}
-            color={activeTab === 'Settings' ? palette.primary : palette.textMuted}
+            color={activeTab === 'Settings' ? palette.primaryText : palette.textMuted}
           />
           <Text
             {...textProps}
             style={[
-              tw`mt-1`,
+              tw`mt-1 text-center`,
               getTextStyle('xs', { isHighContrast }),
-              { color: activeTab === 'Settings' ? palette.primary : palette.textMuted },
+              { color: activeTab === 'Settings' ? palette.primaryText : palette.textMuted },
             ]}
           >
             Settings
