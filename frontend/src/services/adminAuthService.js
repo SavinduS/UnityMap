@@ -6,6 +6,7 @@
  */
 
 import { MUNICIPAL_ROLES, MUNICIPAL_WARDS } from '../utils/wardJurisdictions';
+import { apiRequest } from './api';
 
 // Default mock municipal staff account for demo & offline inspection
 const DEFAULT_STAFF_USER = {
@@ -22,7 +23,8 @@ const DEFAULT_STAFF_USER = {
 
 class AdminAuthService {
   constructor() {
-    this.currentUser = { ...DEFAULT_STAFF_USER };
+    // Start unauthenticated so the login gate activates on fresh app launch
+    this.currentUser = null;
     this.listeners = [];
   }
 
@@ -56,25 +58,21 @@ class AdminAuthService {
       throw new Error('Municipal email and security PIN/password are required.');
     }
 
-    // 1. Try connecting to Node.js backend
+    // 1. Try connecting to Node.js backend using centralized apiRequest
     try {
-      const response = await fetch('http://localhost:5000/api/admin/auth/login', {
+      const data = await apiRequest('/admin/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, wardId, role }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.user) {
-          this.currentUser = {
-            ...data.user,
-            token: data.token,
-            sessionExpiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-          };
-          this.notify();
-          return this.currentUser;
-        }
+      if (data?.success && data?.user) {
+        this.currentUser = {
+          ...data.user,
+          token: data.token,
+          sessionExpiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+        };
+        this.notify();
+        return this.currentUser;
       }
     } catch (_err) {
       // Backend unavailable; proceed with robust offline mode for presentations

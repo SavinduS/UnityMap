@@ -41,12 +41,17 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
   const activeWard = getWardById(selectedWardId);
   const activeRole = MUNICIPAL_ROLES[selectedRole];
 
-  // Quick-fill presets for examiners and demo verification
+  // Quick-fill presets for examiners and demo verification (password gated behind __DEV__)
   const handleQuickFill = (roleKey, wardId, defaultEmail) => {
     setSelectedRole(roleKey);
     setSelectedWardId(wardId);
     setEmail(defaultEmail);
-    setPassword('CMC-Secure#2026');
+    // Gate password auto-fill behind __DEV__; leave blank in non-dev environments
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      setPassword('CMC-Secure#2026');
+    } else {
+      setPassword('');
+    }
     setErrorMessage('');
   };
 

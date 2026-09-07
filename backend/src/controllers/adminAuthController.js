@@ -1,4 +1,4 @@
-const { MunicipalStaff, WardJurisdiction } = require('../models');
+const { MunicipalStaff } = require('../models');
 
 /**
  * Seed municipal staff profiles for demo / offline fallback
