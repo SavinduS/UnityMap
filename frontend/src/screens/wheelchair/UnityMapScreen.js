@@ -16,7 +16,6 @@ import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
 import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
-import VoiceNavigationScreen from '../audio/VoiceNavigationScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useLocation } from '../../hooks/useLocation';
@@ -48,9 +47,8 @@ const UnityMapScreen = () => {
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
   const [showLauncher, setShowLauncher] = useState(false);
-  const [showVoiceNav, setShowVoiceNav] = useState(false);
 
-  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isScreenReaderEnabled, isAudioLauncherEnabled } = useTheme();
+  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
   const { location, loading: locationLoading, recenter } = useLocation();
 
   // Only show launcher if enabled in Settings (not for every user)
@@ -152,14 +150,9 @@ const UnityMapScreen = () => {
     }
   }, [recenter, location]);
 
-  // SPT-104: launcher tap navigates to VoiceNavigationScreen (SPT-105 bridge)
+  // SPT-104 single page: launcher tap just dismisses to map (no VoiceNavigation bridge)
   const handleLauncherNavigate = useCallback(() => {
     setShowLauncher(false);
-    setShowVoiceNav(true);
-  }, []);
-
-  const handleCloseVoiceNav = useCallback(() => {
-    setShowVoiceNav(false);
   }, []);
 
   // Select destination from real DB list / search history
@@ -1016,7 +1009,7 @@ const UnityMapScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {/* SPT-104: Audio-First Launcher as Initial Modal over UnityMapScreen */}
+      {/* SPT-104 single page: Audio-First Launcher as Initial Modal over UnityMapScreen */}
       <Modal
         visible={showLauncher}
         animationType="fade"
@@ -1034,32 +1027,6 @@ const UnityMapScreen = () => {
         >
           <Text style={tw`text-white text-xs font-bold`}>Skip to Map</Text>
         </TouchableOpacity>
-      </Modal>
-
-      {/* SPT-105 Bridge: VoiceNavigationScreen */}
-      <Modal visible={showVoiceNav} animationType="slide" transparent={false} onRequestClose={handleCloseVoiceNav}>
-        <View style={{ flex: 1, backgroundColor: palette.background }}>
-          <SafeAreaView
-            style={[
-              tw`flex-row items-center px-4 py-3`,
-              { backgroundColor: palette.surface, borderBottomWidth: borderWidth, borderBottomColor: palette.cardBorder },
-            ]}
-          >
-            <TouchableOpacity
-              onPress={handleCloseVoiceNav}
-              accessibilityRole="button"
-              accessibilityLabel="Back to map"
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={{ padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Feather name="arrow-left" size={22} color={palette.textPrimary} />
-            </TouchableOpacity>
-            <Text {...textProps} style={[getTextStyle('base', { isHighContrast }), { color: palette.textPrimary, marginLeft: 8 }]}>
-              Voice Navigation
-            </Text>
-          </SafeAreaView>
-          <VoiceNavigationScreen />
-        </View>
       </Modal>
     </View>
   );
