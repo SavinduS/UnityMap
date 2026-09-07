@@ -24,6 +24,7 @@ import {
   getWardById,
 } from '../../utils/wardJurisdictions';
 import AdminLoginScreen from './AdminLoginScreen';
+import TriageQueueScreen from './TriageQueueScreen';
 
 export const AdminPortalScaffoldScreen = () => {
   const [currentUser, setCurrentUser] = useState(adminAuthService.getCurrentUser());
@@ -31,6 +32,7 @@ export const AdminPortalScaffoldScreen = () => {
     currentUser?.assignedWardId || 'CMC-W01'
   );
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [currentView, setCurrentView] = useState('hub');
 
   useEffect(() => {
     const unsubscribe = adminAuthService.subscribe((user) => {
@@ -54,6 +56,17 @@ export const AdminPortalScaffoldScreen = () => {
 
   if (!currentUser) {
     return <AdminLoginScreen onLoginSuccess={(u) => setCurrentUser(u)} />;
+  }
+
+  if (currentView === 'triage') {
+    return (
+      <TriageQueueScreen
+        onBack={() => setCurrentView('hub')}
+        onSelectReport={(report) => {
+          console.log('[AdminPortal] Selected report for inspection:', report?._id);
+        }}
+      />
+    );
   }
 
   return (
@@ -144,10 +157,14 @@ export const AdminPortalScaffoldScreen = () => {
             <Text style={styles.wardDesc}>{activeWard.description}</Text>
 
             <View style={styles.kpiRow}>
-              <View style={styles.kpiItem}>
-                <Text style={styles.kpiValue}>{activeWard.activeBarriers}</Text>
-                <Text style={styles.kpiLabel}>Pending Triage</Text>
-              </View>
+              <TouchableOpacity
+                style={styles.kpiItem}
+                onPress={() => setCurrentView('triage')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.kpiValue, { color: '#2563EB' }]}>{activeWard.activeBarriers}</Text>
+                <Text style={styles.kpiLabel}>Pending Triage →</Text>
+              </TouchableOpacity>
               <View style={styles.kpiDivider} />
               <View style={styles.kpiItem}>
                 <Text style={styles.kpiValue}>{activeWard.complianceScore}%</Text>
@@ -196,23 +213,28 @@ export const AdminPortalScaffoldScreen = () => {
           </TouchableOpacity>
 
           {/* Module 2: Triage Queue */}
-          <View style={styles.moduleCard}>
+          <TouchableOpacity
+            style={styles.moduleCard}
+            onPress={() => setCurrentView('triage')}
+            activeOpacity={0.7}
+          >
             <View style={[styles.moduleIconBox, { backgroundColor: '#FEF3C7' }]}>
               <Text style={styles.moduleIcon}>⚡</Text>
             </View>
             <View style={styles.moduleInfo}>
               <View style={styles.moduleTagRow}>
                 <Text style={styles.moduleTicket}>SPT-111 / SPT-112 (Page 2)</Text>
-                <View style={styles.sprintTag}>
-                  <Text style={styles.sprintTagText}>SPRINT 1</Text>
+                <View style={styles.readyTag}>
+                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
                 </View>
               </View>
               <Text style={styles.moduleName}>Automated Severity Triage Queue</Text>
               <Text style={styles.moduleDesc}>
-                Auto-prioritizes volunteer barrier submissions using dynamic urgency index & corroboration tallies.
+                Auto-prioritizes volunteer barrier submissions using dynamic urgency index & corroboration tallies. Tap to view queue.
               </Text>
             </View>
-          </View>
+            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
+          </TouchableOpacity>
 
           {/* Module 3: Inspection Workspace */}
           <View style={styles.moduleCard}>
