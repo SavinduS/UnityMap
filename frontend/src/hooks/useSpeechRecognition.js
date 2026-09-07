@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
+import { mapLocaleToBCP47 } from '../utils/locale';
 
 let ExpoSpeechRecognitionModule = null;
 try {
@@ -8,13 +9,7 @@ try {
   ExpoSpeechRecognitionModule = mod.ExpoSpeechRecognitionModule || mod.default?.ExpoSpeechRecognitionModule || null;
 } catch (_) {}
 
-const LOCALE_BCP47 = {
-  en: 'en-US',
-  si: 'si-LK',
-  ta: 'ta-LK',
-};
-
-const mapLocale = (locale) => LOCALE_BCP47[locale] || locale || 'en-US';
+const mapLocale = (locale) => mapLocaleToBCP47(locale) || locale || 'en-US';
 
 /**
  * Native-first speech recognition hook for EAS Build.

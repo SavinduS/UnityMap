@@ -13,7 +13,7 @@ const LAUNCHER_PHRASE = 'Tap anywhere and speak your destination';
  * Used as initial modal over UnityMapScreen when screen reader is active.
  */
 export const AudioFirstLauncherScreen = ({ onNavigate }) => {
-  const { palette, borderWidth, isHighContrast, isScreenReaderEnabled, isReduceMotionEnabled, screenReaderName, announce } = useTheme();
+  const { palette, borderWidth, isHighContrast, isScreenReaderEnabled, isReduceMotionEnabled, screenReaderName, announce, preferredSTTLocale } = useTheme();
   const { speak } = useSpeech();
   const { isSupported, isListening, transcript, interimTranscript, confidence, error, start, stop } = useSpeechRecognition();
   const hasAnnouncedRef = useRef(false);
@@ -75,8 +75,7 @@ export const AudioFirstLauncherScreen = ({ onNavigate }) => {
       return;
     }
     try {
-      // Use device locale: default en, respects TalkBack/VoiceOver language
-      const locale = 'en';
+      const locale = preferredSTTLocale || 'en';
       await start(locale);
     } catch (e) {
       setTimeout(() => {

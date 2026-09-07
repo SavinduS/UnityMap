@@ -1,7 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AccessibilityInfo, Platform } from 'react-native';
 import { getPalette, getBorderWidth, palettes } from './tokens';
-import { loadHighContrast, saveHighContrast, loadAudioLauncherEnabled, saveAudioLauncherEnabled } from './storage';
+import {
+  loadHighContrast,
+  saveHighContrast,
+  loadAudioLauncherEnabled,
+  saveAudioLauncherEnabled,
+  loadPreferredSTTLocale,
+  savePreferredSTTLocale,
+} from './storage';
 
 const ThemeContext = createContext({
   isHighContrast: false,
@@ -18,6 +25,8 @@ const ThemeContext = createContext({
   isAudioLauncherEnabled: false,
   setAudioLauncherEnabled: () => {},
   toggleAudioLauncher: () => {},
+  preferredSTTLocale: 'en',
+  setPreferredSTTLocale: () => {},
   screenReaderName: Platform.select({ android: 'TalkBack', ios: 'VoiceOver', default: 'Screen Reader' }),
   announce: () => {},
 });
@@ -27,10 +36,12 @@ export const ThemeProvider = ({ children }) => {
   const [isScreenReaderEnabled, setIsScreenReaderEnabled] = useState(false);
   const [isReduceMotionEnabled, setIsReduceMotionEnabled] = useState(false);
   const [isAudioLauncherEnabled, setIsAudioLauncherEnabled] = useState(false);
+  const [preferredSTTLocale, setPreferredSTTLocaleState] = useState('en');
 
   useEffect(() => {
     loadHighContrast().then(setIsHighContrast);
     loadAudioLauncherEnabled().then(setIsAudioLauncherEnabled);
+    loadPreferredSTTLocale().then(setPreferredSTTLocaleState);
   }, []);
 
   // Detect TalkBack / VoiceOver on launch and subscribe to OS changes
@@ -123,6 +134,11 @@ export const ThemeProvider = ({ children }) => {
     });
   }, []);
 
+  const setPreferredSTTLocale = useCallback((locale) => {
+    setPreferredSTTLocaleState(locale);
+    savePreferredSTTLocale(locale);
+  }, []);
+
   const announce = useCallback((message) => {
     if (!message) return;
     try {
@@ -151,6 +167,8 @@ export const ThemeProvider = ({ children }) => {
       isAudioLauncherEnabled,
       setAudioLauncherEnabled,
       toggleAudioLauncher,
+      preferredSTTLocale,
+      setPreferredSTTLocale,
       screenReaderName,
       announce,
     }),
@@ -167,6 +185,8 @@ export const ThemeProvider = ({ children }) => {
       isAudioLauncherEnabled,
       setAudioLauncherEnabled,
       toggleAudioLauncher,
+      preferredSTTLocale,
+      setPreferredSTTLocale,
       screenReaderName,
       announce,
     ]
