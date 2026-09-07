@@ -24,11 +24,17 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured }) => {
   const [exifResult, setExifResult] = useState(null);
   const isMountedRef = useRef(true);
   const previewUrlRef = useRef(null);
+  const cancelFallbackRef = useRef(null);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      // Clear fallback timeout on unmount to avoid state updates after unmount
+      if (cancelFallbackRef.current) {
+        clearTimeout(cancelFallbackRef.current);
+        cancelFallbackRef.current = null;
+      }
       // Clean up object URL when leaving screen/component
       if (previewUrlRef.current) {
         try {
@@ -177,6 +183,10 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured }) => {
       input.style.display = 'none';
 
       input.onchange = async (e) => {
+        if (cancelFallbackRef.current) {
+          clearTimeout(cancelFallbackRef.current);
+          cancelFallbackRef.current = null;
+        }
         const file = e.target.files && e.target.files[0];
         if (!file) {
           // User cancelled picker — handle gracefully
@@ -189,24 +199,30 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured }) => {
       };
 
       input.oncancel = () => {
+        if (cancelFallbackRef.current) {
+          clearTimeout(cancelFallbackRef.current);
+          cancelFallbackRef.current = null;
+        }
         // Modern browsers fire cancel on dialog close without selection
         if (isMountedRef.current) setIsLoading(false);
         if (input.parentNode) input.parentNode.removeChild(input);
       };
 
-      // Fallback: if onchange not fired within timeout, handle cancellation
-      // Some browsers don't fire cancel event
-      const cancelFallback = setTimeout(() => {
-        if (isMountedRef.current && isLoading) {
-          // Do not clear if processFile already started
-        }
+      // Fallback: if onchange/oncancel not fired within timeout, handle cancellation
+      // Some browsers don't fire cancel event — use ref to avoid stale isLoading closure
+      if (cancelFallbackRef.current) {
+        clearTimeout(cancelFallbackRef.current);
+      }
+      cancelFallbackRef.current = setTimeout(() => {
+        cancelFallbackRef.current = null;
+        if (!isMountedRef.current) return;
+        if (input.parentNode) input.parentNode.removeChild(input);
+        // processFile clears isLoading on success; if still pending, unlock UI
+        setIsLoading(false);
       }, 30000);
 
       document.body.appendChild(input);
       input.click();
-
-      // Cleanup fallback timer after interaction
-      setTimeout(() => clearTimeout(cancelFallback), 35000);
     } catch (e) {
       const raw = e?.message || '';
       if (/not available|no camera|unavailable|not supported/i.test(raw)) {
