@@ -62,10 +62,23 @@ app.use((err, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const initialPort = parseInt(process.env.PORT, 10) || 5001;
 
-app.listen(PORT, () => {
-  console.log(`🚀 UnityMap Backend Server listening on port ${PORT}`);
-  console.log(`📡 Health Check URL: http://localhost:${PORT}/api/health`);
-  console.log(`📦 API Base URL:     http://localhost:${PORT}/api`);
-});
+const startServer = (port) => {
+  const server = app.listen(port, () => {
+    console.log(`🚀 UnityMap Backend Server listening on port ${port}`);
+    console.log(`📡 Health Check URL: http://localhost:${port}/api/health`);
+    console.log(`📦 API Base URL:     http://localhost:${port}/api`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`⚠️ Port ${port} is already in use (e.g. macOS AirPlay Receiver). Retrying on port ${port + 1}...`);
+      startServer(port + 1);
+    } else {
+      console.error('❌ Server startup error:', err);
+    }
+  });
+};
+
+startServer(initialPort);

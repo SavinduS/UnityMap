@@ -5,31 +5,32 @@ import { Platform } from 'react-native';
  * Connects React Native / Web frontend to Node.js / Express backend with MongoDB.
  */
 
-const LOCAL_LAN_IP = '192.168.8.183';
-const BACKEND_PORT = '5000';
+const LOCAL_LAN_IP = '192.168.1.164';
+const PRIMARY_PORT = '5001';
+const FALLBACK_PORT = '5000';
 
-export const getBaseUrl = () => {
+export const getBaseUrl = (port = PRIMARY_PORT) => {
   if (Platform.OS === 'web') {
-    return `http://localhost:${BACKEND_PORT}/api`;
+    return `http://localhost:${port}/api`;
   }
-  // For Expo Go on mobile devices and emulators
-  return `http://${LOCAL_LAN_IP}:${BACKEND_PORT}/api`;
+  // For Expo Go on physical mobile devices and emulators
+  return `http://${LOCAL_LAN_IP}:${port}/api`;
 };
 
 export const API_BASE_URL = getBaseUrl();
 
 export const apiRequest = async (endpoint, options = {}) => {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const url = `${API_BASE_URL}${cleanEndpoint}`;
 
   const defaultHeaders = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
   };
 
-  try {
+  const tryFetch = async (baseUrl) => {
+    const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 4500);
 
     const response = await fetch(url, {
       ...options,
@@ -44,10 +45,18 @@ export const apiRequest = async (endpoint, options = {}) => {
     }
 
     return await response.json();
-  } catch (error) {
-    // Graceful error handling for offline/network issues
-    console.warn(`[API Info] ${endpoint} unreachable, using offline fallback:`, error.message);
-    throw error;
+  };
+
+  try {
+    return await tryFetch(getBaseUrl(PRIMARY_PORT));
+  } catch (primaryErr) {
+    // Try fallback port (5000)
+    try {
+      return await tryFetch(getBaseUrl(FALLBACK_PORT));
+    } catch (fallbackErr) {
+      console.warn(`[API Info] ${endpoint} unreachable on port ${PRIMARY_PORT} and ${FALLBACK_PORT}:`, primaryErr.message);
+      throw primaryErr;
+    }
   }
 };
 
