@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
+import { useSpeech } from '../../hooks/useSpeech';
 
 const LAUNCHER_PHRASE = 'Tap anywhere and speak your destination';
 
@@ -11,7 +12,35 @@ const LAUNCHER_PHRASE = 'Tap anywhere and speak your destination';
  * Used as initial modal over UnityMapScreen when screen reader is active.
  */
 export const AudioFirstLauncherScreen = ({ onNavigate }) => {
-  const { palette, borderWidth, isHighContrast, isScreenReaderEnabled, screenReaderName } = useTheme();
+  const { palette, borderWidth, isHighContrast, isScreenReaderEnabled, isReduceMotionEnabled, screenReaderName, announce } = useTheme();
+  const { speak } = useSpeech();
+  const hasAnnouncedRef = useRef(false);
+
+  // Auto-detect TalkBack/VoiceOver on launch and auto-prompt exact phrase
+  useEffect(() => {
+    if (!isScreenReaderEnabled) {
+      hasAnnouncedRef.current = false;
+      return;
+    }
+    if (hasAnnouncedRef.current) return;
+    // Delay to let TalkBack/VoiceOver queue settle (common 800ms)
+    const timer = setTimeout(() => {
+      hasAnnouncedRef.current = true;
+      try {
+        // useSpeech bridges to announceForAccessibility when screen reader active
+        speak(LAUNCHER_PHRASE);
+      } catch (_) {
+        try {
+          announce(LAUNCHER_PHRASE);
+        } catch (_) {}
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [isScreenReaderEnabled, speak, announce]);
+
+  // Also respect reduceMotion — if needed disable any pulse animation (handled via palette)
+  const reduceMotionStyle = isReduceMotionEnabled ? { shadowOpacity: 0, elevation: 0 } : null;
 
   return (
     <View
@@ -38,14 +67,20 @@ export const AudioFirstLauncherScreen = ({ onNavigate }) => {
         </Text>
       </View>
 
-      {/* Full-screen touch target */}
+      {/* Full-screen touch target — 48dp+ */}
       <Pressable
         accessible
         accessibilityRole="button"
         accessibilityLabel={LAUNCHER_PHRASE}
         accessibilityHint={Platform.select({ android: 'Double tap to speak destination', ios: 'Double tap to speak destination', default: 'Activate to speak' })}
         accessibilityState={{ disabled: false }}
+        accessibilityLiveRegion="polite"
+        accessibilityViewIsModal
+        importantForAccessibility="yes"
         onPress={() => {
+          try {
+            speak(LAUNCHER_PHRASE);
+          } catch (_) {}
           if (onNavigate) onNavigate();
         }}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -58,6 +93,7 @@ export const AudioFirstLauncherScreen = ({ onNavigate }) => {
           },
           pressed && { opacity: 0.85 },
           isHighContrast && { shadowOpacity: 0, elevation: 0 },
+          reduceMotionStyle,
         ]}
       >
         <View
