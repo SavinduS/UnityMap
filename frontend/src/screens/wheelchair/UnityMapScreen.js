@@ -8,8 +8,6 @@ import {
   ScrollView,
   Platform,
   Modal,
-  Switch,
-  ActivityIndicator,
 } from 'react-native';
 import tw from 'twrnc';
 import { Feather, MaterialCommunityIcons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
@@ -17,6 +15,7 @@ import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
 import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
+import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useLocation } from '../../hooks/useLocation';
@@ -75,31 +74,19 @@ const UnityMapScreen = () => {
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [dataError, setDataError] = useState(null);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
+  const [showLauncher, setShowLauncher] = useState(false);
 
-  // ── Tap-to-Route & Proximity Safety Analysis state ────────────────────────
-  const [tappedLocation, setTappedLocation] = useState(null); // { latitude, longitude }
-  const [tapRoute, setTapRoute] = useState(null);              // polyline route object for BaseMap
-  const [tapRouteLoading, setTapRouteLoading] = useState(false);
-  const [tapRouteMeta, setTapRouteMeta] = useState(null);      // { distanceText, etaText, destName, safetyStatus }
-  const [tapRouteError, setTapRouteError] = useState(null);
-  const [nearbyHazards, setNearbyHazards] = useState([]);      // Category A: Issues / Hazards (stairs, >8° incline, broken elevators, construction)
-  const [nearbyAccessible, setNearbyAccessible] = useState([]); // Category B: Accessible Features (operational elevators, smooth pathways, entrances)
-  const [safetyStatus, setSafetyStatus] = useState(null);      // Overall route safety status { level, label, badgeText, color, bg, border, iconName }
-  const [isTapSummarySheetVisible, setIsTapSummarySheetVisible] = useState(false); // Hidden by default; shown only on map tap
-  const [activeSheetCategory, setActiveSheetCategory] = useState('hazards'); // 'hazards' | 'accessible'
-  const [currentLocation, setCurrentLocation] = useState(null);
-
-  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled } = useTheme();
+  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
   const { location, loading: locationLoading, recenter } = useLocation();
 
+  // Only show launcher if enabled in Settings (not for every user)
   useEffect(() => {
-    if (location?.latitude != null && location?.longitude != null) {
-      setCurrentLocation({
-        latitude: location.latitude,
-        longitude: location.longitude,
-      });
+    if (isAudioLauncherEnabled) {
+      setShowLauncher(true);
+    } else {
+      setShowLauncher(false);
     }
-  }, [location]);
+  }, [isAudioLauncherEnabled]);
 
   // Load persistent Wheelchair Accessible state & real search history
   useEffect(() => {
@@ -266,246 +253,9 @@ const UnityMapScreen = () => {
     }
   }, [recenter, location]);
 
-  // ── Tap-to-Route & Proximity Safety Analysis handler ───────────────────────
-  const handleMapTap = useCallback(async (loc) => {
-    // loc = { latitude, longitude } from BaseMap MAP_CLICK
-    if (!Number.isFinite(Number(loc?.latitude)) || !Number.isFinite(Number(loc?.longitude))) {
-      return;
-    }
-
-    const destination = {
-      latitude: Number(loc.latitude),
-      longitude: Number(loc.longitude),
-    };
-
-    // User's current location or map center as origin
-    const origin = currentLocation
-      || (location?.latitude && location?.longitude ? location : null)
-      || (dbNodes[0]?.lat ? { latitude: dbNodes[0].lat, longitude: dbNodes[0].lng } : { latitude: mapCenter[0], longitude: mapCenter[1] });
-
-    setTappedLocation(destination);
-    setTapRoute(null);
-    setTapRouteMeta(null);
-    setTapRouteError(null);
-    setNearbyHazards([]);
-    setNearbyAccessible([]);
-    setSafetyStatus(null);
-    setIsTapSummarySheetVisible(false);
-    setTapRouteLoading(true);
-
-    // Minimize search bar overlay so the route and map are fully visible
-    setIsSearchExpanded(false);
-
-    try {
-      // 1. Calculate direct geometric distance from origin to tapped point
-      const directMeters = origin
-        ? calculateHaversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
-        : 0;
-
-      // 2. In parallel: Query road network routing (OSRM) + nearest database nodes
-      const [roadRouteRes, originNode, destNode] = await Promise.all([
-        getRoadRoute(origin.longitude, origin.latitude, destination.longitude, destination.latitude).catch(() => null),
-        getNearestNode(origin.longitude, origin.latitude, 500).catch(() => null),
-        getNearestNode(destination.longitude, destination.latitude, 500).catch(() => null),
-      ]);
-
-      let polyCoords = [];
-      let totalMeters = directMeters;
-      let maxRouteSlope = 0;
-      let routePathways = [];
-      const destName = destNode?.name || 'Selected Location';
-
-      // 3. Check for campus/building database pathway route first if close to DB nodes
-      let foundDbRoute = false;
-      if (originNode && destNode && (originNode._id ?? originNode.id) !== (destNode._id ?? destNode.id)) {
-        try {
-          const originId = originNode._id ?? originNode.id;
-          const destId   = destNode._id  ?? destNode.id;
-          const routeRes = await getRoute(originId, destId, isWheelchairAccessible);
-          const path = routeRes?.data?.path;
-
-          if (routeRes?.success && Array.isArray(path) && path.length >= 2) {
-            const dbCoords = path
-              .map((node) => node.location?.coordinates)
-              .filter((coordinates) => Array.isArray(coordinates) && coordinates.length >= 2)
-              .map(([lng, lat]) => [Number(lat), Number(lng)]);
-
-            if (dbCoords.length >= 2) {
-              polyCoords = dbCoords;
-              foundDbRoute = true;
-              const routeNodeIds = path.map((node) => String(node._id || node.id));
-              routePathways = dbPathways.filter((pathway) => {
-                const startId = String(pathway.startNode?._id || pathway.startNode);
-                const endId = String(pathway.endNode?._id || pathway.endNode);
-                return routeNodeIds.some((fromId, index) => {
-                  const toId = routeNodeIds[index + 1];
-                  return (
-                    toId &&
-                    ((startId === fromId && endId === toId) ||
-                      (startId === toId && endId === fromId))
-                  );
-                });
-              });
-
-              maxRouteSlope = routePathways.reduce(
-                (max, pathway) => Math.max(max, Math.abs(Number(pathway.inclineDegrees) || 0)),
-                0
-              );
-
-              totalMeters = Number(routeRes.data?.totalDistanceMeters) > 0
-                ? Number(routeRes.data.totalDistanceMeters)
-                : polyCoords.slice(1).reduce(
-                    (total, point, index) =>
-                      total + calculateHaversineDistance(
-                        polyCoords[index][0],
-                        polyCoords[index][1],
-                        point[0],
-                        point[1]
-                      ),
-                    0
-                  );
-            }
-          }
-        } catch (_) {}
-      }
-
-      // 4. If no custom DB pathway route, use real road network routing (OSRM) along roads and footways
-      if (!foundDbRoute && roadRouteRes && Array.isArray(roadRouteRes.coordinates) && roadRouteRes.coordinates.length >= 2) {
-        polyCoords = roadRouteRes.coordinates;
-        totalMeters = roadRouteRes.distanceMeters;
-      } else if (!foundDbRoute && polyCoords.length < 2 && origin) {
-        // Fallback: direct line if road API is unreachable
-        polyCoords = [
-          [origin.latitude, origin.longitude],
-          [destination.latitude, destination.longitude],
-        ];
-        totalMeters = directMeters;
-      }
-
-      const etaMins = calculateWheelchairETA(totalMeters, maxRouteSlope);
-
-      // Set the active route on the map
-      if (polyCoords.length >= 2) {
-        setTapRoute({
-          id: `tap_route_${Date.now()}`,
-          coordinates: polyCoords,
-          color: '#3B82F6',
-          isSelected: true,
-          destName,
-        });
-      }
-
-      // 5. Proximity Safety & Accessibility Analysis:
-      // Query nearby points within 200m–500m radius of tapped destination and along route
-      const [nearbyObsRes, nearbyNodesRes] = await Promise.all([
-        getNearbyObstacles(destination.longitude, destination.latitude, 400).catch(() => ({ data: [] })),
-        getNearbyNodes(destination.longitude, destination.latitude, 400).catch(() => ({ data: [] })),
-      ]);
-
-      const apiObs = Array.isArray(nearbyObsRes?.data) ? nearbyObsRes.data : [];
-      const apiNodes = Array.isArray(nearbyNodesRes?.data) ? nearbyNodesRes.data : [];
-
-      const combinedObs = [...apiObs];
-      dbObstacles.forEach((dbo) => {
-        if (!combinedObs.some((o) => (o._id || o.id) === (dbo._id || dbo.id))) {
-          combinedObs.push(dbo);
-        }
-      });
-
-      const combinedNodes = [...apiNodes];
-      dbNodes.forEach((dbn) => {
-        if (!combinedNodes.some((n) => (n._id || n.id) === (dbn._id || dbn.id))) {
-          combinedNodes.push(dbn);
-        }
-      });
-
-      // Categorize into:
-      // a. Issues / Hazards (ramp inclines > 8°, stairs without ramps, broken elevators, construction)
-      // b. Accessible / Helpful Features (operational elevators, accessible rest areas, smooth paved pathways, entrances)
-      const { hazards, accessible } = categorizeProximityFeatures({
-        nearbyObstacles: combinedObs,
-        nearbyNodes: combinedNodes,
-        elevators: dbElevators,
-        pathways: dbPathways,
-        centerCoords: [destination.latitude, destination.longitude],
-        routeCoords: polyCoords,
-        radiusMeters: 400,
-      });
-
-      // Compute overall safety status (ADA tiers: safe <=5°, caution <=8°, hazard >8°)
-      const status = computeRouteSafetyStatus(routePathways, hazards, accessible);
-
-      setNearbyHazards(hazards);
-      setNearbyAccessible(accessible);
-      setSafetyStatus(status);
-      setActiveSheetCategory(hazards.length > 0 ? 'hazards' : 'accessible');
-      setIsTapSummarySheetVisible(true);
-
-      // Always set the exact distance and ETA metadata
-      setTapRouteMeta({
-        distanceText: formatDistance(totalMeters),
-        etaText: formatDuration(etaMins),
-        destName,
-        safetyStatus: status,
-      });
-
-    } catch (err) {
-      console.warn('[UnityMapScreen] Tap route error:', err.message);
-      // Even upon unexpected error, compute direct distance
-      const directMeters = origin
-        ? calculateHaversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
-        : 0;
-      const etaMins = calculateWheelchairETA(directMeters, 0);
-
-      const polyCoords = origin ? [
-        [origin.latitude, origin.longitude],
-        [destination.latitude, destination.longitude],
-      ] : [];
-
-      if (polyCoords.length >= 2) {
-        setTapRoute({
-          id: `tap_route_${Date.now()}`,
-          coordinates: polyCoords,
-          color: '#3B82F6',
-          isSelected: true,
-          destName: 'Selected Destination',
-        });
-      }
-
-      const status = computeRouteSafetyStatus([], [], []);
-
-      setTapRouteMeta({
-        distanceText: formatDistance(directMeters),
-        etaText: formatDuration(etaMins),
-        destName: 'Selected Destination',
-        safetyStatus: status,
-      });
-      setIsTapSummarySheetVisible(true);
-    } finally {
-      setTapRouteLoading(false);
-    }
-  }, [currentLocation, location, mapCenter, dbNodes, dbPathways, dbObstacles, dbElevators, isWheelchairAccessible]);
-
-  const handleLocationFound = useCallback((gps) => {
-    if (Number.isFinite(Number(gps?.latitude)) && Number.isFinite(Number(gps?.longitude))) {
-      setCurrentLocation({
-        latitude: Number(gps.latitude),
-        longitude: Number(gps.longitude),
-      });
-    }
-  }, []);
-
-  // Clear the active tap route and reset proximity safety sheet
-  const handleClearTap = useCallback(() => {
-    setTappedLocation(null);
-    setTapRoute(null);
-    setTapRouteMeta(null);
-    setTapRouteError(null);
-    setNearbyHazards([]);
-    setNearbyAccessible([]);
-    setSafetyStatus(null);
-    setIsTapSummarySheetVisible(false);
-    setTapRouteLoading(false);
+  // SPT-104 single page: launcher tap just dismisses to map (no VoiceNavigation bridge)
+  const handleLauncherNavigate = useCallback(() => {
+    setShowLauncher(false);
   }, []);
 
   // Select destination from real DB list / search history
@@ -1792,249 +1542,24 @@ const UnityMapScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {/* ── Wheelchair & Route Filters Modal Drawer ────────────────────────── */}
+      {/* SPT-104 single page: Audio-First Launcher as Initial Modal over UnityMapScreen */}
       <Modal
-        visible={isDrawerOpen}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setIsDrawerOpen(false)}
+        visible={showLauncher}
+        animationType="fade"
+        transparent={false}
+        onRequestClose={() => setShowLauncher(false)}
+        accessibilityViewIsModal
       >
-        <View style={tw`flex-1 justify-end bg-black/60`}>
-          <TouchableOpacity
-            style={tw`flex-1`}
-            activeOpacity={1}
-            onPress={() => setIsDrawerOpen(false)}
-            accessible={false}
-          />
-          <View
-            style={[
-              tw`rounded-t-[32px] p-6 shadow-2xl`,
-              {
-                backgroundColor: palette.surface,
-                borderColor: palette.cardBorder,
-                borderTopWidth: borderWidth,
-              },
-              isHighContrast && { shadowOpacity: 0, elevation: 0 },
-            ]}
-          >
-            {/* Drawer Top Handle */}
-            <View
-              style={[
-                tw`w-12 h-1.5 rounded-full self-center mb-4`,
-                { backgroundColor: palette.borderStrong },
-              ]}
-            />
-
-            {/* Header */}
-            <View style={tw`flex-row items-center justify-between mb-5`}>
-              <View style={tw`flex-row items-center`}>
-                <View
-                  style={[
-                    tw`w-10 h-10 rounded-xl items-center justify-center mr-3`,
-                    {
-                      backgroundColor: isWheelchairAccessible ? '#10B98120' : palette.secondaryBg,
-                    },
-                  ]}
-                >
-                  <FontAwesome5
-                    name="wheelchair"
-                    size={19}
-                    color={isWheelchairAccessible ? '#10B981' : palette.primary}
-                  />
-                </View>
-                <View>
-                  <Text
-                    {...textProps}
-                    style={[tw`text-lg font-bold`, { color: palette.textPrimary }]}
-                  >
-                    Mobility & Route Filter
-                  </Text>
-                  <Text
-                    {...textProps}
-                    style={[tw`text-xs`, { color: palette.textMuted }]}
-                  >
-                    Custom accessibility preferences
-                  </Text>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => setIsDrawerOpen(false)}
-                style={[
-                  tw`w-11 h-11 rounded-full items-center justify-center`,
-                  { backgroundColor: palette.secondaryBg },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Close filters drawer"
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Feather name="x" size={20} color={palette.textPrimary} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Section 1: Persistent Wheelchair Accessible Toggle */}
-            <View
-              style={[
-                tw`p-4 rounded-2xl mb-4 border`,
-                {
-                  backgroundColor: isWheelchairAccessible
-                    ? isHighContrast
-                      ? '#000000'
-                      : '#ECFDF5'
-                    : palette.surface,
-                  borderColor: isWheelchairAccessible ? '#10B981' : palette.border,
-                  borderWidth: isHighContrast ? 2 : 1,
-                },
-              ]}
-            >
-              <View style={tw`flex-row items-center justify-between mb-1`}>
-                <View style={tw`flex-1 mr-3`}>
-                  <Text
-                    {...textProps}
-                    style={[
-                      tw`font-bold text-base`,
-                      {
-                        color:
-                          isWheelchairAccessible && !isHighContrast
-                            ? '#065F46'
-                            : palette.textPrimary,
-                      },
-                    ]}
-                  >
-                    Wheelchair Accessible Mode
-                  </Text>
-                  <Text
-                    {...textProps}
-                    style={[
-                      tw`text-xs leading-4 mt-0.5`,
-                      {
-                        color:
-                          isWheelchairAccessible && !isHighContrast
-                            ? '#047857'
-                            : palette.textMuted,
-                      },
-                    ]}
-                  >
-                    Excludes stairs, steep pathways, and out-of-service elevators.
-                  </Text>
-                </View>
-                <Switch
-                  value={isWheelchairAccessible}
-                  onValueChange={handleToggleWheelchair}
-                  trackColor={{ false: '#D1D5DB', true: '#10B981' }}
-                  thumbColor={isWheelchairAccessible ? '#FFFFFF' : '#F3F4F6'}
-                  accessibilityLabel="Toggle Wheelchair Accessible routing mode"
-                />
-              </View>
-            </View>
-
-            {/* Section 2: Incline & Slope Threshold */}
-            <View style={tw`mb-4`}>
-              <Text
-                {...textProps}
-                style={[
-                  tw`text-xs font-bold uppercase tracking-wider mb-2`,
-                  { color: palette.textMuted },
-                ]}
-              >
-                Maximum Slope Incline
-              </Text>
-              <View style={tw`flex-row gap-2`}>
-                {[
-                  { label: '≤ 5° (ADA Safe)', value: 5 },
-                  { label: '≤ 8° (Moderate)', value: 8 },
-                  { label: 'Any Slope', value: null },
-                ].map((item) => {
-                  const isSelected = maxSlope === item.value;
-                  return (
-                    <TouchableOpacity
-                      key={item.label}
-                      onPress={() => setMaxSlope(item.value)}
-                      style={[
-                        tw`flex-1 py-3 px-2 rounded-xl items-center justify-center border`,
-                        {
-                          minHeight: 48,
-                          backgroundColor: isSelected
-                            ? isHighContrast
-                              ? '#000000'
-                              : '#0B3D2E'
-                            : palette.surface,
-                          borderColor: isSelected
-                            ? isHighContrast
-                              ? '#FFFFFF'
-                              : '#10B981'
-                            : palette.border,
-                          borderWidth: isSelected ? 2 : 1,
-                        },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isSelected }}
-                      accessibilityLabel={`Max slope threshold: ${item.label}`}
-                    >
-                      <Text
-                        {...textProps}
-                        style={[
-                          tw`text-xs font-bold text-center`,
-                          { color: isSelected ? '#FFFFFF' : palette.textPrimary },
-                        ]}
-                      >
-                        {item.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* Section 3: Live Database Metrics Summary */}
-            <View
-              style={[
-                tw`p-3.5 rounded-xl mb-5 flex-row items-center justify-between border`,
-                {
-                  backgroundColor: palette.secondaryBg,
-                  borderColor: palette.border,
-                },
-              ]}
-            >
-              <View style={tw`flex-row items-center`}>
-                <View
-                  style={[
-                    tw`w-2.5 h-2.5 rounded-full mr-2`,
-                    { backgroundColor: isBackendConnected ? '#10B981' : '#F59E0B' },
-                  ]}
-                />
-                <Text
-                  {...textProps}
-                  style={[tw`text-xs font-semibold`, { color: palette.textPrimary }]}
-                >
-                  {isBackendConnected ? 'Connected to MongoDB Atlas' : 'Connecting to Backend (Port 5000)...'}
-                </Text>
-              </View>
-              <Text {...textProps} style={[tw`text-xs font-bold`, { color: palette.primary }]}>
-                {dbNodes.length} Nodes • {filteredPathways.length} Paths
-              </Text>
-            </View>
-
-            {/* Apply & Close Button */}
-            <TouchableOpacity
-              onPress={() => setIsDrawerOpen(false)}
-              style={[
-                tw`w-full py-3.5 rounded-2xl items-center justify-center shadow-md`,
-                {
-                  backgroundColor: palette.primary,
-                  minHeight: 48,
-                },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Apply filters and close drawer"
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text {...textProps} style={[tw`text-white font-bold text-base`]}>
-                Apply & Return to Map
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <AudioFirstLauncherScreen onNavigate={handleLauncherNavigate} />
+        <TouchableOpacity
+          onPress={() => setShowLauncher(false)}
+          style={tw`absolute top-12 right-4 px-3 py-2 rounded-full bg-black/60`}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss launcher, show map"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={tw`text-white text-xs font-bold`}>Skip to Map</Text>
+        </TouchableOpacity>
       </Modal>
     </View>
   );

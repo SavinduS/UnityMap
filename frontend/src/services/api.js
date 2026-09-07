@@ -221,6 +221,28 @@ export const getRoadRoute = async (originLng, originLat, destLng, destLat) => {
 
 export const checkHealth = () => apiRequest('/health');
 
+// Speech & Audio Cue Endpoints (SPT-007 / SPT-104)
+export const getSpeechPrompts = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return apiRequest(`/speech/prompts${query ? `?${query}` : ''}`);
+};
+
+export const getLauncherPrompt = (locale = 'en') => {
+  return apiRequest(`/speech/prompts?triggerType=launcher_prompt&locale=${locale}`);
+};
+
+export const getAudioCues = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return apiRequest(`/audio/cues${query ? `?${query}` : ''}`);
+};
+
+export const previewSpeech = (body) => {
+  return apiRequest('/speech/preview', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+};
+
 export default {
   API_BASE_URL,
   getBaseUrl,
@@ -239,4 +261,8 @@ export default {
   getRoute,
   getRoadRoute,
   checkHealth,
+  getSpeechPrompts,
+  getLauncherPrompt,
+  getAudioCues,
+  previewSpeech,
 };

@@ -86,5 +86,38 @@
     "verbosity": "standard",
     "isActive": true,
     "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_LAUNCHER",
+    "triggerType": "launcher_prompt",
+    "template": "Tap anywhere and speak your destination",
+    "locale": "en",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_LAUNCHER_SI",
+    "triggerType": "launcher_prompt",
+    "template": "Tap anywhere and speak your destination",
+    "locale": "si",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_LAUNCHER_TA",
+    "triggerType": "launcher_prompt",
+    "template": "Tap anywhere and speak your destination",
+    "locale": "ta",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
   }
 ]

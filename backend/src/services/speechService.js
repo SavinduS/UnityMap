@@ -89,7 +89,23 @@ const generateTurnSnippets = async (pathNodes = [], pathways = [], options = {})
   return snippets;
 };
 
+/**
+ * Get launcher prompt for given locale with fallback to en
+ */
+const getLauncherPrompt = async (locale = 'en') => {
+  try {
+    let prompt = await SpeechPrompt.findOne({ triggerType: 'launcher_prompt', locale, isActive: true }).lean();
+    if (!prompt) {
+      prompt = await SpeechPrompt.findOne({ triggerType: 'launcher_prompt', locale: 'en', isActive: true }).lean();
+    }
+    return prompt;
+  } catch (_) {
+    return null;
+  }
+};
+
 module.exports = {
   interpolateTemplate,
   generateTurnSnippets,
+  getLauncherPrompt,
 };
