@@ -79,7 +79,8 @@ exports.getAllPathways = async (req, res) => {
     const filter = {};
 
     if (wheelchairAccessible !== undefined) {
-      filter.isWheelchairAccessible = wheelchairAccessible === 'true';
+      filter.isWheelchairAccessible =
+        wheelchairAccessible === 'true' || wheelchairAccessible === true || wheelchairAccessible === '1';
     }
 
     if (pathType) {
@@ -90,10 +91,24 @@ exports.getAllPathways = async (req, res) => {
       .populate('startNode', 'name floorLevel location')
       .populate('endNode', 'name floorLevel location');
 
+    // Attach standard GeoJSON LineString geometry so maps can easily render lines
+    const formattedPathways = pathways.map((p) => {
+      const pObj = p.toObject ? p.toObject() : { ...p };
+      const startCoords = p.startNode?.location?.coordinates;
+      const endCoords = p.endNode?.location?.coordinates;
+      if (Array.isArray(startCoords) && Array.isArray(endCoords)) {
+        pObj.geometry = {
+          type: 'LineString',
+          coordinates: [startCoords, endCoords],
+        };
+      }
+      return pObj;
+    });
+
     res.status(200).json({
       success: true,
-      count: pathways.length,
-      data: pathways,
+      count: formattedPathways.length,
+      data: formattedPathways,
     });
   } catch (error) {
     res.status(500).json({
