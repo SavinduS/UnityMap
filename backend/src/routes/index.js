@@ -5,10 +5,12 @@ const nodeRoutes = require('./nodeRoutes');
 const pathwayRoutes = require('./pathwayRoutes');
 const elevatorRoutes = require('./elevatorRoutes');
 const obstacleRoutes = require('./obstacleRoutes');
+const adminAuthRoutes = require('./adminAuthRoutes');
 
 router.use('/nodes', nodeRoutes);
 router.use('/pathways', pathwayRoutes);
 router.use('/elevators', elevatorRoutes);
 router.use('/obstacles', obstacleRoutes);
+router.use('/admin/auth', adminAuthRoutes);
 
 module.exports = router;
