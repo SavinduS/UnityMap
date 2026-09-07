@@ -47,11 +47,7 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
     setSelectedWardId(wardId);
     setEmail(defaultEmail);
     // Gate password auto-fill behind __DEV__; leave blank in non-dev environments
-    if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      setPassword('CMC-Secure#2026');
-    } else {
-      setPassword('');
-    }
+    setPassword(typeof __DEV__ !== 'undefined' && __DEV__ ? 'CMC-Secure#2026' : '');
     setErrorMessage('');
   };
 
