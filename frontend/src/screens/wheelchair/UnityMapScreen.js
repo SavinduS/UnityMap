@@ -45,7 +45,7 @@ const UnityMapScreen = () => {
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
 
-  const { palette, borderWidth, isHighContrast } = useTheme();
+  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled } = useTheme();
   const { location, loading: locationLoading, recenter } = useLocation();
 
   // Load persistent Wheelchair Accessible state & real search history
@@ -431,8 +431,9 @@ const UnityMapScreen = () => {
               zoom={14}
               markers={mapMarkers}
               isHighContrast={isHighContrast}
+              isReduceMotionEnabled={isReduceMotionEnabled}
               palette={palette}
-            />
+             />
 
             {/* Accessible Search Bar & Real Destination Search List Overlay */}
             {isSearchExpanded && (

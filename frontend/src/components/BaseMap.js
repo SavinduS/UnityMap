@@ -21,6 +21,7 @@ const BaseMap = ({
   onReady,
   style,
   isHighContrast = false,
+  isReduceMotionEnabled = false,
   palette = null,
 }) => {
   const webViewRef = useRef(null);
@@ -56,7 +57,7 @@ const BaseMap = ({
     .leaflet-bar { border: ${isHighContrast ? '2px solid #000000' : 'none'} !important; box-shadow: ${isHighContrast ? 'none' : '0 4px 12px rgba(0,0,0,0.1)'} !important; }
     .leaflet-bar a { background: ${surface} !important; color: ${primary} !important; border-bottom: 1px solid ${cardBorder} !important; }
 
-    /* Custom Pin Marker Wrapper */
+    /* Custom Pin Marker Wrapper — respects reduceMotion */
     .custom-pin {
       position: relative;
       display: flex;
@@ -64,9 +65,9 @@ const BaseMap = ({
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+      ${isReduceMotionEnabled ? '' : 'transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);'}
     }
-    .custom-pin:active { transform: scale(1.15); }
+    .custom-pin:active { transform: ${isReduceMotionEnabled ? 'none' : 'scale(1.15)'}; }
 
     /* Pin bubble */
     .pin-bubble {
@@ -126,7 +127,7 @@ const BaseMap = ({
       ${isHighContrast ? 'border: 1px solid #FFFFFF;' : ''}
     }
 
-    /* User GPS Blue/White Pulsing Dot — High-Contrast black border */
+    /* User GPS Blue/White Pulsing Dot — High-Contrast + Reduce Motion */
     .user-dot {
       width: 22px;
       height: 22px;
@@ -134,7 +135,7 @@ const BaseMap = ({
       border: 4px solid ${isHighContrast ? '#000000' : '#2563EB'};
       border-radius: 50%;
       box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 6px rgba(37, 99, 235, 0.25), 0 3px 8px rgba(0,0,0,0.3)'};
-      animation: ${isHighContrast ? 'none' : 'pulse 2.5s infinite'};
+      animation: ${isReduceMotionEnabled ? 'none' : isHighContrast ? 'none' : 'pulse 2.5s infinite'};
     }
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.45); }
@@ -222,7 +223,7 @@ const BaseMap = ({
   </script>
 </body>
 </html>
-  `, [normalizedCenter, zoom, themeBg, surface, primary, cardBorder, textPrimary, isHighContrast, markers]);
+  `, [normalizedCenter, zoom, themeBg, surface, primary, cardBorder, textPrimary, isHighContrast,markers, isReduceMotionEnabled]);
 
 
   const handleMessage = useCallback((event) => {
