@@ -16,12 +16,10 @@ const routeSpeechSnippetSchema = new mongoose.Schema(
     nodeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Node',
-      index: true,
     },
     pathwayId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Pathway',
-      index: true,
     },
     maneuver: {
       type: String,
