@@ -235,7 +235,84 @@ export const fetchTriageMetrics = async (wardId = 'CMC-W01') => {
   };
 };
 
+/**
+ * Fetch detailed report inspection data with cross-referenced asset
+ */
+export const fetchReportDetails = async (reportId, wardId = 'CMC-W01') => {
+  try {
+    const response = await apiRequest(`/admin/triage/report/${encodeURIComponent(reportId)}?wardId=${encodeURIComponent(wardId)}`);
+    if (response?.success && response.data) {
+      return response.data;
+    }
+  } catch (error) {
+    console.warn('[triageService] API report details unreachable; using offline report details.');
+  }
+
+  const found = MOCK_TRIAGED_REPORTS.find((r) => r._id === reportId);
+  return found || MOCK_TRIAGED_REPORTS[0];
+};
+
+/**
+ * Dispatch administrative municipal decision (SPT-208)
+ * Dispositions: APPROVED, REJECTED, INFO_REQUESTED
+ */
+export const dispatchDecision = async ({
+  reportId,
+  decision,
+  allocatedBudgetLKR = 0,
+  rejectionReason = null,
+  notes = '',
+  staffId = 'CMC-ENG-882',
+  wardId = 'CMC-W01',
+  repairTargetDays = 7,
+} = {}) => {
+  try {
+    const response = await apiRequest('/admin/triage/dispatch', {
+      method: 'POST',
+      body: JSON.stringify({
+        reportId,
+        decision,
+        allocatedBudgetLKR,
+        rejectionReason,
+        notes,
+        staffId,
+        wardId,
+        repairTargetDays,
+      }),
+    });
+    if (response?.success && response.data) {
+      return response.data;
+    }
+  } catch (error) {
+    console.warn('[triageService] API dispatch unreachable; updating local mock state.');
+  }
+
+  // Local fallback simulation
+  const normalized = decision?.toUpperCase();
+  const mockReport = MOCK_TRIAGED_REPORTS.find((r) => r._id === reportId);
+  if (mockReport) {
+    if (normalized === 'APPROVED') {
+      mockReport.triageStatus = 'approved';
+    } else if (normalized === 'REJECTED') {
+      mockReport.triageStatus = 'rejected';
+    } else if (normalized === 'INFO_REQUESTED') {
+      mockReport.triageStatus = 'info_requested';
+    }
+  }
+
+  return {
+    reportId,
+    decision: normalized,
+    status: normalized === 'APPROVED' ? 'approved' : normalized === 'REJECTED' ? 'rejected' : 'info_requested',
+    allocatedBudgetLKR: Number(allocatedBudgetLKR) || 0,
+    rejectionReason,
+    dispatchedAt: new Date().toISOString(),
+  };
+};
+
 export default {
   fetchTriageQueue,
   fetchTriageMetrics,
+  fetchReportDetails,
+  dispatchDecision,
 };

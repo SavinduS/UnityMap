@@ -25,6 +25,7 @@ import {
 } from '../../utils/wardJurisdictions';
 import AdminLoginScreen from './AdminLoginScreen';
 import TriageQueueScreen from './TriageQueueScreen';
+import ReportInspectionScreen from './ReportInspectionScreen';
 
 export const AdminPortalScaffoldScreen = () => {
   const [currentUser, setCurrentUser] = useState(adminAuthService.getCurrentUser());
@@ -32,7 +33,8 @@ export const AdminPortalScaffoldScreen = () => {
     currentUser?.assignedWardId || 'CMC-W01'
   );
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [currentView, setCurrentView] = useState('hub');
+  const [currentView, setCurrentView] = useState('hub'); // 'hub' | 'triage' | 'inspection'
+  const [selectedReportForInspection, setSelectedReportForInspection] = useState(null);
 
   useEffect(() => {
     const unsubscribe = adminAuthService.subscribe((user) => {
@@ -58,12 +60,27 @@ export const AdminPortalScaffoldScreen = () => {
     return <AdminLoginScreen onLoginSuccess={(u) => setCurrentUser(u)} />;
   }
 
+  if (currentView === 'inspection') {
+    return (
+      <ReportInspectionScreen
+        reportId={selectedReportForInspection?._id || 'RPT-CMC-1001'}
+        initialReport={selectedReportForInspection}
+        onBack={() => setCurrentView('triage')}
+        onDecisionComplete={() => {
+          setSelectedReportForInspection(null);
+          setCurrentView('triage');
+        }}
+      />
+    );
+  }
+
   if (currentView === 'triage') {
     return (
       <TriageQueueScreen
         onBack={() => setCurrentView('hub')}
         onSelectReport={(report) => {
-          console.log('[AdminPortal] Selected report for inspection:', report?._id);
+          setSelectedReportForInspection(report);
+          setCurrentView('inspection');
         }}
       />
     );
@@ -237,23 +254,31 @@ export const AdminPortalScaffoldScreen = () => {
           </TouchableOpacity>
 
           {/* Module 3: Inspection Workspace */}
-          <View style={styles.moduleCard}>
+          <TouchableOpacity
+            style={styles.moduleCard}
+            onPress={() => {
+              setSelectedReportForInspection(null);
+              setCurrentView('inspection');
+            }}
+            activeOpacity={0.7}
+          >
             <View style={[styles.moduleIconBox, { backgroundColor: '#EDE9FE' }]}>
               <Text style={styles.moduleIcon}>🔎</Text>
             </View>
             <View style={styles.moduleInfo}>
               <View style={styles.moduleTagRow}>
                 <Text style={styles.moduleTicket}>SPT-207 / SPT-208 (Page 3)</Text>
-                <View style={styles.sprintTag}>
-                  <Text style={styles.sprintTagText}>SPRINT 2</Text>
+                <View style={styles.readyTag}>
+                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
                 </View>
               </View>
               <Text style={styles.moduleName}>Evidence Inspection & Asset Check</Text>
               <Text style={styles.moduleDesc}>
-                Side-by-side photo comparison against CMC asset records with Approve & Budget, Reject, or Request Info.
+                Side-by-side photo comparison against CMC asset records with Approve & Budget, Reject, or Request Info. Tap to inspect.
               </Text>
             </View>
-          </View>
+            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
+          </TouchableOpacity>
 
           {/* Module 4: Ward Compliance */}
           <View style={styles.moduleCard}>
