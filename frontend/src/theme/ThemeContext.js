@@ -1,7 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AccessibilityInfo, Platform } from 'react-native';
 import { getPalette, getBorderWidth, palettes } from './tokens';
-import { loadHighContrast, saveHighContrast } from './storage';
+import {
+  loadHighContrast,
+  saveHighContrast,
+  loadAudioLauncherEnabled,
+  saveAudioLauncherEnabled,
+  loadPreferredSTTLocale,
+  savePreferredSTTLocale,
+} from './storage';
 
 const ThemeContext = createContext({
   isHighContrast: false,
@@ -15,6 +22,11 @@ const ThemeContext = createContext({
   isReduceMotionEnabled: false,
   setIsReduceMotionEnabled: () => {},
   toggleReduceMotion: () => {},
+  isAudioLauncherEnabled: false,
+  setAudioLauncherEnabled: () => {},
+  toggleAudioLauncher: () => {},
+  preferredSTTLocale: 'en',
+  setPreferredSTTLocale: () => {},
   screenReaderName: Platform.select({ android: 'TalkBack', ios: 'VoiceOver', default: 'Screen Reader' }),
   announce: () => {},
 });
@@ -23,9 +35,13 @@ export const ThemeProvider = ({ children }) => {
   const [isHighContrast, setIsHighContrast] = useState(false);
   const [isScreenReaderEnabled, setIsScreenReaderEnabled] = useState(false);
   const [isReduceMotionEnabled, setIsReduceMotionEnabled] = useState(false);
+  const [isAudioLauncherEnabled, setIsAudioLauncherEnabled] = useState(false);
+  const [preferredSTTLocale, setPreferredSTTLocaleState] = useState('en');
 
   useEffect(() => {
     loadHighContrast().then(setIsHighContrast);
+    loadAudioLauncherEnabled().then(setIsAudioLauncherEnabled);
+    loadPreferredSTTLocale().then(setPreferredSTTLocaleState);
   }, []);
 
   // Detect TalkBack / VoiceOver on launch and subscribe to OS changes
@@ -105,6 +121,24 @@ export const ThemeProvider = ({ children }) => {
     setIsReduceMotionEnabled((prev) => !prev);
   }, []);
 
+  const setAudioLauncherEnabled = useCallback((value) => {
+    setIsAudioLauncherEnabled(value);
+    saveAudioLauncherEnabled(value);
+  }, []);
+
+  const toggleAudioLauncher = useCallback(() => {
+    setIsAudioLauncherEnabled((prev) => {
+      const next = !prev;
+      saveAudioLauncherEnabled(next);
+      return next;
+    });
+  }, []);
+
+  const setPreferredSTTLocale = useCallback((locale) => {
+    setPreferredSTTLocaleState(locale);
+    savePreferredSTTLocale(locale);
+  }, []);
+
   const announce = useCallback((message) => {
     if (!message) return;
     try {
@@ -130,6 +164,11 @@ export const ThemeProvider = ({ children }) => {
       isReduceMotionEnabled,
       setIsReduceMotionEnabled: setIsReduceMotionEnabledCb,
       toggleReduceMotion,
+      isAudioLauncherEnabled,
+      setAudioLauncherEnabled,
+      toggleAudioLauncher,
+      preferredSTTLocale,
+      setPreferredSTTLocale,
       screenReaderName,
       announce,
     }),
@@ -143,6 +182,11 @@ export const ThemeProvider = ({ children }) => {
       isReduceMotionEnabled,
       setIsReduceMotionEnabledCb,
       toggleReduceMotion,
+      isAudioLauncherEnabled,
+      setAudioLauncherEnabled,
+      toggleAudioLauncher,
+      preferredSTTLocale,
+      setPreferredSTTLocale,
       screenReaderName,
       announce,
     ]

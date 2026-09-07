@@ -15,6 +15,7 @@ import { Feather } from '@expo/vector-icons';
 import Card from '../../components/Card';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
+import { getAvailableLocales } from '../../utils/locale';
 import adminAuthService from '../../services/adminAuthService';
 import authService from '../../services/authService';
 import AdminPortalScaffoldScreen from '../admin/AdminPortalScaffoldScreen';
@@ -27,6 +28,10 @@ export const SettingsScreen = () => {
     setIsScreenReaderEnabled,
     isReduceMotionEnabled,
     setIsReduceMotionEnabled,
+    isAudioLauncherEnabled,
+    setAudioLauncherEnabled,
+    preferredSTTLocale,
+    setPreferredSTTLocale,
     screenReaderName,
     palette,
     borderWidth,
@@ -319,6 +324,80 @@ export const SettingsScreen = () => {
             style={styles.switch}
           />
         </View>
+
+        <View
+          style={[
+            styles.row,
+            { borderColor: palette.border, borderWidth, backgroundColor: palette.surface, marginTop: 12 },
+          ]}
+        >
+          <View style={styles.rowText}>
+            <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
+              Audio-First Launcher
+            </Text>
+            <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
+              {isAudioLauncherEnabled ? 'On — shows as initial modal over map' : 'Off — map shows directly'}
+            </Text>
+          </View>
+          <Switch
+            value={isAudioLauncherEnabled}
+            onValueChange={setAudioLauncherEnabled}
+            trackColor={{ false: '#E5E7EB', true: palette.primary }}
+            thumbColor="#FFFFFF"
+            accessibilityRole="switch"
+            accessibilityLabel="Audio-First Launcher"
+            accessibilityState={{ checked: isAudioLauncherEnabled }}
+            style={styles.switch}
+          />
+        </View>
+
+        <View
+          style={[
+            styles.localeRow,
+            { borderColor: palette.border, borderWidth, backgroundColor: palette.surface, marginTop: 12 },
+          ]}
+        >
+          <View style={styles.rowText}>
+            <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
+              Speech Language
+            </Text>
+            <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
+              High accuracy — confidence ≥0.6, 3 alternatives
+            </Text>
+          </View>
+          <View style={styles.localeChips}>
+            {getAvailableLocales().map((loc) => {
+              const isActive = preferredSTTLocale === loc.code;
+              return (
+                <TouchableOpacity
+                  key={loc.code}
+                  onPress={() => setPreferredSTTLocale(loc.code)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isActive }}
+                  accessibilityLabel={`Set language ${loc.label}`}
+                  style={[
+                    styles.localeChip,
+                    {
+                      backgroundColor: isActive ? palette.primary : palette.surfaceAlt,
+                      borderColor: palette.border,
+                      borderWidth: isActive ? 0 : 1,
+                    },
+                  ]}
+                >
+                  <Text
+                    {...textProps}
+                    style={[getTextStyle('xs', { isHighContrast }), { color: isActive ? palette.primaryText : palette.textPrimary, fontWeight: isActive ? '700' : '500' }]}
+                  >
+                    {loc.label}
+                  </Text>
+                  <Text style={[getTextStyle('xs', { isHighContrast }), { color: isActive ? palette.primaryText : palette.textMuted, fontSize: 10 }]}>
+                    {loc.bcp47}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
       </Card>
 
       <Card>
@@ -468,6 +547,27 @@ const styles = StyleSheet.create({
   rowLabel: {},
   rowHint: { marginTop: 2 },
   switch: { transform: [{ scaleX: 1.05 }, { scaleY: 1.05 }] },
+  localeRow: {
+    minHeight: 48,
+    flexDirection: 'column',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  localeChips: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  localeChip: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
   preview: {
     marginTop: 16,
     borderRadius: 12,

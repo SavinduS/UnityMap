@@ -108,7 +108,7 @@ exports.getAllObstacles = async (req, res) => {
     const filter = {};
 
     if (isActive !== undefined) {
-      filter.isActive = isActive === 'true';
+      filter.isActive = isActive === 'true' || isActive === true || isActive === '1';
     }
 
     if (obstacleType) {

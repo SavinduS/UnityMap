@@ -1,0 +1,123 @@
+[
+  {
+    "promptCode": "SPROMPT_ROUTE_START",
+    "triggerType": "route_start",
+    "template": "Starting route to {{landmark}}. Total distance {{distance}} meters.",
+    "locale": "en",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_APPROACHING_TURN",
+    "triggerType": "approaching_turn",
+    "template": "In {{distance}} meters turn {{maneuver}} toward {{landmark}}",
+    "locale": "en",
+    "priority": 2,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_BARRIER_AHEAD",
+    "triggerType": "barrier_ahead",
+    "template": "Caution: {{landmark}} ahead in {{distance}} meters",
+    "locale": "en",
+    "priority": 3,
+    "ariaPoliteness": "assertive",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_ELEVATOR_OUT",
+    "triggerType": "elevator_out_of_service",
+    "template": "Elevator at {{landmark}} out of service, rerouting",
+    "locale": "en",
+    "priority": 3,
+    "ariaPoliteness": "assertive",
+    "verbosity": "detailed",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_INCLINE_WARNING",
+    "triggerType": "incline_warning",
+    "template": "Caution: steep incline {{incline}} degrees ahead on {{landmark}}",
+    "locale": "en",
+    "priority": 3,
+    "ariaPoliteness": "assertive",
+    "verbosity": "detailed",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_DESTINATION_ARRIVED",
+    "triggerType": "destination_arrived",
+    "template": "You have arrived at {{landmark}}",
+    "locale": "en",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "minimal",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_RECALCULATING",
+    "triggerType": "recalculating",
+    "template": "Recalculating route, please wait",
+    "locale": "en",
+    "priority": 2,
+    "ariaPoliteness": "assertive",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_OFF_ROUTE",
+    "triggerType": "off_route",
+    "template": "You are off route, rerouting to {{landmark}}",
+    "locale": "en",
+    "priority": 2,
+    "ariaPoliteness": "assertive",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_LAUNCHER",
+    "triggerType": "launcher_prompt",
+    "template": "Tap anywhere and speak your destination",
+    "locale": "en",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_LAUNCHER_SI",
+    "triggerType": "launcher_prompt",
+    "template": "Tap anywhere and speak your destination",
+    "locale": "si",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_LAUNCHER_TA",
+    "triggerType": "launcher_prompt",
+    "template": "Tap anywhere and speak your destination",
+    "locale": "ta",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
+  }
+]

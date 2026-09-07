@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const HIGH_CONTRAST_KEY = '@unitymap/highContrast';
 const WHEELCHAIR_ACCESSIBLE_KEY = '@unitymap/wheelchairAccessible';
 const RECENT_SEARCHES_KEY = '@unitymap/recentSearches';
+const VOLUNTEER_DRAFT_KEY = '@unitymap/volunteerDraft';
+const AUDIO_LAUNCHER_KEY = '@unitymap/audioLauncherEnabled';
 
 export const loadHighContrast = async () => {
   try {
@@ -49,6 +51,59 @@ export const saveRecentSearches = async (searches) => {
   } catch {}
 };
 
+export const loadVolunteerDraft = async () => {
+  try {
+    const v = await AsyncStorage.getItem(VOLUNTEER_DRAFT_KEY);
+    return v ? JSON.parse(v) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const saveVolunteerDraft = async (draft) => {
+  try {
+    await AsyncStorage.setItem(VOLUNTEER_DRAFT_KEY, JSON.stringify(draft));
+  } catch {}
+};
+
+export const clearVolunteerDraft = async () => {
+  try {
+    await AsyncStorage.removeItem(VOLUNTEER_DRAFT_KEY);
+  } catch {}
+};
+
+export const loadAudioLauncherEnabled = async () => {
+  try {
+    const v = await AsyncStorage.getItem(AUDIO_LAUNCHER_KEY);
+    return v !== null ? v === 'true' : false;
+  } catch {
+    return false;
+  }
+};
+
+export const saveAudioLauncherEnabled = async (value) => {
+  try {
+    await AsyncStorage.setItem(AUDIO_LAUNCHER_KEY, value ? 'true' : 'false');
+  } catch {}
+};
+
+const PREFERRED_STT_LOCALE_KEY = '@unitymap/preferredSTTLocale';
+
+export const loadPreferredSTTLocale = async () => {
+  try {
+    const v = await AsyncStorage.getItem(PREFERRED_STT_LOCALE_KEY);
+    return v || 'en';
+  } catch {
+    return 'en';
+  }
+};
+
+export const savePreferredSTTLocale = async (locale) => {
+  try {
+    await AsyncStorage.setItem(PREFERRED_STT_LOCALE_KEY, locale);
+  } catch {}
+};
+
 export default {
   loadHighContrast,
   saveHighContrast,
@@ -56,5 +111,12 @@ export default {
   saveWheelchairAccessible,
   loadRecentSearches,
   saveRecentSearches,
+  loadVolunteerDraft,
+  saveVolunteerDraft,
+  clearVolunteerDraft,
+  loadAudioLauncherEnabled,
+  saveAudioLauncherEnabled,
+  loadPreferredSTTLocale,
+  savePreferredSTTLocale,
 };
 

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test:db": "node src/config/db.js"
+    "test:db": "node src/config/db.js",
+    "seed:speech": "node src/seed/seedSpeechAudio.js"
   },
   "keywords": [
     "unitymap",
@@ -19,6 +20,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "expo": "^57.0.20",
     "express": "^4.19.2",
     "mongoose": "^8.5.1"
   },
