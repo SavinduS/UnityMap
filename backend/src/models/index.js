@@ -9,6 +9,7 @@ const WardJurisdiction = require('./WardJurisdiction');
 const TriageUrgencyScore = require('./TriageUrgencyScore');
 const SpeechPrompt = require('./SpeechPrompt');
 const HazardCue = require('./HazardCue');
+const RouteSpeechSnippet = require('./RouteSpeechSnippet');
 
 module.exports = {
   Node,
@@ -22,4 +23,5 @@ module.exports = {
   TriageUrgencyScore,
   SpeechPrompt,
   HazardCue,
+  RouteSpeechSnippet,
 };
