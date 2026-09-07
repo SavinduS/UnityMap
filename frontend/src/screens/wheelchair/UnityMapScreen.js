@@ -8,6 +8,7 @@ import {
   ScrollView,
   Platform,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import tw from 'twrnc';
 import { Feather, MaterialCommunityIcons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
@@ -76,6 +77,17 @@ const UnityMapScreen = () => {
   const [dataError, setDataError] = useState(null);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
   const [showLauncher, setShowLauncher] = useState(false);
+  const [tappedLocation, setTappedLocation] = useState(null);
+  const [tapRoute, setTapRoute] = useState(null);
+  const [tapRouteLoading, setTapRouteLoading] = useState(false);
+  const [tapRouteMeta, setTapRouteMeta] = useState(null);
+  const [tapRouteError, setTapRouteError] = useState(null);
+  const [nearbyHazards, setNearbyHazards] = useState([]);
+  const [nearbyAccessible, setNearbyAccessible] = useState([]);
+  const [safetyStatus, setSafetyStatus] = useState(null);
+  const [isTapSummarySheetVisible, setIsTapSummarySheetVisible] = useState(false);
+  const [activeSheetCategory, setActiveSheetCategory] = useState('hazards');
+  const [currentLocation, setCurrentLocation] = useState(null);
 
   const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
   const { speak } = useSpeech();
@@ -254,6 +266,229 @@ const UnityMapScreen = () => {
       setMapCenter([location.latitude, location.longitude]);
     }
   }, [recenter, location]);
+
+  const handleLocationFound = useCallback((gps) => {
+    if (Number.isFinite(Number(gps?.latitude)) && Number.isFinite(Number(gps?.longitude))) {
+      setCurrentLocation({
+        latitude: Number(gps.latitude),
+        longitude: Number(gps.longitude),
+      });
+      setMapCenter([Number(gps.latitude), Number(gps.longitude)]);
+    }
+  }, []);
+
+  // ── Tap-to-Route & Proximity Safety Analysis handler ───────────────────────
+  const handleMapTap = useCallback(async (loc) => {
+    if (!Number.isFinite(Number(loc?.latitude)) || !Number.isFinite(Number(loc?.longitude))) {
+      return;
+    }
+
+    const destination = {
+      latitude: Number(loc.latitude),
+      longitude: Number(loc.longitude),
+    };
+
+    const origin = currentLocation
+      || (location?.latitude && location?.longitude ? location : null)
+      || (dbNodes[0]?.lat ? { latitude: dbNodes[0].lat, longitude: dbNodes[0].lng } : { latitude: mapCenter[0], longitude: mapCenter[1] });
+
+    setTappedLocation(destination);
+    setTapRoute(null);
+    setTapRouteMeta(null);
+    setTapRouteError(null);
+    setNearbyHazards([]);
+    setNearbyAccessible([]);
+    setSafetyStatus(null);
+    setIsTapSummarySheetVisible(false);
+    setTapRouteLoading(true);
+    setIsSearchExpanded(false);
+
+    try {
+      const directMeters = origin
+        ? calculateHaversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
+        : 0;
+
+      const [roadRouteRes, originNode, destNode] = await Promise.all([
+        getRoadRoute(origin.longitude, origin.latitude, destination.longitude, destination.latitude).catch(() => null),
+        getNearestNode(origin.longitude, origin.latitude, 500).catch(() => null),
+        getNearestNode(destination.longitude, destination.latitude, 500).catch(() => null),
+      ]);
+
+      let polyCoords = [];
+      let totalMeters = directMeters;
+      let maxRouteSlope = 0;
+      let routePathways = [];
+      const destName = destNode?.name || 'Selected Location';
+
+      let foundDbRoute = false;
+      if (originNode && destNode && (originNode._id ?? originNode.id) !== (destNode._id ?? destNode.id)) {
+        try {
+          const originId = originNode._id ?? originNode.id;
+          const destId   = destNode._id  ?? destNode.id;
+          const routeRes = await getRoute(originId, destId, isWheelchairAccessible);
+          const path = routeRes?.data?.path;
+
+          if (routeRes?.success && Array.isArray(path) && path.length >= 2) {
+            const dbCoords = path
+              .map((node) => node.location?.coordinates)
+              .filter((coordinates) => Array.isArray(coordinates) && coordinates.length >= 2)
+              .map(([lng, lat]) => [Number(lat), Number(lng)]);
+
+            if (dbCoords.length >= 2) {
+              polyCoords = dbCoords;
+              foundDbRoute = true;
+              const routeNodeIds = path.map((node) => String(node._id || node.id));
+              routePathways = dbPathways.filter((pathway) => {
+                const startId = String(pathway.startNode?._id || pathway.startNode);
+                const endId = String(pathway.endNode?._id || pathway.endNode);
+                return routeNodeIds.some((fromId, index) => {
+                  const toId = routeNodeIds[index + 1];
+                  return (
+                    toId &&
+                    ((startId === fromId && endId === toId) ||
+                      (startId === toId && endId === fromId))
+                  );
+                });
+              });
+
+              maxRouteSlope = routePathways.reduce(
+                (max, pathway) => Math.max(max, Math.abs(Number(pathway.inclineDegrees) || 0)),
+                0
+              );
+
+              totalMeters = Number(routeRes.data?.totalDistanceMeters) > 0
+                ? Number(routeRes.data.totalDistanceMeters)
+                : polyCoords.slice(1).reduce(
+                    (total, point, index) =>
+                      total + calculateHaversineDistance(
+                        polyCoords[index][0],
+                        polyCoords[index][1],
+                        point[0],
+                        point[1]
+                      ),
+                    0
+                  );
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!foundDbRoute && roadRouteRes && Array.isArray(roadRouteRes.coordinates) && roadRouteRes.coordinates.length >= 2) {
+        polyCoords = roadRouteRes.coordinates;
+        totalMeters = roadRouteRes.distanceMeters;
+      } else if (!foundDbRoute && polyCoords.length < 2 && origin) {
+        polyCoords = [
+          [origin.latitude, origin.longitude],
+          [destination.latitude, destination.longitude],
+        ];
+        totalMeters = directMeters;
+      }
+
+      const etaMins = calculateWheelchairETA(totalMeters, maxRouteSlope);
+
+      if (polyCoords.length >= 2) {
+        setTapRoute({
+          id: `tap_route_${Date.now()}`,
+          coordinates: polyCoords,
+          color: '#3B82F6',
+          isSelected: true,
+          destName,
+        });
+      }
+
+      const [nearbyObsRes, nearbyNodesRes] = await Promise.all([
+        getNearbyObstacles(destination.longitude, destination.latitude, 400).catch(() => ({ data: [] })),
+        getNearbyNodes(destination.longitude, destination.latitude, 400).catch(() => ({ data: [] })),
+      ]);
+
+      const apiObs = Array.isArray(nearbyObsRes?.data) ? nearbyObsRes.data : [];
+      const apiNodes = Array.isArray(nearbyNodesRes?.data) ? nearbyNodesRes.data : [];
+
+      const combinedObs = [...apiObs];
+      dbObstacles.forEach((dbo) => {
+        if (!combinedObs.some((o) => (o._id || o.id) === (dbo._id || dbo.id))) {
+          combinedObs.push(dbo);
+        }
+      });
+
+      const combinedNodes = [...apiNodes];
+      dbNodes.forEach((dbn) => {
+        if (!combinedNodes.some((n) => (n._id || n.id) === (dbn._id || dbn.id))) {
+          combinedNodes.push(dbn);
+        }
+      });
+
+      const { hazards, accessible } = categorizeProximityFeatures({
+        nearbyObstacles: combinedObs,
+        nearbyNodes: combinedNodes,
+        elevators: dbElevators,
+        pathways: dbPathways,
+        centerCoords: [destination.latitude, destination.longitude],
+        routeCoords: polyCoords,
+        radiusMeters: 400,
+      });
+
+      const status = computeRouteSafetyStatus(routePathways, hazards, accessible);
+
+      setNearbyHazards(hazards);
+      setNearbyAccessible(accessible);
+      setSafetyStatus(status);
+      setActiveSheetCategory(hazards.length > 0 ? 'hazards' : 'accessible');
+      setIsTapSummarySheetVisible(true);
+
+      setTapRouteMeta({
+        distanceText: formatDistance(totalMeters),
+        etaText: formatDuration(etaMins),
+        destName,
+        safetyStatus: status,
+      });
+    } catch (err) {
+      console.warn('[UnityMapScreen] Tap route error:', err.message);
+      const directMeters = origin
+        ? calculateHaversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
+        : 0;
+      const etaMins = calculateWheelchairETA(directMeters, 0);
+
+      const polyCoords = origin ? [
+        [origin.latitude, origin.longitude],
+        [destination.latitude, destination.longitude],
+      ] : [];
+
+      if (polyCoords.length >= 2) {
+        setTapRoute({
+          id: `tap_route_${Date.now()}`,
+          coordinates: polyCoords,
+          color: '#3B82F6',
+          isSelected: true,
+          destName: 'Selected Destination',
+        });
+      }
+
+      const status = computeRouteSafetyStatus([], [], []);
+
+      setTapRouteMeta({
+        distanceText: formatDistance(directMeters),
+        etaText: formatDuration(etaMins),
+        destName: 'Selected Destination',
+        safetyStatus: status,
+      });
+      setIsTapSummarySheetVisible(true);
+    } finally {
+      setTapRouteLoading(false);
+    }
+  }, [currentLocation, location, mapCenter, dbNodes, dbPathways, dbObstacles, dbElevators, isWheelchairAccessible]);
+
+  const handleClearTap = useCallback(() => {
+    setTappedLocation(null);
+    setTapRoute(null);
+    setTapRouteMeta(null);
+    setTapRouteError(null);
+    setNearbyHazards([]);
+    setNearbyAccessible([]);
+    setSafetyStatus(null);
+    setIsTapSummarySheetVisible(false);
+    setTapRouteLoading(false);
+  }, []);
 
   // Select destination from real DB list / search history
   const handleSelectDestination = useCallback((dest) => {
