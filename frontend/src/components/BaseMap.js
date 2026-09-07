@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useMemo } from 'react';
+import React, { useRef, useCallback, useMemo, useEffect } from 'react';
 import { View, Platform } from 'react-native';
 import tw from 'twrnc';
 
@@ -11,13 +11,26 @@ if (Platform.OS !== 'web') {
 
 /**
  * BaseMap.js - Free Styled OpenStreetMap Component
- * Powered by pure Tailwind CSS styling. Supports Web & Native platforms.
+ * Powered by Leaflet & Tailwind CSS styling. Supports Web & Native platforms.
+ * Features:
+ * - Real-time mobile phone GPS positioning with animated panning
+ * - Preserves user location without hijacking center to distant database nodes
+ * - Live MongoDB Markers & Pathways rendering
+ * - Active Route polyline highlighting via injectJavaScript (no WebView reload)
+ * - Tap-to-Route: dynamically draws / clears polyline + destination marker
  */
 const BaseMap = ({
   center = [6.9271, 79.8612],
-  zoom = 14,
+  zoom = 16,
   markers = [],
+  routes = [],
+  pathways = [],
+  activeRouteId = null,
+  autoFitBounds = false,
   onMapClick,
+  onRouteClick,
+  onMarkerClick,
+  onLocationFound,
   onReady,
   style,
   isHighContrast = false,
@@ -25,12 +38,16 @@ const BaseMap = ({
   palette = null,
 }) => {
   const webViewRef = useRef(null);
+  // Track last injected route id so we only re-inject when it truly changes.
+  const lastInjectedRouteRef = useRef(null);
 
   // Normalize center: [lat, lng] or { latitude, longitude }
   const normalizedCenter = useMemo(() => {
-    if (Array.isArray(center)) return center;
-    if (center && typeof center.latitude === 'number') {
-      return [center.latitude, center.longitude];
+    if (Array.isArray(center) && center.length >= 2 && !isNaN(center[0]) && !isNaN(center[1])) {
+      return [Number(center[0]), Number(center[1])];
+    }
+    if (center && typeof center.latitude === 'number' && typeof center.longitude === 'number') {
+      return [Number(center.latitude), Number(center.longitude)];
     }
     return [6.9271, 79.8612];
   }, [center]);
@@ -41,13 +58,19 @@ const BaseMap = ({
   const cardBorder = palette?.cardBorder || (isHighContrast ? '#000000' : '#F1F5F9');
   const textPrimary = palette?.textPrimary || (isHighContrast ? '#000000' : '#1E293B');
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Static HTML: tile layer, CSS, user-dot, markers, pathways.
+  // IMPORTANT: `routes` and `activeRouteId` are intentionally EXCLUDED from this
+  // memo so the WebView is never reloaded when the tap-route changes.
+  // Dynamic route drawing is done via injectJavaScript below.
+  // ─────────────────────────────────────────────────────────────────────────────
   const mapHtml = useMemo(() => `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>UnityMap OSM</title>
+  <title>UnityMap Leaflet</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -57,7 +80,7 @@ const BaseMap = ({
     .leaflet-bar { border: ${isHighContrast ? '2px solid #000000' : 'none'} !important; box-shadow: ${isHighContrast ? 'none' : '0 4px 12px rgba(0,0,0,0.1)'} !important; }
     .leaflet-bar a { background: ${surface} !important; color: ${primary} !important; border-bottom: 1px solid ${cardBorder} !important; }
 
-    /* Custom Pin Marker Wrapper — respects reduceMotion */
+    /* Custom Pin Marker Wrapper */
     .custom-pin {
       position: relative;
       display: flex;
@@ -108,7 +131,19 @@ const BaseMap = ({
     .pin-bubble.amber { background: ${isHighContrast ? '#000000' : '#D97706'}; color: ${isHighContrast ? '#000000' : '#D97706'}; ${isHighContrast ? 'border: 2px solid #000000;' : ''} }
     .pin-bubble.amber svg { stroke: #FFFFFF; fill: none; }
 
-    /* Floating label tags above pins (e.g. CITY HALL, MP) */
+    .pin-bubble.node { background: ${isHighContrast ? '#000000' : '#2563EB'}; color: ${isHighContrast ? '#000000' : '#2563EB'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
+    .pin-bubble.node svg { stroke: #FFFFFF; fill: none; }
+
+    .pin-bubble.elevator { background: ${isHighContrast ? '#000000' : '#7C3AED'}; color: ${isHighContrast ? '#000000' : '#7C3AED'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
+    .pin-bubble.elevator svg { stroke: #FFFFFF; fill: none; }
+
+    .pin-bubble.obstacle { background: ${isHighContrast ? '#000000' : '#DC2626'}; color: ${isHighContrast ? '#000000' : '#DC2626'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
+    .pin-bubble.obstacle svg { stroke: #FFFFFF; fill: none; }
+
+    .pin-bubble.destination { background: ${isHighContrast ? '#000000' : '#0B3D2E'}; color: ${isHighContrast ? '#000000' : '#0B3D2E'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
+    .pin-bubble.destination svg { stroke: #FFFFFF; fill: none; }
+
+    /* Floating label tags above pins */
     .pin-label-tag {
       position: absolute;
       top: -24px;
@@ -127,118 +162,497 @@ const BaseMap = ({
       ${isHighContrast ? 'border: 1px solid #FFFFFF;' : ''}
     }
 
-    /* User GPS Blue/White Pulsing Dot — High-Contrast + Reduce Motion */
+    /* User GPS Pulsing Dot */
     .user-dot {
-      width: 22px;
-      height: 22px;
+      width: 24px;
+      height: 24px;
       background: #FFFFFF;
       border: 4px solid ${isHighContrast ? '#000000' : '#2563EB'};
       border-radius: 50%;
-      box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 6px rgba(37, 99, 235, 0.25), 0 3px 8px rgba(0,0,0,0.3)'};
-      animation: ${isReduceMotionEnabled ? 'none' : isHighContrast ? 'none' : 'pulse 2.5s infinite'};
+      box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 6px rgba(37, 99, 235, 0.3), 0 3px 8px rgba(0,0,0,0.3)'};
+      animation: ${isReduceMotionEnabled ? 'none' : isHighContrast ? 'none' : 'pulse 2.2s infinite'};
     }
     @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.45); }
-      70% { box-shadow: 0 0 0 14px rgba(37, 99, 235, 0); }
+      0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5); }
+      70% { box-shadow: 0 0 0 16px rgba(37, 99, 235, 0); }
       100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
     }
 
-    /* Popup Styling — High-Contrast */
+    /* Popup Styling */
     .unity-popup .leaflet-popup-content-wrapper {
       background: ${surface};
       color: ${textPrimary};
       border-radius: 14px;
       box-shadow: ${isHighContrast ? 'none' : '0 10px 25px -5px rgba(0, 0, 0, 0.15)'};
-      padding: 4px 6px;
+      padding: 6px 10px;
       ${isHighContrast ? 'border: 2px solid #000000;' : ''}
     }
     .unity-popup .leaflet-popup-tip { background: ${surface}; }
-    .popup-title { font-size: 13px; font-weight: 700; color: ${textPrimary}; }
-    .popup-sub { font-size: 11px; color: ${isHighContrast ? '#000000' : '#64748B'}; margin-top: 2px; }
+    .popup-title { font-size: 13px; font-weight: 700; color: ${textPrimary}; margin-bottom: 2px; }
+    .popup-sub { font-size: 11px; color: ${isHighContrast ? '#000000' : '#64748B'}; line-height: 1.4; }
+
+    /* Tap-route animated dash */
+    .tap-route-line {
+      ${isReduceMotionEnabled ? '' : 'animation: dashOffset 20s linear infinite;'}
+    }
+    @keyframes dashOffset {
+      to { stroke-dashoffset: -100; }
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
+    function sendMessageToApp(type, payload) {
+      const dataStr = JSON.stringify({ type: type, payload: payload });
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(dataStr);
+      } else if (window.parent) {
+        window.parent.postMessage(dataStr, '*');
+      }
+    }
+
+    const initialCenter = ${JSON.stringify(normalizedCenter)};
     const map = L.map('map', {
-      center: ${JSON.stringify(normalizedCenter)},
+      center: initialCenter,
       zoom: ${zoom},
       zoomControl: false,
       attributionControl: false
     });
 
-    // CartoDB Voyager / OpenStreetMap (clean, soft pastel colors)
+    window.mapInstance = map;
+
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
       maxZoom: 19,
       subdomains: 'abcd'
     }).addTo(map);
 
-    // Markers from database or props
-    const activeMarkers = ${JSON.stringify(markers || [])};
-
-    activeMarkers.forEach(pin => {
-      const pinType = pin.type || (pin.obstacleType === 'construction' ? 'orange' : pin.obstacleType === 'stairs_only' ? 'red' : 'green');
-      const pinIconSvg = pin.iconSvg || '<svg width="20" height="20" viewBox="0 0 24 24" stroke="white" fill="none" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>';
-
-      const iconHtml = \`
-        <div class="custom-pin">
-          \${pin.tag ? '<div class="pin-label-tag">' + pin.tag + '</div>' : ''}
-          <div class="pin-bubble \${pinType}">
-            \${pinIconSvg}
-          </div>
-        </div>
-      \`;
-      const customIcon = L.divIcon({
-        html: iconHtml,
-        className: '',
-        iconSize: [40, 48],
-        iconAnchor: [20, 48]
-      });
-
-      const pinLat = pin.lat || (pin.location && pin.location.coordinates ? pin.location.coordinates[1] : null);
-      const pinLng = pin.lng || (pin.location && pin.location.coordinates ? pin.location.coordinates[0] : null);
-
-      if (pinLat && pinLng) {
-        L.marker([pinLat, pinLng], { icon: customIcon })
-          .bindPopup('<div class="popup-title">' + (pin.title || pin.name || 'Location') + '</div><div class="popup-sub">' + (pin.desc || pin.obstacleType || '') + '</div>', { className: 'unity-popup' })
-          .addTo(map);
-      }
-    });
-
+    // ── User Location Marker ───────────────────────────────────────────
     const userIcon = L.divIcon({
       html: '<div class="user-dot"></div>',
       className: '',
-      iconSize: [22, 22],
-      iconAnchor: [11, 11]
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
     });
-    L.marker(${JSON.stringify(normalizedCenter)}, { icon: userIcon }).addTo(map);
+    const userMarker = L.marker(initialCenter, { icon: userIcon, zIndexOffset: 1000 }).addTo(map);
+    window.userMarker = userMarker;
 
+    window.updateUserLocation = function(lat, lng, shouldPan) {
+      if (window.userMarker) {
+        window.userMarker.setLatLng([lat, lng]);
+      }
+      if (shouldPan && window.mapInstance) {
+        window.mapInstance.setView([lat, lng], ${zoom}, { animate: true });
+      }
+    };
+
+    // Try webview-level geolocation as well
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        if (lat && lng) {
+          window.updateUserLocation(lat, lng, false);
+          sendMessageToApp('DEVICE_GPS', { latitude: lat, longitude: lng });
+        }
+      }, function(e) {}, { enableHighAccuracy: true, timeout: 6000 });
+    }
+
+    // ── 1. Markers from Database or Props ──────────────────────────────
+    const activeMarkers = ${JSON.stringify(markers || [])};
+
+    activeMarkers.forEach(pin => {
+      let pinLat = pin.lat;
+      let pinLng = pin.lng;
+
+      if ((pinLat == null || pinLng == null) && pin.location && Array.isArray(pin.location.coordinates)) {
+        pinLng = pin.location.coordinates[0];
+        pinLat = pin.location.coordinates[1];
+      }
+
+      if (pinLat != null && pinLng != null && !isNaN(pinLat) && !isNaN(pinLng)) {
+        const isObstacle = pin.type === 'obstacle' || !!pin.obstacleType;
+        const isNode = pin.type === 'node';
+        const isElevator = pin.type === 'elevator';
+
+        let pinType = pin.type || 'green';
+        if (isObstacle) {
+          pinType = pin.obstacleType === 'construction' ? 'orange' : pin.obstacleType === 'stairs_only' ? 'red' : 'obstacle';
+        } else if (isNode) {
+          pinType = 'node';
+        } else if (isElevator) {
+          pinType = pin.isOperational === false ? 'red' : 'elevator';
+        }
+
+        let pinSvg = pin.iconSvg;
+        if (!pinSvg) {
+          if (isObstacle) {
+            pinSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+          } else if (isElevator) {
+            pinSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><polyline points="8 10 12 6 16 10"/><polyline points="8 14 12 18 16 14"/></svg>';
+          } else if (isNode) {
+            pinSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>';
+          } else {
+            pinSvg = '<svg width="18" height="18" viewBox="0 0 24 24" stroke="white" fill="none" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>';
+          }
+        }
+
+        const iconHtml = \`
+          <div class="custom-pin">
+            \${pin.tag ? '<div class="pin-label-tag">' + pin.tag + '</div>' : ''}
+            <div class="pin-bubble \${pinType}">
+              \${pinSvg}
+            </div>
+          </div>
+        \`;
+
+        const customIcon = L.divIcon({
+          html: iconHtml,
+          className: '',
+          iconSize: [40, 48],
+          iconAnchor: [20, 48]
+        });
+
+        const titleText = pin.title || pin.name || 'Location';
+        const descText = pin.desc || (pin.obstacleType ? 'Hazard: ' + pin.obstacleType : '') || '';
+
+        const marker = L.marker([pinLat, pinLng], { icon: customIcon })
+          .bindPopup('<div class="popup-title">' + titleText + '</div><div class="popup-sub">' + descText + '</div>', { className: 'unity-popup' })
+          .addTo(map);
+
+        marker.on('click', function() {
+          sendMessageToApp('MARKER_CLICK', { id: pin.id || pin._id, title: titleText });
+        });
+      }
+    });
+
+    // ── 2. Live Database Pathways ──────────────────────────────────────
+    const dbPathways = ${JSON.stringify(pathways || [])};
+
+    dbPathways.forEach(function(p) {
+      let coords = null;
+      if (p.geometry && Array.isArray(p.geometry.coordinates) && p.geometry.coordinates.length >= 2) {
+        coords = p.geometry.coordinates.map(function(c) { return [c[1], c[0]]; });
+      } else if (p.startNode && p.endNode && p.startNode.location && p.endNode.location) {
+        const sCoord = p.startNode.location.coordinates;
+        const eCoord = p.endNode.location.coordinates;
+        if (Array.isArray(sCoord) && Array.isArray(eCoord)) {
+          coords = [[sCoord[1], sCoord[0]], [eCoord[1], eCoord[0]]];
+        }
+      }
+
+      if (coords && coords.length >= 2) {
+        const isAccessible = p.isWheelchairAccessible !== false;
+        let strokeColor = '#10B981';
+        if (!isAccessible) {
+          strokeColor = '#EF4444';
+        } else if (p.pathType === 'walkway') {
+          strokeColor = '#3B82F6';
+        } else if (p.pathType === 'elevator') {
+          strokeColor = '#8B5CF6';
+        }
+
+        const pathLine = L.polyline(coords, {
+          color: strokeColor,
+          weight: isAccessible ? 5 : 4,
+          opacity: isAccessible ? 0.85 : 0.6,
+          dashArray: isAccessible ? null : '6, 6',
+          lineCap: 'round',
+        }).addTo(map);
+
+        const popupContent = \`
+          <div class="popup-title">\${(p.pathType || 'Pathway').toUpperCase()}</div>
+          <div class="popup-sub">
+            \${p.distanceMeters ? p.distanceMeters + 'm • ' : ''}
+            Incline: \${p.inclineDegrees != null ? p.inclineDegrees + '°' : '0°'}<br/>
+            \${isAccessible ? '♿ Step-Free Accessible' : '⚠️ Not Wheelchair Accessible'}
+          </div>
+        \`;
+        pathLine.bindPopup(popupContent, { className: 'unity-popup' });
+      }
+    });
+
+    // Auto-fit all markers if requested (no active route yet)
+    if (${autoFitBounds ? 'true' : 'false'}) {
+      const allPoints = [];
+      activeMarkers.forEach(function(m) {
+        if (m.lat && m.lng) allPoints.push([m.lat, m.lng]);
+      });
+      if (allPoints.length >= 2) {
+        try {
+          map.fitBounds(L.latLngBounds(allPoints), { padding: [35, 35], maxZoom: 16 });
+        } catch (e) {}
+      }
+    }
+
+    // ── 3. Dynamic Route Layer (injected via injectJavaScript) ─────────
+    // These window functions are called from React Native without reloading
+    // the WebView. They draw/clear the tap-to-route polyline and destination pin.
+
+    var _tapRouteLayer = null;
+    var _destMarker = null;
+
+    /**
+     * Draw (or replace) the tap-route polyline.
+     * @param {Array<[lat,lng]>} coords
+     * @param {string} color  hex colour string, e.g. '#3B82F6'
+     * @param {boolean} fitBounds  whether to pan/zoom to fit the route
+     */
+    window.updateRoute = function(coords, color, fitBounds) {
+      try {
+        if (_tapRouteLayer) {
+          map.removeLayer(_tapRouteLayer);
+          _tapRouteLayer = null;
+        }
+        if (!Array.isArray(coords) || coords.length < 2) return;
+        _tapRouteLayer = L.polyline(coords, {
+          color: color || '#3B82F6',
+          weight: 6,
+          opacity: 0.95,
+          lineCap: 'round',
+          lineJoin: 'round',
+          bubblingMouseEvents: false,
+          className: 'tap-route-line',
+        }).addTo(map);
+
+        _tapRouteLayer.on('click', function(e) {
+          L.DomEvent.stopPropagation(e);
+          sendMessageToApp('ROUTE_CLICK', { routeId: 'tap_route' });
+        });
+
+        if (fitBounds !== false) {
+          try {
+            map.fitBounds(_tapRouteLayer.getBounds(), { padding: [48, 48], maxZoom: 17, animate: true });
+          } catch (_) {}
+        }
+      } catch(err) {}
+    };
+
+    /** Remove the active tap-route polyline from the map. */
+    window.clearRoute = function() {
+      try {
+        if (_tapRouteLayer) {
+          map.removeLayer(_tapRouteLayer);
+          _tapRouteLayer = null;
+        }
+      } catch(err) {}
+    };
+
+    /**
+     * Place (or move) the destination pin on the map.
+     * @param {number} lat
+     * @param {number} lng
+     * @param {string} label  popup label text
+     */
+    window.setDestinationMarker = function(lat, lng, label) {
+      try {
+        if (_destMarker) {
+          map.removeLayer(_destMarker);
+          _destMarker = null;
+        }
+        const destSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><circle cx="12" cy="12" r="4" fill="white"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="10"/></svg>';
+        const destHtml = \`<div class="custom-pin"><div class="pin-bubble destination">\${destSvg}</div></div>\`;
+        const destIcon = L.divIcon({ html: destHtml, className: '', iconSize: [40, 48], iconAnchor: [20, 48] });
+        _destMarker = L.marker([lat, lng], { icon: destIcon, zIndexOffset: 900 })
+          .addTo(map);
+        if (label) {
+          _destMarker.bindPopup('<div class="popup-title">' + label + '</div><div class="popup-sub">Tapped destination</div>', { className: 'unity-popup' });
+        }
+      } catch(err) {}
+    };
+
+    /** Remove the destination pin from the map. */
+    window.clearDestinationMarker = function() {
+      try {
+        if (_destMarker) {
+          map.removeLayer(_destMarker);
+          _destMarker = null;
+        }
+      } catch(err) {}
+    };
+
+    // ── 4. Map click → send to React Native ───────────────────────────
     map.on('click', function(e) {
       const payload = { lat: e.latlng.lat, lng: e.latlng.lng, latitude: e.latlng.lat, longitude: e.latlng.lng };
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'MAP_CLICK', payload: payload }));
-      }
+      sendMessageToApp('MAP_CLICK', payload);
     });
   </script>
 </body>
 </html>
-  `, [normalizedCenter, zoom, themeBg, surface, primary, cardBorder, textPrimary, isHighContrast,markers, isReduceMotionEnabled]);
+  `, [
+    normalizedCenter,
+    zoom,
+    themeBg,
+    surface,
+    primary,
+    cardBorder,
+    textPrimary,
+    isHighContrast,
+    markers,
+    pathways,
+    autoFitBounds,
+    isReduceMotionEnabled,
+    // NOTE: `routes` and `activeRouteId` are intentionally omitted — route
+    // changes are handled via injectJavaScript in the useEffect below.
+  ]);
 
+  // ── Inject user location pan without reloading ─────────────────────────────
+  useEffect(() => {
+    if (webViewRef.current && normalizedCenter) {
+      const script = `if (typeof window.updateUserLocation === 'function') { window.updateUserLocation(${normalizedCenter[0]}, ${normalizedCenter[1]}, true); } true;`;
+      if (Platform.OS !== 'web') {
+        webViewRef.current.injectJavaScript(script);
+      } else {
+        const win = webViewRef.current?.contentWindow;
+        if (win) {
+          try {
+            if (typeof win.updateUserLocation === 'function') {
+              win.updateUserLocation(normalizedCenter[0], normalizedCenter[1], true);
+            } else {
+              win.eval?.(script);
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  }, [normalizedCenter]);
+
+  // ── Inject route changes without reloading WebView ─────────────────────────
+  useEffect(() => {
+    // Find the first selected route (tap route)
+    const activeRoute = routes.find((r) => r.isSelected) || routes[0] || null;
+    const routeKey = activeRoute && Array.isArray(activeRoute.coordinates) && activeRoute.coordinates.length >= 2
+      ? `${activeRoute.id}_${activeRoute.coordinates.map((c) => `${Number(c[0]).toFixed(5)},${Number(c[1]).toFixed(5)}`).join(';')}`
+      : 'none';
+
+    if (routeKey === lastInjectedRouteRef.current) return; // already injected
+    lastInjectedRouteRef.current = routeKey;
+
+    let script;
+    if (activeRoute && Array.isArray(activeRoute.coordinates) && activeRoute.coordinates.length >= 2) {
+      const coordsJson = JSON.stringify(activeRoute.coordinates);
+      const color = activeRoute.color || '#3B82F6';
+      script = `
+        if (typeof window.updateRoute === 'function') {
+          window.updateRoute(${coordsJson}, '${color}', true);
+        }
+        true;
+      `;
+    } else {
+      // No active route — clear whatever is drawn
+      script = `
+        if (typeof window.clearRoute === 'function') { window.clearRoute(); }
+        if (typeof window.clearDestinationMarker === 'function') { window.clearDestinationMarker(); }
+        true;
+      `;
+    }
+
+    if (Platform.OS !== 'web') {
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript(script);
+      }
+    } else {
+      const win = webViewRef.current?.contentWindow;
+      if (win) {
+        try {
+          if (activeRoute && Array.isArray(activeRoute.coordinates) && activeRoute.coordinates.length >= 2) {
+            if (typeof win.updateRoute === 'function') {
+              win.updateRoute(activeRoute.coordinates, activeRoute.color || '#3B82F6', true);
+            } else {
+              win.eval?.(script);
+            }
+          } else {
+            if (typeof win.clearRoute === 'function') win.clearRoute();
+            if (typeof win.clearDestinationMarker === 'function') win.clearDestinationMarker();
+            win.eval?.(script);
+          }
+        } catch (_) {}
+      }
+    }
+  }, [routes]);
+
+  // ── Inject destination marker when routes are present ─────────────────────
+  useEffect(() => {
+    const activeRoute = routes.find((r) => r.isSelected) || routes[0] || null;
+    if (!activeRoute || !Array.isArray(activeRoute.coordinates) || activeRoute.coordinates.length < 2) {
+      return;
+    }
+    // The last coordinate in the route is the destination
+    const last = activeRoute.coordinates[activeRoute.coordinates.length - 1];
+    if (!Array.isArray(last) || last.length < 2) return;
+    const [lat, lng] = last;
+    const label = activeRoute.destName || 'Destination';
+    const script = `
+      if (typeof window.setDestinationMarker === 'function') {
+        window.setDestinationMarker(${lat}, ${lng}, ${JSON.stringify(label)});
+      }
+      true;
+    `;
+    if (Platform.OS !== 'web') {
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript(script);
+      }
+    } else {
+      const win = webViewRef.current?.contentWindow;
+      if (win) {
+        try {
+          if (typeof win.setDestinationMarker === 'function') {
+            win.setDestinationMarker(lat, lng, label);
+          } else {
+            win.eval?.(script);
+          }
+        } catch (_) {}
+      }
+    }
+  }, [routes]);
 
   const handleMessage = useCallback((event) => {
     try {
-      const msg = JSON.parse(event.nativeEvent.data);
+      const msg = typeof event.nativeEvent.data === 'string'
+        ? JSON.parse(event.nativeEvent.data)
+        : event.nativeEvent.data;
+
       if (msg.type === 'MAP_CLICK' && typeof onMapClick === 'function') {
         onMapClick(msg.payload);
+      } else if (msg.type === 'ROUTE_CLICK' && typeof onRouteClick === 'function') {
+        onRouteClick(msg.payload.routeId);
+      } else if (msg.type === 'MARKER_CLICK' && typeof onMarkerClick === 'function') {
+        onMarkerClick(msg.payload);
+      } else if (msg.type === 'DEVICE_GPS' && typeof onLocationFound === 'function') {
+        onLocationFound(msg.payload);
       }
     } catch (e) {}
-  }, [onMapClick]);
+  }, [onMapClick, onRouteClick, onMarkerClick, onLocationFound]);
+
+  // Web window message listener
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const handleWebMsg = (event) => {
+        try {
+          const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (msg?.type === 'MAP_CLICK' && typeof onMapClick === 'function') {
+            onMapClick(msg.payload);
+          } else if (msg?.type === 'ROUTE_CLICK' && typeof onRouteClick === 'function') {
+            onRouteClick(msg.payload.routeId);
+          } else if (msg?.type === 'MARKER_CLICK' && typeof onMarkerClick === 'function') {
+            onMarkerClick(msg.payload);
+          } else if (msg?.type === 'DEVICE_GPS' && typeof onLocationFound === 'function') {
+            onLocationFound(msg.payload);
+          }
+        } catch (e) {}
+      };
+
+      window.addEventListener('message', handleWebMsg);
+      return () => window.removeEventListener('message', handleWebMsg);
+    }
+  }, [onMapClick, onRouteClick, onMarkerClick, onLocationFound]);
 
   if (Platform.OS === 'web') {
     return (
       <View style={[tw`flex-1 w-full h-full`, { backgroundColor: themeBg }, style]}>
         <iframe
+          ref={webViewRef}
           title="UnityMap Leaflet OSM"
           srcDoc={mapHtml}
           style={{ width: '100%', height: '100%', border: 'none', backgroundColor: themeBg }}
@@ -275,4 +689,3 @@ const BaseMap = ({
 };
 
 export default BaseMap;
-
