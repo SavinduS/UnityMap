@@ -26,6 +26,7 @@ import {
 import AdminLoginScreen from './AdminLoginScreen';
 import TriageQueueScreen from './TriageQueueScreen';
 import ReportInspectionScreen from './ReportInspectionScreen';
+import WardComplianceScreen from './WardComplianceScreen';
 
 export const AdminPortalScaffoldScreen = () => {
   const [currentUser, setCurrentUser] = useState(adminAuthService.getCurrentUser());
@@ -82,6 +83,15 @@ export const AdminPortalScaffoldScreen = () => {
           setSelectedReportForInspection(report);
           setCurrentView('inspection');
         }}
+      />
+    );
+  }
+
+  if (currentView === 'compliance') {
+    return (
+      <WardComplianceScreen
+        initialWardId={selectedWardId}
+        onBack={() => setCurrentView('hub')}
       />
     );
   }
@@ -183,10 +193,14 @@ export const AdminPortalScaffoldScreen = () => {
                 <Text style={styles.kpiLabel}>Pending Triage →</Text>
               </TouchableOpacity>
               <View style={styles.kpiDivider} />
-              <View style={styles.kpiItem}>
-                <Text style={styles.kpiValue}>{activeWard.complianceScore}%</Text>
-                <Text style={styles.kpiLabel}>Compliance Index</Text>
-              </View>
+              <TouchableOpacity
+                style={styles.kpiItem}
+                onPress={() => setCurrentView('compliance')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.kpiValue, { color: '#059669' }]}>{activeWard.complianceScore}%</Text>
+                <Text style={styles.kpiLabel}>Compliance Index →</Text>
+              </TouchableOpacity>
               <View style={styles.kpiDivider} />
               <View style={styles.kpiItem}>
                 <Text style={styles.kpiValue}>
@@ -281,23 +295,28 @@ export const AdminPortalScaffoldScreen = () => {
           </TouchableOpacity>
 
           {/* Module 4: Ward Compliance */}
-          <View style={styles.moduleCard}>
+          <TouchableOpacity
+            style={styles.moduleCard}
+            onPress={() => setCurrentView('compliance')}
+            activeOpacity={0.7}
+          >
             <View style={[styles.moduleIconBox, { backgroundColor: '#DCFCE7' }]}>
               <Text style={styles.moduleIcon}>📊</Text>
             </View>
             <View style={styles.moduleInfo}>
               <View style={styles.moduleTagRow}>
                 <Text style={styles.moduleTicket}>SPT-209 (Page 4)</Text>
-                <View style={styles.sprintTag}>
-                  <Text style={styles.sprintTagText}>SPRINT 2</Text>
+                <View style={styles.readyTag}>
+                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
                 </View>
               </View>
               <Text style={styles.moduleName}>Ward Compliance & Budget Analytics</Text>
               <Text style={styles.moduleDesc}>
-                Accessibility scores, active repair budget queue status, and monthly resolution statistics.
+                Accessibility scores, active repair budget queue status, and monthly resolution statistics. Tap to view dashboard.
               </Text>
             </View>
-          </View>
+            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Staff Role Switcher for Testing/Demo */}
