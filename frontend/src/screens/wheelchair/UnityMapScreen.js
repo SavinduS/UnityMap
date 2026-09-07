@@ -17,6 +17,7 @@ import SettingsScreen from '../settings/SettingsScreen';
 import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import { useTheme } from '../../theme/ThemeContext';
+import { useSpeech } from '../../hooks/useSpeech';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useLocation } from '../../hooks/useLocation';
 import {
@@ -49,6 +50,7 @@ const UnityMapScreen = () => {
   const [showLauncher, setShowLauncher] = useState(false);
 
   const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
+  const { speak } = useSpeech();
   const { location, loading: locationLoading, recenter } = useLocation();
 
   // Only show launcher if enabled in Settings (not for every user)
@@ -150,11 +152,6 @@ const UnityMapScreen = () => {
     }
   }, [recenter, location]);
 
-  // SPT-104 single page: launcher tap just dismisses to map (no VoiceNavigation bridge)
-  const handleLauncherNavigate = useCallback(() => {
-    setShowLauncher(false);
-  }, []);
-
   // Select destination from real DB list / search history
   const handleSelectDestination = useCallback((dest) => {
     setSearchQuery(dest.title);
@@ -170,6 +167,58 @@ const UnityMapScreen = () => {
       return updated;
     });
   }, []);
+
+  // SPT-105: bridge spoken transcript to typed search with high-accuracy handling
+  const handleLauncherNavigate = useCallback(
+    (transcript, confidence) => {
+      setShowLauncher(false);
+      const q = typeof transcript === 'string' ? transcript.trim() : '';
+      if (!q) return;
+      const confOk = confidence === undefined || confidence === 0 || confidence >= 0.6;
+      if (!confOk) {
+        try {
+          speak(`Low confidence ${Math.round(confidence * 100)} percent, please try again`);
+        } catch (_) {}
+        setSearchQuery(q);
+        setIsSearchExpanded(true);
+        return;
+      }
+      setSearchQuery(q);
+      setIsSearchExpanded(true);
+      try {
+        speak(`Searching for ${q}`);
+      } catch (_) {}
+      const all = [...dbNodes, ...recentDestinations];
+      if (all.length === 0) return;
+      const lowerQ = q.toLowerCase();
+      let best = null;
+      let bestScore = -1;
+      for (const dest of all) {
+        const titleLower = dest.title.toLowerCase();
+        let score = 0;
+        if (titleLower === lowerQ) score = 3;
+        else if (titleLower.includes(lowerQ) || lowerQ.includes(titleLower)) score = 2;
+        else if (titleLower.split(' ').some((w) => lowerQ.includes(w) || w.includes(lowerQ))) score = 1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = dest;
+        }
+      }
+      if (best && bestScore >= 1) {
+        if (confidence >= 0.7 || bestScore >= 2) {
+          try {
+            speak(`Heard ${q}, navigating to ${best.title}`);
+          } catch (_) {}
+          setTimeout(() => handleSelectDestination(best), 600);
+        } else {
+          try {
+            speak(`Heard ${q}, showing results. Did you mean ${best.title}?`);
+          } catch (_) {}
+        }
+      }
+    },
+    [dbNodes, recentDestinations, speak, handleSelectDestination]
+  );
 
   // Combined and filtered destinations (DB nodes + real recent searches)
   const filteredDestinations = useMemo(() => {
