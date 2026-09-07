@@ -7,6 +7,7 @@ import {
   StatusBar,
   ScrollView,
   Platform,
+  Modal,
 } from 'react-native';
 import tw from 'twrnc';
 import { Feather, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -14,6 +15,7 @@ import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
 import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
+import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useLocation } from '../../hooks/useLocation';
@@ -44,9 +46,19 @@ const UnityMapScreen = () => {
   const [dbObstacles, setDbObstacles] = useState([]);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
+  const [showLauncher, setShowLauncher] = useState(false);
 
-  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled } = useTheme();
+  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
   const { location, loading: locationLoading, recenter } = useLocation();
+
+  // Only show launcher if enabled in Settings (not for every user)
+  useEffect(() => {
+    if (isAudioLauncherEnabled) {
+      setShowLauncher(true);
+    } else {
+      setShowLauncher(false);
+    }
+  }, [isAudioLauncherEnabled]);
 
   // Load persistent Wheelchair Accessible state & real search history
   useEffect(() => {
@@ -137,6 +149,11 @@ const UnityMapScreen = () => {
       setMapCenter([location.latitude, location.longitude]);
     }
   }, [recenter, location]);
+
+  // SPT-104 single page: launcher tap just dismisses to map (no VoiceNavigation bridge)
+  const handleLauncherNavigate = useCallback(() => {
+    setShowLauncher(false);
+  }, []);
 
   // Select destination from real DB list / search history
   const handleSelectDestination = useCallback((dest) => {
@@ -991,6 +1008,26 @@ const UnityMapScreen = () => {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* SPT-104 single page: Audio-First Launcher as Initial Modal over UnityMapScreen */}
+      <Modal
+        visible={showLauncher}
+        animationType="fade"
+        transparent={false}
+        onRequestClose={() => setShowLauncher(false)}
+        accessibilityViewIsModal
+      >
+        <AudioFirstLauncherScreen onNavigate={handleLauncherNavigate} />
+        <TouchableOpacity
+          onPress={() => setShowLauncher(false)}
+          style={tw`absolute top-12 right-4 px-3 py-2 rounded-full bg-black/60`}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss launcher, show map"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={tw`text-white text-xs font-bold`}>Skip to Map</Text>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 };

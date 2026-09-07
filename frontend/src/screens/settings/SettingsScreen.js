@@ -12,6 +12,8 @@ export const SettingsScreen = () => {
     setIsScreenReaderEnabled,
     isReduceMotionEnabled,
     setIsReduceMotionEnabled,
+    isAudioLauncherEnabled,
+    setAudioLauncherEnabled,
     screenReaderName,
     palette,
     borderWidth,
@@ -136,6 +138,32 @@ export const SettingsScreen = () => {
             accessibilityRole="switch"
             accessibilityLabel="Reduce Motion"
             accessibilityState={{ checked: isReduceMotionEnabled }}
+            style={styles.switch}
+          />
+        </View>
+
+        <View
+          style={[
+            styles.row,
+            { borderColor: palette.border, borderWidth, backgroundColor: palette.surface, marginTop: 12 },
+          ]}
+        >
+          <View style={styles.rowText}>
+            <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
+              Audio-First Launcher
+            </Text>
+            <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
+              {isAudioLauncherEnabled ? 'On — shows as initial modal over map' : 'Off — map shows directly'}
+            </Text>
+          </View>
+          <Switch
+            value={isAudioLauncherEnabled}
+            onValueChange={setAudioLauncherEnabled}
+            trackColor={{ false: '#E5E7EB', true: palette.primary }}
+            thumbColor="#FFFFFF"
+            accessibilityRole="switch"
+            accessibilityLabel="Audio-First Launcher"
+            accessibilityState={{ checked: isAudioLauncherEnabled }}
             style={styles.switch}
           />
         </View>

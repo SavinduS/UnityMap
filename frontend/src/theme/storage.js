@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const HIGH_CONTRAST_KEY = '@unitymap/highContrast';
 const WHEELCHAIR_ACCESSIBLE_KEY = '@unitymap/wheelchairAccessible';
 const RECENT_SEARCHES_KEY = '@unitymap/recentSearches';
+const AUDIO_LAUNCHER_KEY = '@unitymap/audioLauncherEnabled';
 
 export const loadHighContrast = async () => {
   try {
@@ -49,6 +50,21 @@ export const saveRecentSearches = async (searches) => {
   } catch {}
 };
 
+export const loadAudioLauncherEnabled = async () => {
+  try {
+    const v = await AsyncStorage.getItem(AUDIO_LAUNCHER_KEY);
+    return v !== null ? v === 'true' : false;
+  } catch {
+    return false;
+  }
+};
+
+export const saveAudioLauncherEnabled = async (value) => {
+  try {
+    await AsyncStorage.setItem(AUDIO_LAUNCHER_KEY, value ? 'true' : 'false');
+  } catch {}
+};
+
 export default {
   loadHighContrast,
   saveHighContrast,
@@ -56,5 +72,7 @@ export default {
   saveWheelchairAccessible,
   loadRecentSearches,
   saveRecentSearches,
+  loadAudioLauncherEnabled,
+  saveAudioLauncherEnabled,
 };
 
