@@ -13,7 +13,7 @@
  * Supports: File, Blob, ArrayBuffer, { uri: string } (Expo ImagePicker)
  */
 
-import ExifReader from 'exifreader';
+import ExifReader from 'exifreader/dist/exif-reader.build.js';
 
 // ---------------------------------------------------------------------------
 // Helpers

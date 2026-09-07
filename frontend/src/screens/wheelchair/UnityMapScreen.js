@@ -460,7 +460,7 @@ const UnityMapScreen = () => {
         </View>
       ) : activeTab === 'Report' ? (
         <View style={tw`flex-1`}>
-          <EXIFCaptureScreen />
+          <EXIFCaptureScreen onBack={() => setActiveTab('Map')} />
         </View>
       ) : activeTab === 'Profile' ? (
         <ScrollView style={tw`flex-1 p-5`}>

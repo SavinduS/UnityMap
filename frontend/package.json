@@ -9,6 +9,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "exifreader": "^4.23.7",
     "expo": "~57.0.19",
+    "expo-image-picker": "~16.1.4",
     "expo-location": "~57.0.16",
     "expo-speech": "~57.0.2",
     "expo-speech-recognition": "^57.0.0",
@@ -23,7 +24,8 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android"
+    "android": "expo start --android",
+    "postinstall": "node -e \"const fs=require('fs');const s='node_modules/exifreader/dist/exif-reader.js';const d='node_modules/exifreader/dist/exif-reader.build.js';try{fs.copyFileSync(s,d);console.log('postinstall: exif-reader.build.js created');}catch(e){if(e.code!=='ENOENT')throw e;console.log('postinstall: src not found, skipping')}\""
   },
   "private": true,
   "devDependencies": {
