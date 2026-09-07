@@ -3,29 +3,23 @@
  * Municipal Admin Authentication & Session Management Service
  * 
  * Ticket: SPT-010
+ * Integrated with central authService for unified session management
  */
 
 import { MUNICIPAL_ROLES, MUNICIPAL_WARDS } from '../utils/wardJurisdictions';
 import { apiRequest } from './api';
-
-// Default mock municipal staff account for demo & offline inspection
-const DEFAULT_STAFF_USER = {
-  id: 'STAFF-CMC-882',
-  name: 'Eng. K. Perera',
-  email: 'k.perera@cmc.gov.lk',
-  badgeNumber: 'CMC-ENG-882',
-  role: 'CHIEF_ENGINEER',
-  assignedWardId: 'CMC-W01', // Fort & Pettah
-  department: 'Urban Accessibility & Civil Works Division',
-  token: 'mock-jwt-token-cmc-882-verified',
-  sessionExpiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-};
+import authService from './authService';
 
 class AdminAuthService {
   constructor() {
-    // Start unauthenticated so the login gate activates on fresh app launch
-    this.currentUser = null;
+    this.currentUser = authService.getCurrentUser();
     this.listeners = [];
+
+    // Sync with central auth service
+    authService.subscribe((user) => {
+      this.currentUser = user;
+      this.notify();
+    });
   }
 
   /**
@@ -33,69 +27,39 @@ class AdminAuthService {
    */
   subscribe(listener) {
     this.listeners.push(listener);
+    listener(this.currentUser);
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
   }
 
   notify() {
-    this.listeners.forEach((listener) => listener(this.currentUser));
+    this.listeners.forEach((listener) => {
+      try {
+        listener(this.currentUser);
+      } catch (_e) {}
+    });
   }
 
   getCurrentUser() {
-    return this.currentUser;
+    return authService.getCurrentUser() || this.currentUser;
   }
 
   isAuthenticated() {
-    return !!this.currentUser && !!this.currentUser.token;
+    return authService.isAuthenticated();
   }
 
   /**
    * Municipal staff login with backend API connection & offline fallback
    */
   async login({ email, password, wardId, role = 'CHIEF_ENGINEER' }) {
-    if (!email || !password) {
-      throw new Error('Municipal email and security PIN/password are required.');
+    const user = await authService.login({ email, password });
+    if (wardId && user) {
+      user.assignedWardId = wardId;
     }
-
-    // 1. Try connecting to Node.js backend using centralized apiRequest
-    try {
-      const data = await apiRequest('/admin/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password, wardId, role }),
-      });
-
-      if (data?.success && data?.user) {
-        this.currentUser = {
-          ...data.user,
-          token: data.token,
-          sessionExpiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-        };
-        this.notify();
-        return this.currentUser;
-      }
-    } catch (_err) {
-      // Backend unavailable; proceed with robust offline mode for presentations
-    }
-
-    // 2. Offline / Local fallback simulation
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    const selectedWard = MUNICIPAL_WARDS.find((w) => w.id === wardId) || MUNICIPAL_WARDS[0];
-
-    this.currentUser = {
-      id: `STAFF-${Math.floor(100 + Math.random() * 900)}`,
-      name: email.split('@')[0].replace('.', ' ').toUpperCase(),
-      email,
-      badgeNumber: `CMC-${role.slice(0, 3)}-${Math.floor(100 + Math.random() * 900)}`,
-      role,
-      assignedWardId: selectedWard.id,
-      department: 'Urban Accessibility & Civil Works Division',
-      token: `jwt-session-${Date.now()}`,
-      sessionExpiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-    };
-
+    this.currentUser = user;
     this.notify();
-    return this.currentUser;
+    return user;
   }
 
   /**
@@ -119,9 +83,6 @@ class AdminAuthService {
    * Switch active municipal role (for role-based inspection demo)
    */
   switchRole(roleKey) {
-    if (!MUNICIPAL_ROLES[roleKey]) {
-      throw new Error(`Invalid role key: ${roleKey}`);
-    }
     if (this.currentUser) {
       this.currentUser = {
         ...this.currentUser,
@@ -134,13 +95,19 @@ class AdminAuthService {
 
   logout() {
     this.currentUser = null;
+    authService.logout();
     this.notify();
   }
 
   hasPermission(permissionName) {
-    if (!this.currentUser) return false;
-    const roleConfig = MUNICIPAL_ROLES[this.currentUser.role];
-    return roleConfig ? roleConfig.permissions.includes(permissionName) : false;
+    const current = this.getCurrentUser();
+    if (!current) return false;
+    const roleConfig = MUNICIPAL_ROLES[current.role];
+    if (roleConfig) {
+      return roleConfig.permissions.includes(permissionName);
+    }
+    // Admins and Super Admins have all permissions
+    return current.role === 'ADMIN' || current.role === 'SUPER_ADMIN' || !!current.isSuperAdmin;
   }
 }
 
