@@ -4,7 +4,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { getTextStyle, textProps } from '../theme/typography';
 
 /**
- * Primary action button — SPT-005: 48dp, high-contrast, a11y.
+ * Primary action button — SPT-005 / SPT-101: 48dp, high-contrast, a11y.
  */
 export const Button = ({
   title,
@@ -17,6 +17,7 @@ export const Button = ({
 }) => {
   const { isHighContrast, palette, borderWidth } = useTheme();
   const isSecondary = variant === 'secondary';
+  const isAccessible = variant === 'accessible';
 
   return (
     <TouchableOpacity
@@ -30,13 +31,16 @@ export const Button = ({
       activeOpacity={0.7}
       style={[
         styles.button,
+        styles.accessible,
         {
           backgroundColor: isSecondary ? palette.secondaryBg : palette.primary,
           borderColor: isSecondary ? palette.secondaryBorder : isHighContrast ? '#000000' : palette.primary,
           borderWidth: isSecondary || isHighContrast ? borderWidth : 0,
           opacity: disabled ? 0.5 : 1,
         },
-        isSecondary ? styles.secondaryButton : styles.primaryButton,
+        isSecondary && styles.secondaryButton,
+        isAccessible && styles.accessibleButton,
+        variant === 'primary' && styles.primaryButton,
         style,
       ]}
     >
@@ -71,6 +75,14 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  accessible: {
+    minHeight: 48,
+    minWidth: 48,
+  },
+  accessibleButton: {
+    minHeight: 48,
+    minWidth: 48,
+  },
   primaryButton: {},
   secondaryButton: {},
   text: {
@@ -81,3 +93,4 @@ const styles = StyleSheet.create({
 });
 
 export default Button;
+

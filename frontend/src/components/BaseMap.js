@@ -1,11 +1,17 @@
 import React, { useRef, useCallback, useMemo } from 'react';
-import { View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { View, Platform } from 'react-native';
 import tw from 'twrnc';
+
+let WebView = null;
+if (Platform.OS !== 'web') {
+  try {
+    WebView = require('react-native-webview').WebView;
+  } catch (e) {}
+}
 
 /**
  * BaseMap.js - Free Styled OpenStreetMap Component
- * Powered by pure Tailwind CSS styling.
+ * Powered by pure Tailwind CSS styling. Supports Web & Native platforms.
  */
 const BaseMap = ({
   center = [6.9271, 79.8612],
@@ -167,46 +173,18 @@ const BaseMap = ({
       subdomains: 'abcd'
     }).addTo(map);
 
-    // Pre-configured Pins Matching UI Screenshot
-    const defaultPins = [
-      {
-        lat: 6.9310, lng: 79.8580,
-        type: 'orange',
-        icon: '<svg width="20" height="20" viewBox="0 0 24 24" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16M9 6v6M15 12v6"/></svg>',
-        title: 'Broken Pavement',
-        desc: '120m away • Medium Priority'
-      },
-      {
-        lat: 6.9295, lng: 79.8660,
-        type: 'red',
-        tag: '🏛️ CITY HALL',
-        icon: '<svg width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="4" r="2"/><path d="M19 13v-2c-1.54.02-3.09-.75-4.07-1.83l-1.29-1.43c-.17-.19-.38-.34-.61-.45-.71-.34-1.55-.26-2.19.22L7.3 10.28c-.4.3-.64.78-.64 1.28V19h2v-6.35l2.4-1.8 1.94 9.15h2l-1.2-5.64C15.82 15.64 17.84 17 20 17v-2c-1.63 0-3.08-.94-3.79-2.34L15.5 11h3.5z"/></svg>',
-        title: 'Blocked Ramp',
-        desc: '350m away • High Priority'
-      },
-      {
-        lat: 6.9240, lng: 79.8550,
-        type: 'green',
-        icon: '<svg width="20" height="20" viewBox="0 0 24 24" stroke="white" fill="none" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-        title: 'Construction Hazard',
-        desc: 'Sidewalk under repair'
-      },
-      {
-        lat: 6.9220, lng: 79.8640,
-        type: 'amber',
-        tag: '🏢 MUSEUM',
-        icon: '<svg width="20" height="20" viewBox="0 0 24 24" stroke="white" fill="none" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/></svg>',
-        title: 'Steep Curb',
-        desc: 'No curb cut on crossing'
-      }
-    ];
+    // Markers from database or props
+    const activeMarkers = ${JSON.stringify(markers || [])};
 
-    defaultPins.forEach(pin => {
+    activeMarkers.forEach(pin => {
+      const pinType = pin.type || (pin.obstacleType === 'construction' ? 'orange' : pin.obstacleType === 'stairs_only' ? 'red' : 'green');
+      const pinIconSvg = pin.iconSvg || '<svg width="20" height="20" viewBox="0 0 24 24" stroke="white" fill="none" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>';
+
       const iconHtml = \`
         <div class="custom-pin">
           \${pin.tag ? '<div class="pin-label-tag">' + pin.tag + '</div>' : ''}
-          <div class="pin-bubble \${pin.type}">
-            \${pin.icon}
+          <div class="pin-bubble \${pinType}">
+            \${pinIconSvg}
           </div>
         </div>
       \`;
@@ -217,9 +195,14 @@ const BaseMap = ({
         iconAnchor: [20, 48]
       });
 
-      L.marker([pin.lat, pin.lng], { icon: customIcon })
-        .bindPopup('<div class="popup-title">' + pin.title + '</div><div class="popup-sub">' + pin.desc + '</div>', { className: 'unity-popup' })
-        .addTo(map);
+      const pinLat = pin.lat || (pin.location && pin.location.coordinates ? pin.location.coordinates[1] : null);
+      const pinLng = pin.lng || (pin.location && pin.location.coordinates ? pin.location.coordinates[0] : null);
+
+      if (pinLat && pinLng) {
+        L.marker([pinLat, pinLng], { icon: customIcon })
+          .bindPopup('<div class="popup-title">' + (pin.title || pin.name || 'Location') + '</div><div class="popup-sub">' + (pin.desc || pin.obstacleType || '') + '</div>', { className: 'unity-popup' })
+          .addTo(map);
+      }
     });
 
     const userIcon = L.divIcon({
@@ -239,7 +222,8 @@ const BaseMap = ({
   </script>
 </body>
 </html>
-  `, [normalizedCenter, zoom, themeBg, surface, primary, cardBorder, textPrimary, isHighContrast]);
+  `, [normalizedCenter, zoom, themeBg, surface, primary, cardBorder, textPrimary, isHighContrast, markers]);
+
 
   const handleMessage = useCallback((event) => {
     try {
@@ -249,6 +233,25 @@ const BaseMap = ({
       }
     } catch (e) {}
   }, [onMapClick]);
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[tw`flex-1 w-full h-full`, { backgroundColor: themeBg }, style]}>
+        <iframe
+          title="UnityMap Leaflet OSM"
+          srcDoc={mapHtml}
+          style={{ width: '100%', height: '100%', border: 'none', backgroundColor: themeBg }}
+          onLoad={() => {
+            if (typeof onReady === 'function') onReady();
+          }}
+        />
+      </View>
+    );
+  }
+
+  if (!WebView) {
+    return <View style={[tw`flex-1 w-full h-full`, { backgroundColor: themeBg }, style]} />;
+  }
 
   return (
     <View style={[tw`flex-1 w-full h-full`, { backgroundColor: themeBg }, style]}>
@@ -271,3 +274,4 @@ const BaseMap = ({
 };
 
 export default BaseMap;
+
