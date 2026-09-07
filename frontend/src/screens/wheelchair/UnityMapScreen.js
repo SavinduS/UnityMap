@@ -47,18 +47,20 @@ const UnityMapScreen = () => {
   const [dbObstacles, setDbObstacles] = useState([]);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
-  const [showLauncher, setShowLauncher] = useState(true);
+  const [showLauncher, setShowLauncher] = useState(false);
   const [showVoiceNav, setShowVoiceNav] = useState(false);
 
-  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isScreenReaderEnabled } = useTheme();
+  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isScreenReaderEnabled, isAudioLauncherEnabled } = useTheme();
   const { location, loading: locationLoading, recenter } = useLocation();
 
-  // Initial modal: show launcher on mount (auto TalkBack detection handled inside launcher)
+  // Only show launcher if enabled in Settings (not for every user)
   useEffect(() => {
-    if (isScreenReaderEnabled) {
+    if (isAudioLauncherEnabled) {
       setShowLauncher(true);
+    } else {
+      setShowLauncher(false);
     }
-  }, [isScreenReaderEnabled]);
+  }, [isAudioLauncherEnabled]);
 
   // Load persistent Wheelchair Accessible state & real search history
   useEffect(() => {
