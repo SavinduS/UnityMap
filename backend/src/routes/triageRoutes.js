@@ -13,11 +13,13 @@ const {
   getMetrics,
   getReportDetails,
   recalculateQueue,
+  dispatchDecision,
 } = require('../controllers/triageController');
 
 router.get('/queue', getQueue);
 router.get('/metrics', getMetrics);
 router.get('/report/:reportId', getReportDetails);
 router.post('/recalculate', recalculateQueue);
+router.post('/dispatch', dispatchDecision);
 
 module.exports = router;
