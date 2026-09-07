@@ -157,15 +157,92 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured }) => {
     }
   }, [persistDraft, revokePreview]);
 
-  const handleCapture = useCallback(() => {
+  const handleCapture = useCallback(async () => {
     setErrorMsg(null);
     setIsLoading(true);
 
-    // Camera unavailable fallback: document/file input only works on web
-    if (Platform.OS !== 'web' && typeof document === 'undefined') {
-      setErrorMsg('Camera is unavailable on this device. Please try on a device with a camera or allow browser camera access.');
-      setIsLoading(false);
-      return;
+    // Native path: use expo-image-picker (supports Android/iOS via Expo Go)
+    if (Platform.OS !== 'web') {
+      try {
+        let ImagePicker;
+        try {
+          ImagePicker = await import('expo-image-picker');
+        } catch (impErr) {
+          if (isMountedRef.current) {
+            setErrorMsg('Camera module unavailable. Please install expo-image-picker or use web browser.');
+            setIsLoading(false);
+          }
+          return;
+        }
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (perm.status !== 'granted') {
+          if (isMountedRef.current) {
+            setErrorMsg('Camera permission denied. Please allow camera access in device settings and try again.');
+            setIsLoading(false);
+          }
+          return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: false,
+          quality: 1,
+          exif: true,
+        });
+        if (!isMountedRef.current) return;
+        if (result.canceled) {
+          setIsLoading(false);
+          return;
+        }
+        const asset = result.assets && result.assets[0];
+        if (!asset || !asset.uri) {
+          setErrorMsg('Failed to capture image. Please try again.');
+          setIsLoading(false);
+          return;
+        }
+        // Show preview directly from file uri (no createObjectURL)
+        revokePreview();
+        if (!isMountedRef.current) return;
+        previewUrlRef.current = null;
+        setImageUri(asset.uri);
+        setErrorMsg(null);
+        setExifLoading(true);
+        try {
+          // exifHelper supports { uri } via fetch → ArrayBuffer
+          const exif = await extractExifData({ uri: asset.uri });
+          if (!isMountedRef.current) return;
+          setExifResult(exif);
+          await persistDraft(asset.uri, exif);
+        } catch (exifErr) {
+          if (!isMountedRef.current) return;
+          const fallback = {
+            latitude: null,
+            longitude: null,
+            capturedAt: null,
+            altitude: null,
+            hasGps: false,
+            hasTimestamp: false,
+          };
+          setExifResult(fallback);
+          await persistDraft(asset.uri, fallback);
+        } finally {
+          if (isMountedRef.current) {
+            setExifLoading(false);
+            setIsLoading(false);
+          }
+        }
+        return;
+      } catch (e) {
+        const raw = e?.message || '';
+        if (isMountedRef.current) {
+          if (/not available|no camera|unavailable|not supported/i.test(raw)) {
+            setErrorMsg('Camera is unavailable on this device. Please try on a device with a camera or allow camera access.');
+          } else {
+            setErrorMsg('Failed to open camera. Please try again or check permissions.');
+          }
+          setIsLoading(false);
+        }
+        return;
+      }
     }
 
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
