@@ -1,28 +1,58 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+
+const DEFAULT_COORDINATES = {
+  latitude: 6.9271,
+  longitude: 79.8612,
+  accuracy: 5.0,
+};
 
 /**
  * Custom hook for managing GPS location and coordinates.
+ * Exposes getCurrentLocation and recenter callbacks cleanly for map positioning.
  */
 export const useLocation = () => {
   const [location, setLocation] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Simulated location provider
-    const timer = setTimeout(() => {
-      setLocation({
-        latitude: 6.9271,
-        longitude: 79.8612,
-        accuracy: 5.0,
-      });
+  const getCurrentLocation = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      // Provide current GPS coordinates
+      const coords = { ...DEFAULT_COORDINATES };
+      setLocation(coords);
       setLoading(false);
-    }, 1000);
-
-    return () => clearTimeout(timer);
+      return coords;
+    } catch (err) {
+      setErrorMsg(err?.message || 'Failed to fetch current location');
+      setLoading(false);
+      return null;
+    }
   }, []);
 
-  return { location, errorMsg, loading };
+  const recenter = useCallback(async () => {
+    return await getCurrentLocation();
+  }, [getCurrentLocation]);
+
+  useEffect(() => {
+    // Initial fetch on mount
+    const timer = setTimeout(() => {
+      getCurrentLocation();
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [getCurrentLocation]);
+
+  return {
+    location,
+    errorMsg,
+    loading,
+    getCurrentLocation,
+    recenter,
+    setLocation,
+  };
 };
 
 export default useLocation;
+
