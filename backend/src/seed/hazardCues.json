@@ -1,0 +1,82 @@
+[
+  {
+    "cueCode": "HAZ_CONSTRUCTION",
+    "obstacleType": "construction",
+    "severity": 3,
+    "cueText": { "en": "Caution: construction ahead in 30 meters", "si": "අවවාදයයි: මීටර් 30කින් ඉදිකිරීම්", "ta": "எச்சரிக்கை: 30 மீட்டரில் கட்டுமானம்" },
+    "earconUrl": "/audio/earcons/construction.mp3",
+    "ttsOverrides": { "rate": 0.95, "pitch": 1.0 },
+    "categoryMapping": ["Other"],
+    "isActive": true
+  },
+  {
+    "cueCode": "HAZ_BLOCKADE",
+    "obstacleType": "blockade",
+    "severity": 4,
+    "cueText": { "en": "Caution: path blocked ahead, rerouting", "si": "අවවාදයයි: මාර්ගය අවහිරයි", "ta": "எச்சரிக்கை: பாதை தடைசெய்யப்பட்டுள்ளது" },
+    "earconUrl": "/audio/earcons/blockade.mp3",
+    "ttsOverrides": { "rate": 0.9, "pitch": 1.0 },
+    "categoryMapping": ["Ramp", "Other"],
+    "isActive": true
+  },
+  {
+    "cueCode": "HAZ_STAIRS_ONLY",
+    "obstacleType": "stairs_only",
+    "severity": 5,
+    "cueText": { "en": "Stairs only ahead, step-free alternative available", "si": "ඉදිරියේ පඩි පමණයි, පියවර රහිත විකල්පයක් ඇත", "ta": "முன்னால் படிக்கட்டுகள் மட்டும், படியற்ற மாற்று உள்ளது" },
+    "earconUrl": "/audio/earcons/stairs.mp3",
+    "ttsOverrides": { "rate": 0.85, "pitch": 1.1 },
+    "categoryMapping": ["Ramp", "Lift"],
+    "isActive": true
+  },
+  {
+    "cueCode": "HAZ_TEMP_HAZARD",
+    "obstacleType": "temporary_hazard",
+    "severity": 2,
+    "cueText": { "en": "Caution: temporary hazard in 10 meters", "si": "අවවාදයයි: මීටර් 10කින් තාවකාලික අනතුරක්", "ta": "எச்சரிக்கை: 10 மீட்டரில் தற்காலிக ஆபத்து" },
+    "earconUrl": "/audio/earcons/hazard.mp3",
+    "ttsOverrides": { "rate": 1.0, "pitch": 1.0 },
+    "categoryMapping": ["Tactile Paving", "Other"],
+    "isActive": true
+  },
+  {
+    "cueCode": "HAZ_TACTILE_MISSING",
+    "obstacleType": "temporary_hazard",
+    "severity": 3,
+    "cueText": { "en": "Caution: missing tactile paving in 5 meters", "si": "අවවාදයයි: මීටර් 5කින් ස්පර්ශක පaving නොමැත", "ta": "எச்சரிக்கை: 5 மீட்டரில் தொடு நடைபாதை இல்லை" },
+    "earconUrl": "/audio/earcons/tactile.mp3",
+    "ttsOverrides": { "rate": 0.95, "pitch": 1.05 },
+    "categoryMapping": ["Tactile Paving"],
+    "isActive": true
+  },
+  {
+    "cueCode": "HAZ_RAMP_STEEP",
+    "obstacleType": "construction",
+    "severity": 4,
+    "cueText": { "en": "Caution: steep ramp ahead, 8 degrees incline", "si": "අවවාදයයි: ඉදිරියේ බෑවුම් සහිත බෑවුම", "ta": "எச்சரிக்கை: முன்னால் செங்குத்தான சரிவு" },
+    "earconUrl": "/audio/earcons/ramp.mp3",
+    "ttsOverrides": { "rate": 0.9, "pitch": 0.95 },
+    "categoryMapping": ["Ramp"],
+    "isActive": true
+  },
+  {
+    "cueCode": "HAZ_ELEVATOR_OUT",
+    "obstacleType": "blockade",
+    "severity": 5,
+    "cueText": { "en": "Elevator out of service ahead, using alternative route", "si": "ඉදිරියේ සෝපානය අක්‍රීයයි", "ta": "முன்னால் மின்தூக்கி சேவையில் இல்லை" },
+    "earconUrl": "/audio/earcons/elevator.mp3",
+    "ttsOverrides": { "rate": 0.9, "pitch": 1.0 },
+    "categoryMapping": ["Lift"],
+    "isActive": true
+  },
+  {
+    "cueCode": "HAZ_RESTROOM_BARRIER",
+    "obstacleType": "blockade",
+    "severity": 2,
+    "cueText": { "en": "Accessible restroom temporarily closed ahead", "si": "ප්‍රවේශ විය හැකි වැසිකිළිය තාවකාලිකව වසා ඇත", "ta": "அணுகக்கூடிய கழிப்பறை தற்காலிகமாக மூடப்பட்டுள்ளது" },
+    "earconUrl": "/audio/earcons/restroom.mp3",
+    "ttsOverrides": { "rate": 1.0, "pitch": 1.0 },
+    "categoryMapping": ["Restroom"],
+    "isActive": true
+  }
+]
