@@ -1,9 +1,13 @@
 /**
  * AdminPortalScaffoldScreen.js
- * Municipal Admin Portal Hub & Foundation Scaffold
+ * Municipal Admin Mobile Dashboard & Operational Operations Hub
  * 
- * Assigned Member: Savindu
- * Ticket: SPT-010
+ * Features:
+ * - Mobile-first design aligned with UnityMap emerald brand theme (#0B3D2E)
+ * - Top-left Hamburger Menu triggering the Side Navigation Drawer
+ * - Logical Operational Workflows (Triage, Inspection, Compliance)
+ * - Prominent User Role Management Console
+ * - Ward Jurisdiction selector and live infrastructure KPI summary
  */
 
 import React, { useState, useEffect } from 'react';
@@ -15,30 +19,29 @@ import {
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
-  Modal,
+  Platform,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import authService from '../../services/authService';
 import adminAuthService from '../../services/adminAuthService';
-import {
-  MUNICIPAL_WARDS,
-  MUNICIPAL_ROLES,
-  getWardById,
-} from '../../utils/wardJurisdictions';
-import AdminLoginScreen from './AdminLoginScreen';
+import { MUNICIPAL_WARDS, getWardById } from '../../utils/wardJurisdictions';
 import TriageQueueScreen from './TriageQueueScreen';
 import ReportInspectionScreen from './ReportInspectionScreen';
 import WardComplianceScreen from './WardComplianceScreen';
+import UserManagementSection from '../../components/admin/UserManagementSection';
+import AdminDrawer from '../../components/admin/AdminDrawer';
 
 export const AdminPortalScaffoldScreen = () => {
-  const [currentUser, setCurrentUser] = useState(adminAuthService.getCurrentUser());
+  const [currentUser, setCurrentUser] = useState(authService.getCurrentUser());
   const [selectedWardId, setSelectedWardId] = useState(
     currentUser?.assignedWardId || 'CMC-W01'
   );
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [currentView, setCurrentView] = useState('hub'); // 'hub' | 'triage' | 'inspection'
+  const [currentView, setCurrentView] = useState('hub'); // 'hub' | 'triage' | 'inspection' | 'compliance' | 'users'
   const [selectedReportForInspection, setSelectedReportForInspection] = useState(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = adminAuthService.subscribe((user) => {
+    const unsubscribe = authService.subscribe((user) => {
       setCurrentUser(user);
       if (user?.assignedWardId) setSelectedWardId(user.assignedWardId);
     });
@@ -46,21 +49,19 @@ export const AdminPortalScaffoldScreen = () => {
   }, []);
 
   const activeWard = getWardById(selectedWardId);
-  const activeRole = currentUser ? MUNICIPAL_ROLES[currentUser.role] : null;
+  const isSuper = !!currentUser?.isSuperAdmin || currentUser?.email === 'admin@unitymap.com';
 
   const handleWardChange = (wardId) => {
     setSelectedWardId(wardId);
     adminAuthService.switchWard(wardId);
   };
 
-  const handleRoleChange = (roleKey) => {
-    adminAuthService.switchRole(roleKey);
-  };
-
+  // If unauthenticated, RootNavigator handles redirect to LoginScreen
   if (!currentUser) {
-    return <AdminLoginScreen onLoginSuccess={(u) => setCurrentUser(u)} />;
+    return null;
   }
 
+  // 1. Evidence Inspection Screen
   if (currentView === 'inspection') {
     return (
       <ReportInspectionScreen
@@ -75,6 +76,7 @@ export const AdminPortalScaffoldScreen = () => {
     );
   }
 
+  // 2. Triage Queue Screen
   if (currentView === 'triage') {
     return (
       <TriageQueueScreen
@@ -87,6 +89,7 @@ export const AdminPortalScaffoldScreen = () => {
     );
   }
 
+  // 3. Ward Compliance Screen
   if (currentView === 'compliance') {
     return (
       <WardComplianceScreen
@@ -96,62 +99,92 @@ export const AdminPortalScaffoldScreen = () => {
     );
   }
 
+  // 4. Standalone User Role Management View
+  if (currentView === 'users') {
+    return (
+      <SafeAreaView style={styles.standaloneView}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
+        <UserManagementSection
+          isStandalone={true}
+          onBack={() => setCurrentView('hub')}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // 5. Main Dashboard Overview (Hub)
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        {/* Municipal Authority Header */}
-        <View style={styles.headerCard}>
-          <View style={styles.govBadgeContainer}>
-            <Text style={styles.govEmblem}>🏛️</Text>
-            <View>
-              <Text style={styles.govTitle}>COLOMBO MUNICIPAL COUNCIL</Text>
-              <Text style={styles.govSubtitle}>Municipal Accessibility & Infrastructure Division</Text>
+      <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
+
+      {/* ── Top Mobile Emerald Header ── */}
+      <View style={styles.topHeader}>
+        <View style={styles.headerNavRow}>
+          {/* Top-Left Drawer Trigger (Hamburger Menu) */}
+          <TouchableOpacity
+            style={styles.hamburgerButton}
+            onPress={() => setIsDrawerOpen(true)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Open navigation drawer"
+          >
+            <Feather name="menu" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+
+          {/* Center Brand Title */}
+          <View style={styles.headerCenter}>
+            <View style={styles.headerTitleRow}>
+              <Feather name="shield" size={16} color="#A7F3D0" style={{ marginRight: 6 }} />
+              <Text style={styles.headerAppTitle}>UnityMap Admin</Text>
             </View>
+            <Text style={styles.headerSubtitle}>Municipal Council Operations</Text>
           </View>
 
-          <View style={styles.staffProfileBox}>
-            <View style={styles.staffInfo}>
-              <Text style={styles.staffName}>{currentUser.name}</Text>
-              <Text style={styles.badgeNumber}>ID: {currentUser.badgeNumber}</Text>
-            </View>
-            <View style={styles.staffProfileRight}>
-              <View
-                style={[
-                  styles.roleBadge,
-                  { backgroundColor: activeRole?.badgeColor || '#2563EB' },
-                ]}
-              >
-                <Text style={styles.roleBadgeText}>{activeRole?.title}</Text>
-              </View>
-              <View style={styles.staffActionRow}>
-                <TouchableOpacity
-                  style={styles.switchAccountButton}
-                  onPress={() => setIsLoginModalOpen(true)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.switchAccountText}>Switch Staff</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.logoutButton}
-                  onPress={() => {
-                    adminAuthService.logout();
-                    setCurrentUser(null);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.logoutText}>Log Out</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
+          {/* Top-Right Quick Action (Logout) */}
+          <TouchableOpacity
+            style={styles.headerLogoutBtn}
+            onPress={() => authService.logout()}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Quick Log Out"
+          >
+            <Feather name="log-out" size={18} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
-        {/* Jurisdiction Selector Bar */}
-        <View style={styles.sectionContainer}>
+        {/* Administrator Profile Card */}
+        <View style={styles.adminProfileBanner}>
+          <View style={styles.adminAvatarCircle}>
+            <Text style={styles.adminAvatarEmoji}>{isSuper ? '🛡️' : '🏛️'}</Text>
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <View style={styles.adminNameRow}>
+              <Text style={styles.adminName}>{currentUser.name}</Text>
+              <View style={[styles.roleBadge, { backgroundColor: isSuper ? '#F59E0B' : '#10B981' }]}>
+                <Text style={styles.roleBadgeText}>
+                  {isSuper ? 'SUPER ADMIN' : 'ADMIN'}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.adminWardJurisdiction}>
+              📍 Ward Jurisdiction: {activeWard.name} ({activeWard.wardNumber})
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      {/* ── Main Scrollable Body ── */}
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Ward Jurisdiction Selection Strip */}
+        <View style={styles.sectionCard}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>📍 Ward Jurisdiction</Text>
-            <Text style={styles.sectionCaption}>Select council ward</Text>
+            <Text style={styles.sectionTitle}>📍 Select Active Ward</Text>
+            <Text style={styles.sectionSubtitle}>Filtered infrastructure jurisdiction</Text>
           </View>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.wardScroll}>
@@ -163,6 +196,8 @@ export const AdminPortalScaffoldScreen = () => {
                   style={[styles.wardChip, isSelected && styles.selectedWardChip]}
                   onPress={() => handleWardChange(ward.id)}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select Ward ${ward.wardNumber}`}
                 >
                   <Text style={[styles.wardChipText, isSelected && styles.selectedWardChipText]}>
                     Ward {ward.wardNumber}: {ward.name.split(' ')[0]}
@@ -173,211 +208,134 @@ export const AdminPortalScaffoldScreen = () => {
             })}
           </ScrollView>
 
-          {/* Active Ward KPI Overview */}
-          <View style={styles.wardSummaryCard}>
-            <View style={styles.wardHeader}>
-              <Text style={styles.wardTitle}>{activeWard.name}</Text>
-              <View style={[styles.priorityTag, activeWard.priority === 'CRITICAL' ? styles.criticalTag : styles.highTag]}>
+          {/* Ward Summary Card */}
+          <View style={styles.wardOverviewBox}>
+            <View style={styles.wardHeaderRow}>
+              <Text style={styles.wardOverviewTitle}>{activeWard.name}</Text>
+              <View
+                style={[
+                  styles.priorityTag,
+                  activeWard.priority === 'CRITICAL' ? styles.criticalTag : styles.highTag,
+                ]}
+              >
                 <Text style={styles.priorityText}>{activeWard.priority} PRIORITY</Text>
               </View>
             </View>
-            <Text style={styles.wardDesc}>{activeWard.description}</Text>
+            <Text style={styles.wardOverviewDesc}>{activeWard.description}</Text>
 
+            {/* KPI Cards Row */}
             <View style={styles.kpiRow}>
               <TouchableOpacity
-                style={styles.kpiItem}
+                style={styles.kpiBox}
                 onPress={() => setCurrentView('triage')}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.kpiValue, { color: '#2563EB' }]}>{activeWard.activeBarriers}</Text>
-                <Text style={styles.kpiLabel}>Pending Triage →</Text>
+                <Text style={[styles.kpiNumber, { color: '#047857' }]}>{activeWard.activeBarriers}</Text>
+                <Text style={styles.kpiCaption}>Pending Triage →</Text>
               </TouchableOpacity>
+
               <View style={styles.kpiDivider} />
+
               <TouchableOpacity
-                style={styles.kpiItem}
+                style={styles.kpiBox}
                 onPress={() => setCurrentView('compliance')}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.kpiValue, { color: '#059669' }]}>{activeWard.complianceScore}%</Text>
-                <Text style={styles.kpiLabel}>Compliance Index →</Text>
+                <Text style={[styles.kpiNumber, { color: '#0B3D2E' }]}>{activeWard.complianceScore}%</Text>
+                <Text style={styles.kpiCaption}>Compliance →</Text>
               </TouchableOpacity>
+
               <View style={styles.kpiDivider} />
-              <View style={styles.kpiItem}>
-                <Text style={styles.kpiValue}>
-                  {(activeWard.allocatedBudgetLKR / 1000000).toFixed(1)}M LKR
+
+              <View style={styles.kpiBox}>
+                <Text style={[styles.kpiNumber, { color: '#1D4ED8' }]}>
+                  {(activeWard.allocatedBudgetLKR / 1000000).toFixed(1)}M
                 </Text>
-                <Text style={styles.kpiLabel}>Repair Budget</Text>
+                <Text style={styles.kpiCaption}>Budget (LKR)</Text>
               </View>
             </View>
           </View>
         </View>
 
-        {/* Flow 4 Module Directory (Sprint 0 - 2 Roadmap) */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>⚖️ Component 4 Modules (Flow 4)</Text>
-          <Text style={styles.sectionSubtitle}>
-            Municipal barrier review, cross-checking & dispatch workflows
-          </Text>
+        {/* ── Municipal Operational Workflows ── */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>⚡ Municipal Operational Workflows</Text>
+            <Text style={styles.sectionSubtitle}>
+              Core inspection, review, and infrastructure dispatch actions
+            </Text>
+          </View>
 
-          {/* Module 1: Secure Login */}
+          {/* Module 1: Barrier Triage Queue */}
           <TouchableOpacity
-            style={styles.moduleCard}
-            onPress={() => setIsLoginModalOpen(true)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.moduleIconBox}>
-              <Text style={styles.moduleIcon}>🔐</Text>
-            </View>
-            <View style={styles.moduleInfo}>
-              <View style={styles.moduleTagRow}>
-                <Text style={styles.moduleTicket}>SPT-110 (Page 1)</Text>
-                <View style={styles.readyTag}>
-                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
-                </View>
-              </View>
-              <Text style={styles.moduleName}>Secure Portal Login & Jurisdiction</Text>
-              <Text style={styles.moduleDesc}>
-                Municipal credential verification, JWT session handling, and assigned ward filtering. Tap to switch profile.
-              </Text>
-            </View>
-            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
-          </TouchableOpacity>
-
-          {/* Module 2: Triage Queue */}
-          <TouchableOpacity
-            style={styles.moduleCard}
+            style={styles.actionModuleCard}
             onPress={() => setCurrentView('triage')}
             activeOpacity={0.7}
           >
-            <View style={[styles.moduleIconBox, { backgroundColor: '#FEF3C7' }]}>
-              <Text style={styles.moduleIcon}>⚡</Text>
+            <View style={[styles.moduleIconBadge, { backgroundColor: '#ECFDF5' }]}>
+              <Feather name="zap" size={22} color="#047857" />
             </View>
-            <View style={styles.moduleInfo}>
-              <View style={styles.moduleTagRow}>
-                <Text style={styles.moduleTicket}>SPT-111 / SPT-112 (Page 2)</Text>
-                <View style={styles.readyTag}>
-                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
-                </View>
-              </View>
-              <Text style={styles.moduleName}>Automated Severity Triage Queue</Text>
-              <Text style={styles.moduleDesc}>
-                Auto-prioritizes volunteer barrier submissions using dynamic urgency index & corroboration tallies. Tap to view queue.
+            <View style={styles.moduleTextContent}>
+              <Text style={styles.moduleHeading}>Barrier Triage & Urgency Queue</Text>
+              <Text style={styles.moduleDescription}>
+                Review severity-ranked citizen and volunteer reports. Prioritize immediate obstacles.
               </Text>
             </View>
-            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
+            <Feather name="chevron-right" size={20} color="#047857" />
           </TouchableOpacity>
 
-          {/* Module 3: Inspection Workspace */}
+          {/* Module 2: Inspection Workspace */}
           <TouchableOpacity
-            style={styles.moduleCard}
+            style={styles.actionModuleCard}
             onPress={() => {
               setSelectedReportForInspection(null);
               setCurrentView('inspection');
             }}
             activeOpacity={0.7}
           >
-            <View style={[styles.moduleIconBox, { backgroundColor: '#EDE9FE' }]}>
-              <Text style={styles.moduleIcon}>🔎</Text>
+            <View style={[styles.moduleIconBadge, { backgroundColor: '#EFF6FF' }]}>
+              <Feather name="check-square" size={22} color="#1D4ED8" />
             </View>
-            <View style={styles.moduleInfo}>
-              <View style={styles.moduleTagRow}>
-                <Text style={styles.moduleTicket}>SPT-207 / SPT-208 (Page 3)</Text>
-                <View style={styles.readyTag}>
-                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
-                </View>
-              </View>
-              <Text style={styles.moduleName}>Evidence Inspection & Asset Check</Text>
-              <Text style={styles.moduleDesc}>
-                Side-by-side photo comparison against CMC asset records with Approve & Budget, Reject, or Request Info. Tap to inspect.
+            <View style={styles.moduleTextContent}>
+              <Text style={styles.moduleHeading}>Photo Inspection & Decision Workspace</Text>
+              <Text style={styles.moduleDescription}>
+                Cross-check evidence against municipal records. Approve repair budgets or reject.
               </Text>
             </View>
-            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
+            <Feather name="chevron-right" size={20} color="#1D4ED8" />
           </TouchableOpacity>
 
-          {/* Module 4: Ward Compliance */}
+          {/* Module 3: Ward Compliance Analytics */}
           <TouchableOpacity
-            style={styles.moduleCard}
+            style={styles.actionModuleCard}
             onPress={() => setCurrentView('compliance')}
             activeOpacity={0.7}
           >
-            <View style={[styles.moduleIconBox, { backgroundColor: '#DCFCE7' }]}>
-              <Text style={styles.moduleIcon}>📊</Text>
+            <View style={[styles.moduleIconBadge, { backgroundColor: '#F0FDF4' }]}>
+              <Feather name="bar-chart-2" size={22} color="#0B3D2E" />
             </View>
-            <View style={styles.moduleInfo}>
-              <View style={styles.moduleTagRow}>
-                <Text style={styles.moduleTicket}>SPT-209 (Page 4)</Text>
-                <View style={styles.readyTag}>
-                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
-                </View>
-              </View>
-              <Text style={styles.moduleName}>Ward Compliance & Budget Analytics</Text>
-              <Text style={styles.moduleDesc}>
-                Accessibility scores, active repair budget queue status, and monthly resolution statistics. Tap to view dashboard.
+            <View style={styles.moduleTextContent}>
+              <Text style={styles.moduleHeading}>Ward Infrastructure & Compliance Index</Text>
+              <Text style={styles.moduleDescription}>
+                Ward accessibility metrics, municipal repair fund allocations, and resolution trends.
               </Text>
             </View>
-            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
+            <Feather name="chevron-right" size={20} color="#0B3D2E" />
           </TouchableOpacity>
         </View>
 
-        {/* Staff Role Switcher for Testing/Demo */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>👤 Test Role Simulation</Text>
-          <Text style={styles.sectionCaption}>Switch municipal persona to verify permissions</Text>
-
-          <View style={styles.roleToggleGroup}>
-            {Object.keys(MUNICIPAL_ROLES).map((roleKey) => {
-              const role = MUNICIPAL_ROLES[roleKey];
-              const isCurrent = currentUser?.role === roleKey;
-              return (
-                <TouchableOpacity
-                  key={roleKey}
-                  style={[
-                    styles.roleOptionButton,
-                    isCurrent && { borderColor: role.badgeColor, backgroundColor: '#1E293B' },
-                  ]}
-                  onPress={() => handleRoleChange(roleKey)}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.roleOptionText,
-                      isCurrent && { color: role.badgeColor, fontWeight: '700' },
-                    ]}
-                  >
-                    {role.title}
-                  </Text>
-                  {isCurrent && <Text style={styles.roleActiveIndicator}>✓ Active</Text>}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
+        {/* ── User Role Management Section ── */}
+        <UserManagementSection />
       </ScrollView>
 
-      {/* Login Screen Modal (Page 1) */}
-      <Modal
-        visible={isLoginModalOpen}
-        animationType="slide"
-        onRequestClose={() => setIsLoginModalOpen(false)}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#0F172A' }}>
-          <View style={styles.modalTopNav}>
-            <TouchableOpacity
-              onPress={() => setIsLoginModalOpen(false)}
-              style={styles.modalBackBtn}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.modalBackText}>✕ Close</Text>
-            </TouchableOpacity>
-          </View>
-          <AdminLoginScreen
-            onLoginSuccess={(u) => {
-              setCurrentUser(u);
-              setIsLoginModalOpen(false);
-            }}
-          />
-        </SafeAreaView>
-      </Modal>
+      {/* ── Slide-in Side Navigation Drawer ── */}
+      <AdminDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        currentView={currentView}
+        onSelectView={(view) => setCurrentView(view)}
+        currentUser={currentUser}
+      />
     </SafeAreaView>
   );
 };
@@ -385,183 +343,161 @@ export const AdminPortalScaffoldScreen = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#F8FAFC',
   },
-  container: {
+  standaloneView: {
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
-  content: {
-    paddingBottom: 32,
-  },
-  headerCard: {
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 22,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-  },
-  govBadgeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  govEmblem: {
-    fontSize: 32,
-    marginRight: 12,
-  },
-  govTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#38BDF8',
-    letterSpacing: 1.2,
-  },
-  govSubtitle: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 2,
-  },
-  staffProfileBox: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  staffInfo: {
+  container: {
     flex: 1,
   },
-  staffName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#F8FAFC',
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 40,
   },
-  badgeNumber: {
+  topHeader: {
+    backgroundColor: '#0B3D2E',
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === 'android' ? 32 : 12,
+    paddingBottom: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    shadowColor: '#0B3D2E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  headerNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  hamburgerButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerCenter: {
+    alignItems: 'center',
+  },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerAppTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  headerSubtitle: {
     fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 2,
-    fontFamily: 'monospace',
+    color: '#A7F3D0',
+    marginTop: 1,
+  },
+  headerLogoutBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(220, 38, 38, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(220, 38, 38, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminProfileBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    padding: 12,
+    borderRadius: 14,
+  },
+  adminAvatarCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  adminAvatarEmoji: {
+    fontSize: 20,
+  },
+  adminNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  adminName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   roleBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   roleBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    fontWeight: '800',
     color: '#FFFFFF',
-    letterSpacing: 0.3,
+    letterSpacing: 0.4,
   },
-  staffProfileRight: {
-    alignItems: 'flex-end',
-    gap: 6,
+  adminWardJurisdiction: {
+    fontSize: 11,
+    color: '#A7F3D0',
+    marginTop: 2,
   },
-  staffActionRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 4,
-  },
-  switchAccountButton: {
-    backgroundColor: '#334155',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  switchAccountText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#38BDF8',
-  },
-  logoutButton: {
-    backgroundColor: '#451A1A',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  logoutText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#F87171',
-  },
-  modalTopNav: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#0F172A',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  modalBackBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: '#1E293B',
-    borderRadius: 8,
-  },
-  modalBackText: {
-    color: '#94A3B8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  loggedOutBox: {
-    padding: 12,
-    backgroundColor: '#334155',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  loggedOutText: {
-    color: '#F1F5F9',
-    fontSize: 12,
-  },
-  sectionContainer: {
-    paddingHorizontal: 16,
-    marginTop: 20,
+  sectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: '#0F172A',
-    letterSpacing: 0.2,
   },
   sectionSubtitle: {
     fontSize: 12,
     color: '#64748B',
     marginTop: 2,
-    marginBottom: 12,
-  },
-  sectionCaption: {
-    fontSize: 12,
-    color: '#64748B',
   },
   wardScroll: {
-    marginBottom: 12,
+    marginBottom: 14,
   },
   wardChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderRadius: 999,
     marginRight: 8,
+    minHeight: 36,
   },
   selectedWardChip: {
-    backgroundColor: '#0F172A',
-    borderColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
   },
   wardChipText: {
     fontSize: 12,
@@ -576,76 +512,71 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#38BDF8',
+    backgroundColor: '#10B981',
     marginLeft: 6,
   },
-  wardSummaryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
+  wardOverviewBox: {
+    backgroundColor: '#F8FAFC',
     borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
   },
-  wardHeader: {
+  wardHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    justifyContent: 'space-between',
+    marginBottom: 4,
   },
-  wardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+  wardOverviewTitle: {
+    fontSize: 14,
+    fontWeight: '800',
     color: '#0F172A',
-    flex: 1,
   },
   priorityTag: {
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 2,
     borderRadius: 6,
   },
   criticalTag: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#FEF2F2',
   },
   highTag: {
     backgroundColor: '#FEF3C7',
   },
   priorityText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
     color: '#DC2626',
+    letterSpacing: 0.5,
   },
-  wardDesc: {
-    fontSize: 12,
+  wardOverviewDesc: {
+    fontSize: 11,
     color: '#64748B',
-    lineHeight: 16,
-    marginBottom: 14,
+    lineHeight: 15,
+    marginBottom: 12,
   },
   kpiRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  kpiItem: {
+  kpiBox: {
     flex: 1,
     alignItems: 'center',
   },
-  kpiValue: {
+  kpiNumber: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#0F172A',
   },
-  kpiLabel: {
+  kpiCaption: {
     fontSize: 10,
-    fontWeight: '600',
     color: '#64748B',
+    fontWeight: '600',
     marginTop: 2,
   },
   kpiDivider: {
@@ -653,98 +584,38 @@ const styles = StyleSheet.create({
     height: 24,
     backgroundColor: '#E2E8F0',
   },
-  moduleCard: {
+  actionModuleCard: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
     alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
   },
-  moduleIconBox: {
+  moduleIconBadge: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: '#EFF6FF',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
-  moduleIcon: {
-    fontSize: 20,
-  },
-  moduleInfo: {
+  moduleTextContent: {
     flex: 1,
+    marginRight: 8,
   },
-  moduleTagRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  moduleTicket: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  readyTag: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  readyTagText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#16A34A',
-  },
-  sprintTag: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  sprintTagText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  moduleName: {
-    fontSize: 14,
+  moduleHeading: {
+    fontSize: 13,
     fontWeight: '700',
     color: '#0F172A',
-    marginBottom: 2,
   },
-  moduleDesc: {
+  moduleDescription: {
     fontSize: 11,
     color: '#64748B',
+    marginTop: 2,
     lineHeight: 15,
-  },
-  roleToggleGroup: {
-    gap: 8,
-    marginTop: 6,
-  },
-  roleOptionButton: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  roleOptionText: {
-    fontSize: 13,
-    color: '#334155',
-    fontWeight: '600',
-  },
-  roleActiveIndicator: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#10B981',
   },
 });
 

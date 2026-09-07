@@ -31,30 +31,46 @@ const municipalStaffSchema = new mongoose.Schema(
       minlength: [6, 'Password must be at least 6 characters'],
       select: false, // Don't return password hash by default in queries
     },
+    firstName: {
+      type: String,
+      trim: true,
+      maxlength: [50, 'First name cannot exceed 50 characters'],
+    },
+    lastName: {
+      type: String,
+      trim: true,
+      maxlength: [50, 'Last name cannot exceed 50 characters'],
+    },
+    isSuperAdmin: {
+      type: Boolean,
+      default: false,
+    },
     badgeNumber: {
       type: String,
-      required: [true, 'Official municipal badge number is required'],
       trim: true,
+      default: function() {
+        return `UM-${Math.floor(1000 + Math.random() * 9000)}`;
+      },
     },
     role: {
       type: String,
-      required: [true, 'Municipal role clearance tier is required'],
+      required: [true, 'Role clearance is required'],
       enum: {
-        values: ['CHIEF_ENGINEER', 'WARD_INSPECTOR', 'BUDGET_OFFICER'],
-        message: '{VALUE} is not an authorized municipal staff role',
+        values: ['SUPER_ADMIN', 'ADMIN', 'REGULAR_USER', 'CHIEF_ENGINEER', 'WARD_INSPECTOR', 'BUDGET_OFFICER'],
+        message: '{VALUE} is not an authorized user role',
       },
-      default: 'WARD_INSPECTOR',
+      default: 'REGULAR_USER',
       index: true,
     },
     assignedWardId: {
       type: String,
-      required: [true, 'Assigned ward jurisdiction ID is required'],
+      default: 'CMC-W01',
       trim: true,
       index: true,
     },
     department: {
       type: String,
-      default: 'Urban Accessibility & Civil Works Division',
+      default: 'Urban Accessibility & Citizen Operations',
       trim: true,
     },
     phone: {
