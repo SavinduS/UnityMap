@@ -7,6 +7,7 @@ const MunicipalAsset = require('./MunicipalAsset');
 const MunicipalStaff = require('./MunicipalStaff');
 const WardJurisdiction = require('./WardJurisdiction');
 const TriageUrgencyScore = require('./TriageUrgencyScore');
+const SpeechPrompt = require('./SpeechPrompt');
 
 module.exports = {
   Node,
@@ -18,4 +19,5 @@ module.exports = {
   MunicipalStaff,
   WardJurisdiction,
   TriageUrgencyScore,
+  SpeechPrompt,
 };
