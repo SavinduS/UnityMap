@@ -13,7 +13,15 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": ["android.permission.RECORD_AUDIO"]
+    },
+    "ios": {
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "UnityMap uses speech recognition to let you speak your destination hands-free.",
+        "NSMicrophoneUsageDescription": "UnityMap needs microphone access to transcribe your spoken destination."
       }
-    }
+    },
+    "plugins": ["expo-speech-recognition"]
   }
 }
