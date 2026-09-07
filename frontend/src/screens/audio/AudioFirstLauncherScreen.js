@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform, ActivityIndicator } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useSpeech } from '../../hooks/useSpeech';
+import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
 
 const LAUNCHER_PHRASE = 'Tap anywhere and speak your destination';
 
@@ -12,8 +13,9 @@ const LAUNCHER_PHRASE = 'Tap anywhere and speak your destination';
  * Used as initial modal over UnityMapScreen when screen reader is active.
  */
 export const AudioFirstLauncherScreen = ({ onNavigate }) => {
-  const { palette, borderWidth, isHighContrast, isScreenReaderEnabled, isReduceMotionEnabled, screenReaderName, announce } = useTheme();
+  const { palette, borderWidth, isHighContrast, isScreenReaderEnabled, isReduceMotionEnabled, screenReaderName, announce, preferredSTTLocale } = useTheme();
   const { speak } = useSpeech();
+  const { isSupported, isListening, transcript, interimTranscript, confidence, error, start, stop } = useSpeechRecognition();
   const hasAnnouncedRef = useRef(false);
 
   // Auto-detect TalkBack/VoiceOver on launch and auto-prompt exact phrase
@@ -39,8 +41,48 @@ export const AudioFirstLauncherScreen = ({ onNavigate }) => {
     return () => clearTimeout(timer);
   }, [isScreenReaderEnabled, speak, announce]);
 
-  // Also respect reduceMotion — if needed disable any pulse animation (handled via palette)
+  // Respect reduceMotion — disable pulse animation
   const reduceMotionStyle = isReduceMotionEnabled ? { shadowOpacity: 0, elevation: 0 } : null;
+
+  // High-accuracy: when final transcript arrives with confidence >=0.6, forward to map
+  useEffect(() => {
+    if (transcript && transcript.trim().length > 1) {
+      const confOk = confidence === 0 || confidence >= 0.6;
+      if (confOk) {
+        try {
+          speak(`Heard ${transcript}`);
+        } catch (_) {}
+        if (onNavigate) {
+          // Pass transcript and confidence to parent (UnityMapScreen bridge)
+          onNavigate(transcript.trim(), confidence);
+        }
+      } else {
+        try {
+          speak(`Low confidence, please try again. Heard ${transcript}`);
+        } catch (_) {}
+      }
+    }
+  }, [transcript, confidence, speak, onNavigate]);
+
+  const handlePress = async () => {
+    if (isListening) {
+      try { await stop(); } catch (_) {}
+      return;
+    }
+    if (!isSupported) {
+      try { speak(LAUNCHER_PHRASE); } catch (_) {}
+      if (onNavigate) onNavigate('');
+      return;
+    }
+    try {
+      const locale = preferredSTTLocale || 'en';
+      await start(locale);
+    } catch (e) {
+      setTimeout(() => {
+        try { speak(LAUNCHER_PHRASE); } catch (_) {}
+      }, 300);
+    }
+  };
 
   return (
     <View
@@ -67,28 +109,23 @@ export const AudioFirstLauncherScreen = ({ onNavigate }) => {
         </Text>
       </View>
 
-      {/* Full-screen touch target — 48dp+ */}
+      {/* Full-screen touch target — 48dp+ — starts Speech Recognition */}
       <Pressable
         accessible
         accessibilityRole="button"
-        accessibilityLabel={LAUNCHER_PHRASE}
-        accessibilityHint={Platform.select({ android: 'Double tap to speak destination', ios: 'Double tap to speak destination', default: 'Activate to speak' })}
-        accessibilityState={{ disabled: false }}
+        accessibilityLabel={isListening ? 'Listening for destination' : LAUNCHER_PHRASE}
+        accessibilityHint={Platform.select({ android: 'Double tap and speak destination', ios: 'Double tap and speak destination', default: 'Activate to speak' })}
+        accessibilityState={{ disabled: false, busy: isListening }}
         accessibilityLiveRegion="polite"
         accessibilityViewIsModal
         importantForAccessibility="yes"
-        onPress={() => {
-          try {
-            speak(LAUNCHER_PHRASE);
-          } catch (_) {}
-          if (onNavigate) onNavigate();
-        }}
+        onPress={handlePress}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         style={({ pressed }) => [
           styles.touchTarget,
           {
-            backgroundColor: palette.surface,
-            borderColor: palette.cardBorder,
+            backgroundColor: isListening ? (isHighContrast ? palette.surface : '#EFF6FF') : palette.surface,
+            borderColor: isListening ? palette.primary : palette.cardBorder,
             borderWidth,
           },
           pressed && { opacity: 0.85 },
@@ -104,16 +141,33 @@ export const AudioFirstLauncherScreen = ({ onNavigate }) => {
           importantForAccessibility="no-hide-descendants"
         >
           <Text {...textProps} style={[styles.phrase, getTextStyle('xl', { isHighContrast }), { color: palette.primaryText }]}>
-            {LAUNCHER_PHRASE}
+            {isListening ? 'Listening…' : LAUNCHER_PHRASE}
           </Text>
-          <Text {...textProps} style={[styles.hint, getTextStyle('sm', { isHighContrast }), { color: palette.primaryText, opacity: 0.9 }]}>
-            {Platform.select({ android: 'TalkBack', ios: 'VoiceOver', default: 'Screen reader' })} ready
-          </Text>
+          {isListening && interimTranscript ? (
+            <Text {...textProps} style={[styles.hint, getTextStyle('sm', { isHighContrast }), { color: palette.primaryText, opacity: 0.95, fontStyle: 'italic' }]}>
+              {interimTranscript}
+            </Text>
+          ) : (
+            <Text {...textProps} style={[styles.hint, getTextStyle('sm', { isHighContrast }), { color: palette.primaryText, opacity: 0.9 }]}>
+              {Platform.select({ android: 'TalkBack', ios: 'VoiceOver', default: 'Screen reader' })} ready
+            </Text>
+          )}
+          {isListening && <ActivityIndicator color={palette.primaryText} style={{ marginTop: 12 }} />}
+          {transcript ? (
+            <Text {...textProps} style={[styles.hint, getTextStyle('sm', { isHighContrast }), { color: palette.primaryText, marginTop: 8, fontWeight: '700' }]}>
+              Heard: {transcript}
+            </Text>
+          ) : null}
         </View>
 
         <Text {...textProps} style={[styles.subHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
-          Full-screen — minimum 48dp touch target
+          {error ? `Error: ${error} — tap to retry` : isSupported ? 'Free device Speech Recognition — high accuracy' : 'Voice not supported — tap to continue'}
         </Text>
+        {!isSupported && (
+          <Text {...textProps} style={[styles.subHint, getTextStyle('xs', { isHighContrast }), { color: palette.error, marginTop: 4 }]}>
+            Microphone requires HTTPS and permission. EAS Build needed for native.
+          </Text>
+        )}
       </Pressable>
     </View>
   );

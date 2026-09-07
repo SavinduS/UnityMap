@@ -65,6 +65,23 @@ export const saveAudioLauncherEnabled = async (value) => {
   } catch {}
 };
 
+const PREFERRED_STT_LOCALE_KEY = '@unitymap/preferredSTTLocale';
+
+export const loadPreferredSTTLocale = async () => {
+  try {
+    const v = await AsyncStorage.getItem(PREFERRED_STT_LOCALE_KEY);
+    return v || 'en';
+  } catch {
+    return 'en';
+  }
+};
+
+export const savePreferredSTTLocale = async (locale) => {
+  try {
+    await AsyncStorage.setItem(PREFERRED_STT_LOCALE_KEY, locale);
+  } catch {}
+};
+
 export default {
   loadHighContrast,
   saveHighContrast,
@@ -74,5 +91,7 @@ export default {
   saveRecentSearches,
   loadAudioLauncherEnabled,
   saveAudioLauncherEnabled,
+  loadPreferredSTTLocale,
+  savePreferredSTTLocale,
 };
 
