@@ -6,6 +6,7 @@
  */
 
 import { MUNICIPAL_ROLES, MUNICIPAL_WARDS } from '../utils/wardJurisdictions';
+import { apiRequest } from './api';
 
 // Default mock municipal staff account for demo & offline inspection
 const DEFAULT_STAFF_USER = {
@@ -22,7 +23,8 @@ const DEFAULT_STAFF_USER = {
 
 class AdminAuthService {
   constructor() {
-    this.currentUser = { ...DEFAULT_STAFF_USER };
+    // Start unauthenticated so the login gate activates on fresh app launch
+    this.currentUser = null;
     this.listeners = [];
   }
 
@@ -49,18 +51,36 @@ class AdminAuthService {
   }
 
   /**
-   * Mock staff login with ward jurisdiction selection
+   * Municipal staff login with backend API connection & offline fallback
    */
   async login({ email, password, wardId, role = 'CHIEF_ENGINEER' }) {
-    // Simulating authentication delay
-    await new Promise((resolve) => setTimeout(resolve, 350));
-
     if (!email || !password) {
       throw new Error('Municipal email and security PIN/password are required.');
     }
 
+    // 1. Try connecting to Node.js backend using centralized apiRequest
+    try {
+      const data = await apiRequest('/admin/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password, wardId, role }),
+      });
+
+      if (data?.success && data?.user) {
+        this.currentUser = {
+          ...data.user,
+          token: data.token,
+          sessionExpiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+        };
+        this.notify();
+        return this.currentUser;
+      }
+    } catch (_err) {
+      // Backend unavailable; proceed with robust offline mode for presentations
+    }
+
+    // 2. Offline / Local fallback simulation
+    await new Promise((resolve) => setTimeout(resolve, 300));
     const selectedWard = MUNICIPAL_WARDS.find((w) => w.id === wardId) || MUNICIPAL_WARDS[0];
-    const roleConfig = MUNICIPAL_ROLES[role] || MUNICIPAL_ROLES.CHIEF_ENGINEER;
 
     this.currentUser = {
       id: `STAFF-${Math.floor(100 + Math.random() * 900)}`,

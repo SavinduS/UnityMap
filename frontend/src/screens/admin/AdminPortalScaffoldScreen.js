@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
+  Modal,
 } from 'react-native';
 import adminAuthService from '../../services/adminAuthService';
 import {
@@ -22,12 +23,14 @@ import {
   MUNICIPAL_ROLES,
   getWardById,
 } from '../../utils/wardJurisdictions';
+import AdminLoginScreen from './AdminLoginScreen';
 
 export const AdminPortalScaffoldScreen = () => {
   const [currentUser, setCurrentUser] = useState(adminAuthService.getCurrentUser());
   const [selectedWardId, setSelectedWardId] = useState(
     currentUser?.assignedWardId || 'CMC-W01'
   );
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
   useEffect(() => {
     const unsubscribe = adminAuthService.subscribe((user) => {
@@ -49,6 +52,10 @@ export const AdminPortalScaffoldScreen = () => {
     adminAuthService.switchRole(roleKey);
   };
 
+  if (!currentUser) {
+    return <AdminLoginScreen onLoginSuccess={(u) => setCurrentUser(u)} />;
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
@@ -63,12 +70,12 @@ export const AdminPortalScaffoldScreen = () => {
             </View>
           </View>
 
-          {currentUser ? (
-            <View style={styles.staffProfileBox}>
-              <View style={styles.staffInfo}>
-                <Text style={styles.staffName}>{currentUser.name}</Text>
-                <Text style={styles.badgeNumber}>ID: {currentUser.badgeNumber}</Text>
-              </View>
+          <View style={styles.staffProfileBox}>
+            <View style={styles.staffInfo}>
+              <Text style={styles.staffName}>{currentUser.name}</Text>
+              <Text style={styles.badgeNumber}>ID: {currentUser.badgeNumber}</Text>
+            </View>
+            <View style={styles.staffProfileRight}>
               <View
                 style={[
                   styles.roleBadge,
@@ -77,12 +84,27 @@ export const AdminPortalScaffoldScreen = () => {
               >
                 <Text style={styles.roleBadgeText}>{activeRole?.title}</Text>
               </View>
+              <View style={styles.staffActionRow}>
+                <TouchableOpacity
+                  style={styles.switchAccountButton}
+                  onPress={() => setIsLoginModalOpen(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.switchAccountText}>Switch Staff</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.logoutButton}
+                  onPress={() => {
+                    adminAuthService.logout();
+                    setCurrentUser(null);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.logoutText}>Log Out</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          ) : (
-            <View style={styles.loggedOutBox}>
-              <Text style={styles.loggedOutText}>Staff Authentication Required</Text>
-            </View>
-          )}
+          </View>
         </View>
 
         {/* Jurisdiction Selector Bar */}
@@ -150,7 +172,11 @@ export const AdminPortalScaffoldScreen = () => {
           </Text>
 
           {/* Module 1: Secure Login */}
-          <View style={styles.moduleCard}>
+          <TouchableOpacity
+            style={styles.moduleCard}
+            onPress={() => setIsLoginModalOpen(true)}
+            activeOpacity={0.7}
+          >
             <View style={styles.moduleIconBox}>
               <Text style={styles.moduleIcon}>🔐</Text>
             </View>
@@ -158,15 +184,16 @@ export const AdminPortalScaffoldScreen = () => {
               <View style={styles.moduleTagRow}>
                 <Text style={styles.moduleTicket}>SPT-110 (Page 1)</Text>
                 <View style={styles.readyTag}>
-                  <Text style={styles.readyTagText}>AUTH READY</Text>
+                  <Text style={styles.readyTagText}>LIVE SCREEN</Text>
                 </View>
               </View>
               <Text style={styles.moduleName}>Secure Portal Login & Jurisdiction</Text>
               <Text style={styles.moduleDesc}>
-                Municipal credential verification, JWT session handling, and assigned ward filtering.
+                Municipal credential verification, JWT session handling, and assigned ward filtering. Tap to switch profile.
               </Text>
             </View>
-          </View>
+            <Text style={{ fontSize: 18, color: '#2563EB', marginLeft: 8 }}>→</Text>
+          </TouchableOpacity>
 
           {/* Module 2: Triage Queue */}
           <View style={styles.moduleCard}>
@@ -260,6 +287,31 @@ export const AdminPortalScaffoldScreen = () => {
           </View>
         </View>
       </ScrollView>
+
+      {/* Login Screen Modal (Page 1) */}
+      <Modal
+        visible={isLoginModalOpen}
+        animationType="slide"
+        onRequestClose={() => setIsLoginModalOpen(false)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#0F172A' }}>
+          <View style={styles.modalTopNav}>
+            <TouchableOpacity
+              onPress={() => setIsLoginModalOpen(false)}
+              style={styles.modalBackBtn}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.modalBackText}>✕ Close</Text>
+            </TouchableOpacity>
+          </View>
+          <AdminLoginScreen
+            onLoginSuccess={(u) => {
+              setCurrentUser(u);
+              setIsLoginModalOpen(false);
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -332,12 +384,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
+    alignSelf: 'flex-start',
   },
   roleBadgeText: {
     fontSize: 10,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.3,
+  },
+  staffProfileRight: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  staffActionRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 4,
+  },
+  switchAccountButton: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  switchAccountText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#38BDF8',
+  },
+  logoutButton: {
+    backgroundColor: '#451A1A',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  logoutText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F87171',
+  },
+  modalTopNav: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#0F172A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalBackBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#1E293B',
+    borderRadius: 8,
+  },
+  modalBackText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
   },
   loggedOutBox: {
     padding: 12,
