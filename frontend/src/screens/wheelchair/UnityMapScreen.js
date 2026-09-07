@@ -7,13 +7,15 @@ import {
   StatusBar,
   ScrollView,
   Platform,
+  Modal,
 } from 'react-native';
 import tw from 'twrnc';
-import { Feather, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
 import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
 import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
+import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { useLocation } from '../../hooks/useLocation';
@@ -23,30 +25,68 @@ import {
   loadRecentSearches,
   saveRecentSearches,
 } from '../../theme/storage';
-import { getNodes, getObstacles, checkHealth } from '../../services/api';
+import {
+  getNodes,
+  getObstacles,
+  getPathways,
+  getElevatorOverview,
+  checkHealth,
+  getNearestNode,
+  getNearbyObstacles,
+  getNearbyNodes,
+  getRoute,
+  getRoadRoute,
+} from '../../services/api';
+import {
+  calculateWheelchairETA,
+  calculateHaversineDistance,
+  formatDistance,
+  formatDuration,
+  filterObstaclesNearRoute,
+  computeRouteSafetyStatus,
+  categorizeProximityFeatures,
+} from '../../utils/mapMath';
 
 /**
- * UnityMapScreen.js — SPT-101: Accessible Map & Search UI
+ * UnityMapScreen.js — Accessible Map & Real-time Live MongoDB Explorer
  * Features:
- * - 100% Real Live Node.js + MongoDB Backend Data
- * - BaseMap auto-positioning with useLocation and recenter FAB
- * - Persistent Wheelchair Accessible toggle via AsyncStorage
- * - Accessible search bar with clear button & real destination list
- * - Global High-Contrast WCAG 2.1 compliance (>=48dp touch targets)
+ * - 100% Real Live Node.js + MongoDB Data (Nodes, Obstacles, Pathways, Elevators)
+ * - Bottom-left Floating Action Button (FAB) (>=48dp touch target)
+ * - Interactive Drawer for Wheelchair Accessibility, Slope & Route Filters
+ * - Clean top navbar with static banner removed
+ * - Global High-Contrast WCAG 2.1 compliance
  */
 const UnityMapScreen = () => {
   const [activeTab, setActiveTab] = useState('Map');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchExpanded, setIsSearchExpanded] = useState(true);
   const [isWheelchairAccessible, setIsWheelchairAccessible] = useState(true);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [maxSlope, setMaxSlope] = useState(8); // 5, 8, or null
+  const [avoidConstruction, setAvoidConstruction] = useState(true);
+  const [requireElevator, setRequireElevator] = useState(false);
   const [recentDestinations, setRecentDestinations] = useState([]);
   const [dbNodes, setDbNodes] = useState([]);
   const [dbObstacles, setDbObstacles] = useState([]);
+  const [dbPathways, setDbPathways] = useState([]);
+  const [dbElevators, setDbElevators] = useState([]);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [dataError, setDataError] = useState(null);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
+  const [showLauncher, setShowLauncher] = useState(false);
 
-  const { palette, borderWidth, isHighContrast } = useTheme();
+  const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
   const { location, loading: locationLoading, recenter } = useLocation();
+
+  // Only show launcher if enabled in Settings (not for every user)
+  useEffect(() => {
+    if (isAudioLauncherEnabled) {
+      setShowLauncher(true);
+    } else {
+      setShowLauncher(false);
+    }
+  }, [isAudioLauncherEnabled]);
 
   // Load persistent Wheelchair Accessible state & real search history
   useEffect(() => {
@@ -63,54 +103,129 @@ const UnityMapScreen = () => {
     });
   }, []);
 
-  // Connect to live backend to fetch database nodes and obstacles
+  // Connect to live backend and fetch all MongoDB collections
   useEffect(() => {
-    // Health check
-    checkHealth()
-      .then((res) => {
-        if (res?.status === 'ok') {
-          setIsBackendConnected(true);
-        }
-      })
-      .catch(() => setIsBackendConnected(false));
+    let isMounted = true;
 
-    // Fetch live nodes (destinations)
-    getNodes()
-      .then((res) => {
-        if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-          const liveNodes = res.data.map((node) => ({
+    const fetchAllData = async () => {
+      try {
+        setIsLoadingData(true);
+        setDataError(null);
+
+        // Health check
+        try {
+          const health = await checkHealth();
+          if (isMounted && health?.status === 'ok') {
+            setIsBackendConnected(true);
+          }
+        } catch (e) {
+          console.warn('[UnityMapScreen] Health check failed:', e.message);
+          if (isMounted) setIsBackendConnected(false);
+        }
+
+        // Fetch all 4 collections in parallel
+        const [nodesRes, obstaclesRes, pathwaysRes, elevatorsRes] = await Promise.all([
+          getNodes().catch((err) => {
+            console.error('[UnityMapScreen] Nodes fetch error:', err.message);
+            return { data: [] };
+          }),
+          getObstacles(true).catch((err) => {
+            console.error('[UnityMapScreen] Obstacles fetch error:', err.message);
+            return { data: [] };
+          }),
+          getPathways().catch((err) => {
+            console.error('[UnityMapScreen] Pathways fetch error:', err.message);
+            return { data: [] };
+          }),
+          getElevatorOverview().catch((err) => {
+            console.error('[UnityMapScreen] Elevators fetch error:', err.message);
+            return { data: [] };
+          }),
+        ]);
+
+        if (!isMounted) return;
+
+        console.log('[UnityMapScreen] Live Database Fetch Completed:', {
+          nodes: nodesRes?.data?.length || 0,
+          obstacles: obstaclesRes?.data?.length || 0,
+          pathways: pathwaysRes?.data?.length || 0,
+          elevators: elevatorsRes?.data?.length || 0,
+        });
+
+        // 1. Process Nodes
+        if (nodesRes?.success && Array.isArray(nodesRes.data) && nodesRes.data.length > 0) {
+          const liveNodes = nodesRes.data.map((node) => ({
             id: node._id || node.id,
             title: node.name,
-            desc: `Floor ${node.floorLevel} • Live MongoDB Point`,
+            desc: `Floor ${node.floorLevel} • Step-Free Node`,
             lat: node.location?.coordinates?.[1] || 6.9271,
             lng: node.location?.coordinates?.[0] || 79.8612,
             type: 'node',
-            distance: 'Nearby',
+            distance: 'Campus',
             isAccessible: true,
           }));
           setDbNodes(liveNodes);
-        }
-      })
-      .catch(() => {});
 
-    // Fetch live obstacles (issues)
-    getObstacles(true)
-      .then((res) => {
-        if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
-          const liveObstacles = res.data.map((obs) => ({
+          if (!location && liveNodes[0]?.lat && liveNodes[0]?.lng) {
+            setMapCenter([liveNodes[0].lat, liveNodes[0].lng]);
+          }
+        }
+
+        // 2. Process Obstacles
+        if (obstaclesRes?.success && Array.isArray(obstaclesRes.data) && obstaclesRes.data.length > 0) {
+          const liveObstacles = obstaclesRes.data.map((obs) => ({
             id: obs._id || obs.id,
             title: obs.title,
-            desc: `${obs.obstacleType || 'Hazard'} • Live DB Report`,
+            desc: `${obs.obstacleType || 'Hazard'} • Live MongoDB Report`,
             priority: 'High',
             obstacleType: obs.obstacleType,
+            type: 'obstacle',
+            lat: obs.location?.coordinates?.[1],
+            lng: obs.location?.coordinates?.[0],
             location: obs.location,
             icon: 'wheelchair',
           }));
           setDbObstacles(liveObstacles);
         }
-      })
-      .catch(() => {});
-  }, []);
+
+        // 3. Process Pathways
+        if (pathwaysRes?.success && Array.isArray(pathwaysRes.data)) {
+          setDbPathways(pathwaysRes.data);
+        }
+
+        // 4. Process Elevators
+        if (elevatorsRes?.success && Array.isArray(elevatorsRes.data)) {
+          const liveElevators = elevatorsRes.data.map((elv) => {
+            const isOp = elv.status === 'operational' || elv.latestStatus === 'OPERATIONAL';
+            const nodeCoords =
+              elv.associatedNode?.location?.coordinates ||
+              elv.nodeDetails?.location?.coordinates;
+            return {
+              id: elv.elevatorId,
+              title: elv.elevatorId,
+              desc: `${elv.elevatorId} • ${isOp ? 'Operational' : 'Out of Service'}`,
+              type: 'elevator',
+              isOperational: isOp,
+              lat: Array.isArray(nodeCoords) ? nodeCoords[1] : undefined,
+              lng: Array.isArray(nodeCoords) ? nodeCoords[0] : undefined,
+            };
+          });
+          setDbElevators(liveElevators);
+        }
+      } catch (err) {
+        console.error('[UnityMapScreen] Critical load error:', err);
+        if (isMounted) setDataError(err.message || 'Failed to load database features');
+      } finally {
+        if (isMounted) setIsLoadingData(false);
+      }
+    };
+
+    fetchAllData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [location]);
 
   // Auto-position map when GPS location is received
   useEffect(() => {
@@ -137,6 +252,11 @@ const UnityMapScreen = () => {
       setMapCenter([location.latitude, location.longitude]);
     }
   }, [recenter, location]);
+
+  // SPT-104 single page: launcher tap just dismisses to map (no VoiceNavigation bridge)
+  const handleLauncherNavigate = useCallback(() => {
+    setShowLauncher(false);
+  }, []);
 
   // Select destination from real DB list / search history
   const handleSelectDestination = useCallback((dest) => {
@@ -169,10 +289,29 @@ const UnityMapScreen = () => {
     );
   }, [searchQuery, recentDestinations, dbNodes]);
 
-  // Live map markers from real DB nodes and obstacles
+  // Live map markers from real DB nodes, obstacles, and elevators
   const mapMarkers = useMemo(() => {
-    return [...dbNodes, ...dbObstacles];
-  }, [dbNodes, dbObstacles]);
+    return [...dbNodes, ...dbObstacles, ...dbElevators];
+  }, [dbNodes, dbObstacles, dbElevators]);
+
+  // Filtered pathways respecting wheelchair mode and gradient preferences
+  const filteredPathways = useMemo(() => {
+    if (!isWheelchairAccessible) {
+      return dbPathways;
+    }
+    return dbPathways.filter((p) => {
+      if (p.isWheelchairAccessible === false) return false;
+      if (p.pathType === 'stairs') return false;
+      if (maxSlope != null && p.inclineDegrees != null && Math.abs(p.inclineDegrees) > maxSlope) {
+        return false;
+      }
+      return true;
+    });
+  }, [dbPathways, isWheelchairAccessible, maxSlope]);
+
+  // Combined routes for BaseMap: static DB pathways rendered via `pathways` prop;
+  // the tap route is rendered as a highlighted route via the `routes` prop
+  const tapRouteList = useMemo(() => (tapRoute ? [tapRoute] : []), [tapRoute]);
 
   return (
     <View style={[tw`flex-1`, { backgroundColor: palette.background }]}>
@@ -263,103 +402,6 @@ const UnityMapScreen = () => {
             </TouchableOpacity>
           </View>
         </View>
-
-        {/* Wheelchair Accessible Persistent Filter Toggle Chip */}
-        <View style={tw`px-5 pb-3`}>
-          <TouchableOpacity
-            style={[
-              tw`flex-row items-center justify-between px-3.5 py-2.5 rounded-xl`,
-              {
-                backgroundColor: isWheelchairAccessible
-                  ? isHighContrast
-                    ? '#FFFFFF'
-                    : 'rgba(255,255,255,0.22)'
-                  : isHighContrast
-                  ? palette.surfaceAlt
-                  : 'rgba(0,0,0,0.25)',
-                borderWidth: isHighContrast ? borderWidth : 1,
-                borderColor: isHighContrast ? '#000000' : 'rgba(255,255,255,0.3)',
-                minHeight: 48,
-              },
-            ]}
-            onPress={handleToggleWheelchair}
-            activeOpacity={0.8}
-            accessible
-            accessibilityRole="switch"
-            accessibilityLabel={`Wheelchair Accessible routing mode, currently ${
-              isWheelchairAccessible ? 'enabled' : 'disabled'
-            }`}
-            accessibilityState={{ checked: isWheelchairAccessible }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <View style={tw`flex-row items-center`}>
-              <View
-                style={[
-                  tw`w-8 h-8 rounded-lg items-center justify-center mr-2.5`,
-                  {
-                    backgroundColor: isWheelchairAccessible
-                      ? '#10B981'
-                      : isHighContrast
-                      ? '#FFFFFF'
-                      : 'rgba(255,255,255,0.2)',
-                  },
-                ]}
-              >
-                <FontAwesome5
-                  name="wheelchair"
-                  size={16}
-                  color={isWheelchairAccessible ? '#FFFFFF' : isHighContrast ? '#000000' : '#FFFFFF'}
-                />
-              </View>
-              <View>
-                <Text
-                  style={[
-                    tw`font-bold text-sm`,
-                    {
-                      color: isWheelchairAccessible && isHighContrast ? palette.primary : '#FFFFFF',
-                    },
-                  ]}
-                >
-                  Wheelchair Accessible Route
-                </Text>
-                <Text
-                  style={[
-                    tw`text-xs`,
-                    {
-                      color: isWheelchairAccessible && isHighContrast ? palette.textSecondary : 'rgba(255,255,255,0.8)',
-                    },
-                  ]}
-                >
-                  {isWheelchairAccessible
-                    ? 'Avoiding stairs, high curbs & steep inclines'
-                    : 'Standard pedestrian routing'}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[
-                tw`px-2.5 py-1 rounded-full`,
-                {
-                  backgroundColor: isWheelchairAccessible
-                    ? isHighContrast
-                      ? palette.primary
-                      : '#10B981'
-                    : 'rgba(255,255,255,0.2)',
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  tw`text-xs font-bold`,
-                  { color: isWheelchairAccessible ? '#FFFFFF' : 'rgba(255,255,255,0.8)' },
-                ]}
-              >
-                {isWheelchairAccessible ? 'ON' : 'OFF'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        </View>
       </SafeAreaView>
 
       {/* ── Main Content Area ─────────────────────────────────────────────── */}
@@ -425,14 +467,245 @@ const UnityMapScreen = () => {
       ) : (
         <>
           <View style={tw`flex-1 relative`}>
-            {/* Auto-positioned BaseMap with Real DB Markers */}
+            {/* BaseMap: routes prop renders the tap-to-route polyline, pathways renders DB paths */}
             <BaseMap
               center={mapCenter}
-              zoom={14}
+              zoom={15}
               markers={mapMarkers}
+              pathways={filteredPathways}
+              routes={tapRouteList}
+              onMapClick={handleMapTap}
+              onLocationFound={handleLocationFound}
               isHighContrast={isHighContrast}
+              isReduceMotionEnabled={isReduceMotionEnabled}
               palette={palette}
             />
+
+            {/* Tap Route: Loading Spinner */}
+            {tapRouteLoading && (
+              <View
+                style={[
+                  tw`absolute top-3 left-4 right-4 z-30 flex-row items-center justify-center p-3 rounded-2xl shadow-md`,
+                  {
+                    backgroundColor: palette.surface,
+                    borderColor: '#3B82F6',
+                    borderWidth: 1.5,
+                  },
+                ]}
+              >
+                <ActivityIndicator size="small" color="#3B82F6" style={tw`mr-2`} />
+                <Text
+                  {...textProps}
+                  style={[
+                    tw`font-semibold`,
+                    getTextStyle('xs', { isHighContrast }),
+                    { color: palette.textPrimary },
+                  ]}
+                >
+                  Calculating accessible pathway route…
+                </Text>
+              </View>
+            )}
+
+            {/* Tap Route: Distance, ETA & Safety Status Header Card */}
+            {tapRouteMeta && !tapRouteLoading && (
+              <View
+                style={[
+                  tw`absolute ${isSearchExpanded ? 'top-18' : 'top-3'} left-4 right-4 z-30 rounded-2xl p-3.5 shadow-xl`,
+                  {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.cardBorder,
+                    borderWidth: isHighContrast ? 2 : 1,
+                  },
+                  isHighContrast && { shadowOpacity: 0, elevation: 0, borderColor: '#000000' },
+                ]}
+              >
+                {/* Header Row: Destination Name & Close Button */}
+                <View style={tw`flex-row items-center justify-between mb-2`}>
+                  <View style={tw`flex-row items-center flex-1 mr-2`}>
+                    <View
+                      style={[
+                        tw`w-8 h-8 rounded-xl items-center justify-center mr-2.5`,
+                        {
+                          backgroundColor: isHighContrast ? palette.surfaceAlt : '#EBF7F0',
+                          borderWidth: isHighContrast ? borderWidth : 0,
+                          borderColor: palette.border,
+                        },
+                      ]}
+                    >
+                      <MaterialIcons name="directions" size={18} color={palette.primary} />
+                    </View>
+                    <Text
+                      {...textProps}
+                      style={[
+                        tw`font-bold flex-1`,
+                        getTextStyle('sm', { isHighContrast }),
+                        { color: palette.textPrimary },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {tapRouteMeta.destName}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={handleClearTap}
+                    style={[tw`w-8 h-8 rounded-full items-center justify-center`]}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessible
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear route and destination"
+                  >
+                    <MaterialIcons name="close" size={20} color={palette.textMuted} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Metrics & Quick Status Badge Row */}
+                <View style={tw`flex-row items-center justify-between flex-wrap gap-2 pt-2 border-t border-gray-100`}>
+                  <View style={tw`flex-row items-center gap-2`}>
+                    {/* Exact Distance */}
+                    <View
+                      style={[
+                        tw`px-2.5 py-1 rounded-lg`,
+                        {
+                          backgroundColor: isHighContrast ? palette.surfaceAlt : '#F1F5F9',
+                          borderWidth: isHighContrast ? borderWidth : 0,
+                          borderColor: palette.border,
+                        },
+                      ]}
+                    >
+                      <Text
+                        {...textProps}
+                        style={[
+                          tw`font-bold`,
+                          getTextStyle('xs', { isHighContrast }),
+                          { color: palette.textPrimary },
+                        ]}
+                      >
+                        {tapRouteMeta.distanceText}
+                      </Text>
+                    </View>
+
+                    {/* Estimated Wheelchair ETA */}
+                    <View
+                      style={[
+                        tw`flex-row items-center px-2.5 py-1 rounded-lg`,
+                        {
+                          backgroundColor: isHighContrast ? palette.surfaceAlt : '#F1F5F9',
+                          borderWidth: isHighContrast ? borderWidth : 0,
+                          borderColor: palette.border,
+                        },
+                      ]}
+                    >
+                      <FontAwesome5 name="wheelchair" size={10} color={palette.primary} style={tw`mr-1.5`} />
+                      <Text
+                        {...textProps}
+                        style={[
+                          tw`font-bold`,
+                          getTextStyle('xs', { isHighContrast }),
+                          { color: palette.textPrimary },
+                        ]}
+                      >
+                        {tapRouteMeta.etaText}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Quick Status Badge */}
+                  {safetyStatus && (
+                    <View
+                      style={[
+                        tw`flex-row items-center px-2.5 py-1 rounded-full`,
+                        {
+                          backgroundColor: isHighContrast ? palette.surface : safetyStatus.bg,
+                          borderColor: isHighContrast ? '#000000' : safetyStatus.border,
+                          borderWidth: isHighContrast ? 2 : 1,
+                        },
+                      ]}
+                    >
+                      <Feather
+                        name={safetyStatus.iconName || 'check-circle'}
+                        size={12}
+                        color={isHighContrast ? palette.textPrimary : safetyStatus.color}
+                        style={tw`mr-1`}
+                      />
+                      <Text
+                        {...textProps}
+                        style={[
+                          tw`font-bold`,
+                          getTextStyle('xs', { isHighContrast }),
+                          { color: isHighContrast ? palette.textPrimary : safetyStatus.color },
+                        ]}
+                      >
+                        {safetyStatus.badgeText}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
+
+            {/* Tap Route: Error badge */}
+            {tapRouteError && !tapRouteLoading && !tapRouteMeta && (
+              <View
+                style={[
+                  tw`absolute top-3 left-4 right-4 z-30 flex-row items-center p-3 rounded-2xl shadow-md`,
+                  { backgroundColor: 'rgba(239,68,68,0.95)', borderColor: '#DC2626', borderWidth: 1 },
+                ]}
+              >
+                <Feather name="alert-circle" size={16} color="#FFFFFF" style={tw`mr-2`} />
+                <Text style={tw`text-white text-xs font-medium flex-1`} numberOfLines={2}>
+                  {tapRouteError}
+                </Text>
+                <TouchableOpacity
+                  onPress={handleClearTap}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss error"
+                >
+                  <MaterialIcons name="close" size={18} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Data Loading Banner — shown while initial DB sync is in progress */}
+            {isLoadingData && (
+              <View
+                style={[
+                  tw`absolute top-2 left-4 right-4 z-40 flex-row items-center justify-center p-2 rounded-xl`,
+                  { backgroundColor: 'rgba(0,0,0,0.75)' },
+                ]}
+              >
+                <ActivityIndicator size="small" color="#10B981" style={tw`mr-2`} />
+                <Text style={tw`text-white text-xs font-semibold`}>
+                  Syncing live MongoDB nodes & pathways...
+                </Text>
+              </View>
+            )}
+
+            {dataError && !isLoadingData && (
+              <View
+                style={[
+                  tw`absolute top-2 left-4 right-4 z-40 flex-row items-center justify-between p-2.5 rounded-xl bg-amber-900/90 border border-amber-500`,
+                ]}
+              >
+                <View style={tw`flex-row items-center flex-1 mr-2`}>
+                  <Feather name="alert-circle" size={16} color="#FCD34D" style={tw`mr-1.5`} />
+                  <Text style={tw`text-amber-100 text-xs font-medium`}>
+                    Offline: Using local cache ({dataError})
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    // Retry load
+                    checkHealth().then((h) => setIsBackendConnected(h?.status === 'ok'));
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={tw`text-white text-xs font-bold underline`}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Accessible Search Bar & Real Destination Search List Overlay */}
             {isSearchExpanded && (
@@ -613,6 +886,57 @@ const UnityMapScreen = () => {
               </View>
             )}
 
+            {/* Floating Wheelchair Mobility & Filter FAB — Bottom-Left (>=48dp) */}
+            <TouchableOpacity
+              style={[
+                tw`absolute left-5 bottom-5 w-13 h-13 rounded-full items-center justify-center shadow-lg z-20`,
+                {
+                  backgroundColor: isWheelchairAccessible
+                    ? isHighContrast
+                      ? '#000000'
+                      : '#0B3D2E'
+                    : palette.surface,
+                  borderWidth: isHighContrast ? 2 : 1.5,
+                  borderColor: isWheelchairAccessible
+                    ? isHighContrast
+                      ? '#FFFFFF'
+                      : '#10B981'
+                    : palette.cardBorder,
+                },
+                isHighContrast && { shadowOpacity: 0, elevation: 0 },
+              ]}
+              onPress={() => setIsDrawerOpen(true)}
+              activeOpacity={0.85}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={`Wheelchair accessibility routing mode is ${
+                isWheelchairAccessible ? 'enabled' : 'disabled'
+              }. Tap to open mobility settings and route filters drawer.`}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <FontAwesome5
+                name="wheelchair"
+                size={20}
+                color={
+                  isWheelchairAccessible
+                    ? '#FFFFFF'
+                    : isHighContrast
+                    ? palette.textPrimary
+                    : palette.primary
+                }
+              />
+              {isWheelchairAccessible && (
+                <View
+                  style={[
+                    tw`absolute -top-1 -right-1 w-4.5 h-4.5 rounded-full items-center justify-center border-2 border-white`,
+                    { backgroundColor: '#10B981' },
+                  ]}
+                >
+                  <Feather name="check" size={10} color="#FFFFFF" />
+                </View>
+              )}
+            </TouchableOpacity>
+
             {/* Floating Navigation FAB — Recenter map on user location */}
             <TouchableOpacity
               style={[
@@ -635,185 +959,412 @@ const UnityMapScreen = () => {
             </TouchableOpacity>
           </View>
 
-          {/* ── Bottom Sheet / Nearby Issues — Global High-Contrast ── */}
-          <View
-            style={[
-              tw`rounded-t-[28px] px-5 pt-3 pb-2 shadow-2xl`,
-              {
-                backgroundColor: palette.surface,
-                borderTopWidth: borderWidth,
-                borderColor: palette.cardBorder,
-              },
-              isHighContrast && { shadowOpacity: 0, elevation: 0 },
-            ]}
-          >
-            {/* Top Handle Drag Pill */}
+          {/* ── Contextual Location Safety & Accessibility Bottom Sheet ── */}
+          {isTapSummarySheetVisible && (
             <View
               style={[
-                tw`w-10 h-1 rounded-full self-center mb-3.5`,
-                { backgroundColor: palette.borderStrong },
+                tw`rounded-t-[28px] px-5 pt-3 pb-2 shadow-2xl`,
+                {
+                  backgroundColor: palette.surface,
+                  borderTopWidth: borderWidth,
+                  borderColor: palette.cardBorder,
+                },
+                isHighContrast && { shadowOpacity: 0, elevation: 0, borderTopWidth: 2, borderColor: '#000000' },
               ]}
-            />
-
-            {/* Sheet Title Row */}
-            <View style={tw`flex-row items-center justify-between mb-3.5`}>
-              <View style={tw`flex-row items-center`}>
-                <Text
-                  {...textProps}
-                  style={[
-                    tw`mr-2`,
-                    getTextStyle('lg', { isHighContrast }),
-                    { color: palette.textPrimary },
-                  ]}
-                >
-                  Nearby Issues
-                </Text>
-                {isBackendConnected && (
-                  <View style={[tw`px-2 py-0.5 rounded-full bg-emerald-100 flex-row items-center`]}>
-                    <View style={tw`w-2 h-2 rounded-full bg-emerald-600 mr-1`} />
-                    <Text style={tw`text-[10px] font-bold text-emerald-700`}>MongoDB Live</Text>
-                  </View>
-                )}
-              </View>
+            >
+              {/* Top Handle Drag Pill */}
               <View
                 style={[
-                  tw`px-3 py-1 rounded-full`,
-                  {
-                    backgroundColor: isHighContrast ? palette.surfaceAlt : '#EBF7F0',
-                    borderWidth: isHighContrast ? borderWidth : 0,
-                    borderColor: palette.cardBorder,
-                  },
+                  tw`w-10 h-1 rounded-full self-center mb-2.5`,
+                  { backgroundColor: palette.borderStrong },
                 ]}
-              >
-                <Text
-                  {...textProps}
-                  style={[
-                    tw`text-xs font-bold`,
-                    getTextStyle('xs', { isHighContrast }),
-                    { color: palette.primary },
-                  ]}
-                >
-                  {dbObstacles.length} reports
-                </Text>
-              </View>
-            </View>
+              />
 
-            {/* Issue Cards */}
-            <ScrollView style={tw`max-h-45`} showsVerticalScrollIndicator={false}>
-              {dbObstacles.length === 0 ? (
-                <View style={tw`py-4 items-center justify-center`}>
-                  <Feather name="check-circle" size={22} color="#10B981" />
+              {/* Sheet Title & Close Row */}
+              <View style={tw`flex-row items-center justify-between mb-2.5`}>
+                <View>
+                  <View style={tw`flex-row items-center`}>
+                    <Text
+                      {...textProps}
+                      style={[
+                        tw`mr-2`,
+                        getTextStyle('lg', { isHighContrast }),
+                        { color: palette.textPrimary, fontWeight: '800' },
+                      ]}
+                    >
+                      Proximity Safety Analysis
+                    </Text>
+                    {isBackendConnected && (
+                      <View style={[tw`px-2 py-0.5 rounded-full bg-emerald-100 flex-row items-center`]}>
+                        <View style={tw`w-2 h-2 rounded-full bg-emerald-600 mr-1`} />
+                        <Text style={tw`text-[10px] font-bold text-emerald-700`}>Live Data</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text
                     {...textProps}
                     style={[
-                      tw`mt-1 font-semibold text-center`,
-                      getTextStyle('sm', { isHighContrast }),
-                      { color: palette.textPrimary },
-                    ]}
-                  >
-                    No Active Obstacles
-                  </Text>
-                  <Text
-                    {...textProps}
-                    style={[
-                      tw`text-xs text-center`,
+                      getTextStyle('xs', { isHighContrast }),
                       { color: palette.textMuted },
                     ]}
                   >
-                    All pathways in this area are clear & accessible
+                    Contextual analysis within 400m radius & along route
                   </Text>
                 </View>
-              ) : (
-                dbObstacles.map((issue) => (
-                  <TouchableOpacity
-                    key={issue.id || issue._id}
+
+                <TouchableOpacity
+                  onPress={() => setIsTapSummarySheetVisible(false)}
+                  style={[tw`w-10 h-10 rounded-full items-center justify-center`]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss proximity safety analysis sheet"
+                >
+                  <MaterialIcons name="close" size={22} color={palette.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Two Category Selector Tabs (Touch targets >= 48dp) */}
+              <View style={tw`flex-row items-center gap-2 mb-3`}>
+                {/* Category A: Issues / Hazards */}
+                <TouchableOpacity
+                  style={[
+                    tw`flex-1 flex-row items-center justify-center rounded-xl px-3`,
+                    {
+                      minHeight: 48,
+                      backgroundColor: activeSheetCategory === 'hazards'
+                        ? isHighContrast ? palette.surfaceAlt : '#FEF2F2'
+                        : isHighContrast ? palette.surface : '#F8FAFC',
+                      borderWidth: activeSheetCategory === 'hazards' ? (isHighContrast ? 2 : 1.5) : 1,
+                      borderColor: activeSheetCategory === 'hazards'
+                        ? isHighContrast ? '#000000' : '#FCA5A5'
+                        : palette.cardBorder,
+                    },
+                  ]}
+                  onPress={() => setActiveSheetCategory('hazards')}
+                  activeOpacity={0.7}
+                  accessible
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeSheetCategory === 'hazards' }}
+                  accessibilityLabel={`Issues and Hazards category tab, ${nearbyHazards.length} items found`}
+                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                >
+                  <Feather
+                    name="alert-triangle"
+                    size={16}
+                    color={activeSheetCategory === 'hazards' ? (isHighContrast ? palette.textPrimary : '#DC2626') : palette.textMuted}
+                    style={tw`mr-1.5`}
+                  />
+                  <Text
+                    {...textProps}
                     style={[
-                      tw`flex-row items-center rounded-2xl p-3 mb-2.5 shadow-sm`,
+                      getTextStyle('xs', { isHighContrast }),
                       {
-                        backgroundColor: palette.surface,
-                        borderColor: palette.cardBorder,
-                        borderWidth,
-                        minHeight: 48,
+                        fontWeight: '700',
+                        color: activeSheetCategory === 'hazards'
+                          ? (isHighContrast ? palette.textPrimary : '#DC2626')
+                          : palette.textMuted,
                       },
-                      isHighContrast && { shadowOpacity: 0, elevation: 0 },
                     ]}
-                    activeOpacity={0.7}
-                    accessible
-                    accessibilityRole="button"
-                    accessibilityLabel={`${issue.title}, ${issue.desc}, ${issue.priority || 'High'} priority`}
-                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
                   >
-                    <View
-                      style={[
-                        tw`w-11 h-11 rounded-xl items-center justify-center mr-3.5`,
-                        {
-                          backgroundColor: isHighContrast ? palette.surfaceAlt : '#EBF7F0',
-                          borderWidth: isHighContrast ? borderWidth : 0,
-                          borderColor: palette.cardBorder,
-                        },
-                      ]}
-                    >
-                      {issue.obstacleType === 'construction' ? (
-                        <MaterialCommunityIcons name="wall" size={20} color={palette.primary} />
-                      ) : (
-                        <FontAwesome5 name="wheelchair" size={18} color={palette.primary} />
-                      )}
-                    </View>
-                    <View style={tw`flex-1`}>
+                    Hazards ({nearbyHazards.length})
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Category B: Accessible / Helpful Features */}
+                <TouchableOpacity
+                  style={[
+                    tw`flex-1 flex-row items-center justify-center rounded-xl px-3`,
+                    {
+                      minHeight: 48,
+                      backgroundColor: activeSheetCategory === 'accessible'
+                        ? isHighContrast ? palette.surfaceAlt : '#ECFDF5'
+                        : isHighContrast ? palette.surface : '#F8FAFC',
+                      borderWidth: activeSheetCategory === 'accessible' ? (isHighContrast ? 2 : 1.5) : 1,
+                      borderColor: activeSheetCategory === 'accessible'
+                        ? isHighContrast ? '#000000' : '#86EFAC'
+                        : palette.cardBorder,
+                    },
+                  ]}
+                  onPress={() => setActiveSheetCategory('accessible')}
+                  activeOpacity={0.7}
+                  accessible
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeSheetCategory === 'accessible' }}
+                  accessibilityLabel={`Accessible Features category tab, ${nearbyAccessible.length} features found`}
+                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                >
+                  <Feather
+                    name="check-circle"
+                    size={16}
+                    color={activeSheetCategory === 'accessible' ? (isHighContrast ? palette.textPrimary : '#16A34A') : palette.textMuted}
+                    style={tw`mr-1.5`}
+                  />
+                  <Text
+                    {...textProps}
+                    style={[
+                      getTextStyle('xs', { isHighContrast }),
+                      {
+                        fontWeight: '700',
+                        color: activeSheetCategory === 'accessible'
+                          ? (isHighContrast ? palette.textPrimary : '#16A34A')
+                          : palette.textMuted,
+                      },
+                    ]}
+                  >
+                    Accessible ({nearbyAccessible.length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Category Content Cards */}
+              <ScrollView style={tw`max-h-48`} showsVerticalScrollIndicator={false}>
+                {activeSheetCategory === 'hazards' ? (
+                  nearbyHazards.length === 0 ? (
+                    <View style={tw`py-6 items-center justify-center`}>
+                      <Feather name="check-circle" size={24} color="#16A34A" />
                       <Text
                         {...textProps}
                         style={[
+                          tw`mt-2 font-bold text-center`,
                           getTextStyle('sm', { isHighContrast }),
                           { color: palette.textPrimary },
                         ]}
                       >
-                        {issue.title}
+                        No Hazards Detected
                       </Text>
                       <Text
                         {...textProps}
                         style={[
+                          tw`text-center mt-1`,
                           getTextStyle('xs', { isHighContrast }),
                           { color: palette.textMuted },
                         ]}
                       >
-                        {issue.desc}
+                        No steep ramps (&gt;8°), stairs without ramps, broken elevators, or construction obstacles detected in this zone.
                       </Text>
                     </View>
-                    <View
-                      style={[
-                        tw`px-3 py-1 rounded-xl`,
-                        {
-                          backgroundColor: isHighContrast
-                            ? palette.surface
-                            : issue.priority === 'High'
-                            ? '#FEE2E2'
-                            : '#FEF3C7',
-                          borderWidth: isHighContrast ? borderWidth : 0,
-                          borderColor: palette.border,
-                        },
-                      ]}
-                    >
+                  ) : (
+                    nearbyHazards.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[
+                          tw`flex-row items-center rounded-2xl p-3 mb-2 shadow-sm`,
+                          {
+                            backgroundColor: palette.surface,
+                            borderColor: palette.cardBorder,
+                            borderWidth,
+                            minHeight: 48,
+                          },
+                          isHighContrast && { shadowOpacity: 0, elevation: 0 },
+                        ]}
+                        activeOpacity={0.7}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel={`${item.title}, ${item.desc}, Priority: ${item.priority || 'High'}`}
+                        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                      >
+                        <View
+                          style={[
+                            tw`w-11 h-11 rounded-xl items-center justify-center mr-3`,
+                            {
+                              backgroundColor: isHighContrast ? palette.surfaceAlt : '#FEE2E2',
+                              borderWidth: isHighContrast ? borderWidth : 0,
+                              borderColor: palette.cardBorder,
+                            },
+                          ]}
+                        >
+                          {item.iconType === 'construction' ? (
+                            <MaterialCommunityIcons name="wall" size={20} color="#DC2626" />
+                          ) : item.iconType === 'stairs' ? (
+                            <MaterialIcons name="stairs" size={20} color="#DC2626" />
+                          ) : item.iconType === 'broken_elevator' ? (
+                            <MaterialCommunityIcons name="elevator-passenger-outline" size={20} color="#DC2626" />
+                          ) : item.iconType === 'slope' ? (
+                            <MaterialCommunityIcons name="slope-uphill" size={20} color="#D97706" />
+                          ) : (
+                            <Feather name="alert-triangle" size={18} color="#DC2626" />
+                          )}
+                        </View>
+
+                        <View style={tw`flex-1 mr-2`}>
+                          <Text
+                            {...textProps}
+                            style={[
+                              tw`font-bold`,
+                              getTextStyle('sm', { isHighContrast }),
+                              { color: palette.textPrimary },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {item.title}
+                          </Text>
+                          <Text
+                            {...textProps}
+                            style={[
+                              getTextStyle('xs', { isHighContrast }),
+                              { color: palette.textMuted },
+                            ]}
+                            numberOfLines={2}
+                          >
+                            {item.desc}
+                          </Text>
+                        </View>
+
+                        <View
+                          style={[
+                            tw`px-2.5 py-1 rounded-lg`,
+                            {
+                              backgroundColor: isHighContrast
+                                ? palette.surfaceAlt
+                                : item.priority === 'High'
+                                ? '#FEE2E2'
+                                : '#FEF3C7',
+                              borderWidth: isHighContrast ? borderWidth : 0,
+                              borderColor: palette.border,
+                            },
+                          ]}
+                        >
+                          <Text
+                            {...textProps}
+                            style={[
+                              getTextStyle('xs', { isHighContrast }),
+                              {
+                                color: isHighContrast
+                                  ? palette.textPrimary
+                                  : item.priority === 'High'
+                                  ? '#DC2626'
+                                  : '#B45309',
+                                fontWeight: '700',
+                              },
+                            ]}
+                          >
+                            {item.priority || 'Hazard'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  )
+                ) : (
+                  nearbyAccessible.length === 0 ? (
+                    <View style={tw`py-6 items-center justify-center`}>
+                      <Feather name="info" size={24} color={palette.textMuted} />
                       <Text
                         {...textProps}
                         style={[
-                          getTextStyle('xs', { isHighContrast }),
-                          {
-                            color: isHighContrast
-                              ? palette.textPrimary
-                              : issue.priority === 'High'
-                              ? '#DC2626'
-                              : '#92400E',
-                          },
+                          tw`mt-2 font-bold text-center`,
+                          getTextStyle('sm', { isHighContrast }),
+                          { color: palette.textPrimary },
                         ]}
                       >
-                        {issue.priority || 'Active'}
+                        No Registered Features
+                      </Text>
+                      <Text
+                        {...textProps}
+                        style={[
+                          tw`text-center mt-1`,
+                          getTextStyle('xs', { isHighContrast }),
+                          { color: palette.textMuted },
+                        ]}
+                      >
+                        Standard step-free ground pathways available.
                       </Text>
                     </View>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-          </View>
+                  ) : (
+                    nearbyAccessible.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={[
+                          tw`flex-row items-center rounded-2xl p-3 mb-2 shadow-sm`,
+                          {
+                            backgroundColor: palette.surface,
+                            borderColor: palette.cardBorder,
+                            borderWidth,
+                            minHeight: 48,
+                          },
+                          isHighContrast && { shadowOpacity: 0, elevation: 0 },
+                        ]}
+                        activeOpacity={0.7}
+                        accessible
+                        accessibilityRole="button"
+                        accessibilityLabel={`${item.title}, ${item.desc}, Status: ${item.badge || 'Accessible'}`}
+                        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                      >
+                        <View
+                          style={[
+                            tw`w-11 h-11 rounded-xl items-center justify-center mr-3`,
+                            {
+                              backgroundColor: isHighContrast ? palette.surfaceAlt : '#DCFCE7',
+                              borderWidth: isHighContrast ? borderWidth : 0,
+                              borderColor: palette.cardBorder,
+                            },
+                          ]}
+                        >
+                          {item.iconType === 'elevator' ? (
+                            <MaterialCommunityIcons name="elevator-passenger" size={20} color="#16A34A" />
+                          ) : item.iconType === 'rest_area' ? (
+                            <MaterialIcons name="chair" size={20} color="#16A34A" />
+                          ) : item.iconType === 'walkway' ? (
+                            <MaterialCommunityIcons name="road-variant" size={20} color="#16A34A" />
+                          ) : (
+                            <FontAwesome5 name="wheelchair" size={16} color="#16A34A" />
+                          )}
+                        </View>
+
+                        <View style={tw`flex-1 mr-2`}>
+                          <Text
+                            {...textProps}
+                            style={[
+                              tw`font-bold`,
+                              getTextStyle('sm', { isHighContrast }),
+                              { color: palette.textPrimary },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {item.title}
+                          </Text>
+                          <Text
+                            {...textProps}
+                            style={[
+                              getTextStyle('xs', { isHighContrast }),
+                              { color: palette.textMuted },
+                            ]}
+                            numberOfLines={2}
+                          >
+                            {item.desc}
+                          </Text>
+                        </View>
+
+                        <View
+                          style={[
+                            tw`px-2.5 py-1 rounded-lg`,
+                            {
+                              backgroundColor: isHighContrast ? palette.surfaceAlt : '#DCFCE7',
+                              borderWidth: isHighContrast ? borderWidth : 0,
+                              borderColor: palette.border,
+                            },
+                          ]}
+                        >
+                          <Text
+                            {...textProps}
+                            style={[
+                              getTextStyle('xs', { isHighContrast }),
+                              {
+                                color: isHighContrast ? palette.textPrimary : '#16A34A',
+                                fontWeight: '700',
+                              },
+                            ]}
+                          >
+                            {item.badge || 'Accessible'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  )
+                )}
+              </ScrollView>
+            </View>
+          )}
         </>
       )}
 
@@ -990,6 +1541,26 @@ const UnityMapScreen = () => {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* SPT-104 single page: Audio-First Launcher as Initial Modal over UnityMapScreen */}
+      <Modal
+        visible={showLauncher}
+        animationType="fade"
+        transparent={false}
+        onRequestClose={() => setShowLauncher(false)}
+        accessibilityViewIsModal
+      >
+        <AudioFirstLauncherScreen onNavigate={handleLauncherNavigate} />
+        <TouchableOpacity
+          onPress={() => setShowLauncher(false)}
+          style={tw`absolute top-12 right-4 px-3 py-2 rounded-full bg-black/60`}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss launcher, show map"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={tw`text-white text-xs font-bold`}>Skip to Map</Text>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 };
