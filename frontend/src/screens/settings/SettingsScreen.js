@@ -16,6 +16,7 @@ import Card from '../../components/Card';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import adminAuthService from '../../services/adminAuthService';
+import authService from '../../services/authService';
 import AdminPortalScaffoldScreen from '../admin/AdminPortalScaffoldScreen';
 
 export const SettingsScreen = () => {
@@ -31,50 +32,18 @@ export const SettingsScreen = () => {
     borderWidth,
   } = useTheme();
 
-  const [currentUser, setCurrentUser] = useState(adminAuthService.getCurrentUser());
+  const [currentUser, setCurrentUser] = useState(authService.getCurrentUser());
   const [isPortalModalVisible, setIsPortalModalVisible] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = adminAuthService.subscribe((user) => {
+    const unsubscribe = authService.subscribe((user) => {
       setCurrentUser(user);
     });
     return () => unsubscribe();
   }, []);
 
   const handleLogout = () => {
-    const performLogout = () => {
-      adminAuthService.logout();
-      if (Platform.OS === 'web') {
-        window.alert('You have logged out of your municipal staff session.');
-      } else {
-        Alert.alert(
-          'Logged Out',
-          'You have successfully logged out of your municipal staff session.',
-          [{ text: 'OK' }]
-        );
-      }
-    };
-
-    if (Platform.OS === 'web') {
-      if (window.confirm('Are you sure you want to log out of your session?')) {
-        performLogout();
-      }
-    } else {
-      Alert.alert(
-        'Confirm Log Out',
-        currentUser
-          ? `Are you sure you want to log out of ${currentUser.name || 'municipal account'}?`
-          : 'Are you sure you want to log out and clear all cached credentials?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Log Out',
-            style: 'destructive',
-            onPress: performLogout,
-          },
-        ]
-      );
-    }
+    authService.logout();
   };
 
   return (
@@ -83,16 +52,16 @@ export const SettingsScreen = () => {
         Settings
       </Text>
 
-      {/* ── Municipal Account & Session Card ── */}
+      {/* ── User Account & Session Card ── */}
       <Card style={styles.card}>
         <View style={styles.cardHeaderRow}>
-          <Feather name="shield" size={20} color={palette.primary} style={{ marginRight: 8 }} />
+          <Feather name="user" size={20} color={palette.primary} style={{ marginRight: 8 }} />
           <Text {...textProps} style={[styles.sectionTitle, getTextStyle('lg', { isHighContrast }), { color: palette.textPrimary, marginBottom: 0 }]}>
-            Municipal Staff Account
+            User Account & Session
           </Text>
         </View>
         <Text {...textProps} style={[styles.sectionDesc, getTextStyle('sm', { isHighContrast }), { color: palette.textMuted }]}>
-          Manage your municipal staff authentication, active ward jurisdiction, and session status.
+          Manage your active profile, accessibility preferences, and session status.
         </Text>
 
         {currentUser ? (
@@ -113,12 +82,12 @@ export const SettingsScreen = () => {
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Text {...textProps} style={[styles.userName, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
-                    {currentUser.name || 'Municipal Officer'}
+                    {currentUser.name || 'UnityMap User'}
                   </Text>
                   <View style={styles.activeDot} />
                 </View>
                 <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
-                  {currentUser.email || 'cmc.admin@colombo.mc.gov.lk'}
+                  {currentUser.email || 'user@unitymap.com'}
                 </Text>
               </View>
             </View>
@@ -126,42 +95,40 @@ export const SettingsScreen = () => {
             <View style={styles.userMetaRow}>
               <View style={[styles.badgePill, { backgroundColor: isHighContrast ? '#000000' : '#ECFDF5', borderColor: palette.border, borderWidth: isHighContrast ? 1 : 0 }]}>
                 <Text style={[styles.badgePillText, { color: isHighContrast ? '#FFFFFF' : '#047857' }]}>
-                  {currentUser.role ? currentUser.role.replace(/_/g, ' ') : 'CHIEF ENGINEER'}
+                  {currentUser.isSuperAdmin ? 'SUPER ADMIN' : (currentUser.role ? currentUser.role.replace(/_/g, ' ') : 'REGULAR USER')}
                 </Text>
               </View>
-              <View style={[styles.badgePill, { backgroundColor: isHighContrast ? '#000000' : '#F3F4F6', borderColor: palette.border, borderWidth: isHighContrast ? 1 : 0 }]}>
-                <Text style={[styles.badgePillText, { color: isHighContrast ? '#FFFFFF' : '#374151' }]}>
-                  {currentUser.assignedWardId || 'CMC-W01'}
-                </Text>
-              </View>
-              {currentUser.badgeNumber ? (
-                <View style={[styles.badgePill, { backgroundColor: isHighContrast ? '#000000' : '#EFF6FF', borderColor: palette.border, borderWidth: isHighContrast ? 1 : 0 }]}>
-                  <Text style={[styles.badgePillText, { color: isHighContrast ? '#FFFFFF' : '#1D4ED8' }]}>
-                    Badge: {currentUser.badgeNumber}
+              {currentUser.phone ? (
+                <View style={[styles.badgePill, { backgroundColor: isHighContrast ? '#000000' : '#F3F4F6', borderColor: palette.border, borderWidth: isHighContrast ? 1 : 0 }]}>
+                  <Text style={[styles.badgePillText, { color: isHighContrast ? '#FFFFFF' : '#374151' }]}>
+                    {currentUser.phone}
                   </Text>
                 </View>
               ) : null}
             </View>
 
-            <TouchableOpacity
-              style={[
-                styles.portalButton,
-                {
-                  backgroundColor: palette.surface,
-                  borderColor: palette.border,
-                  borderWidth,
-                },
-              ]}
-              onPress={() => setIsPortalModalVisible(true)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Open Municipal Admin Portal"
-            >
-              <Feather name="external-link" size={16} color={palette.primary} style={{ marginRight: 8 }} />
-              <Text {...textProps} style={[getTextStyle('sm', { isHighContrast }), { color: palette.primary, fontWeight: '700' }]}>
-                Open Municipal Admin Portal
-              </Text>
-            </TouchableOpacity>
+            {/* Admin shortcut if admin user */}
+            {(currentUser.role === 'ADMIN' || currentUser.role === 'CHIEF_ENGINEER' || currentUser.isSuperAdmin) && (
+              <TouchableOpacity
+                style={[
+                  styles.portalButton,
+                  {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.border,
+                    borderWidth,
+                  },
+                ]}
+                onPress={() => setIsPortalModalVisible(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Open Municipal Admin Portal"
+              >
+                <Feather name="external-link" size={16} color={palette.primary} style={{ marginRight: 8 }} />
+                <Text {...textProps} style={[getTextStyle('sm', { isHighContrast }), { color: palette.primary, fontWeight: '700' }]}>
+                  Open Municipal Admin Portal
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {/* Prominent Log Out Button */}
             <TouchableOpacity
@@ -171,13 +138,14 @@ export const SettingsScreen = () => {
                   borderColor: isHighContrast ? '#000000' : '#DC2626',
                   borderWidth: isHighContrast ? 2 : 1,
                   backgroundColor: '#DC2626',
+                  marginTop: 14,
                 },
               ]}
               onPress={handleLogout}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel="Log out of municipal session"
-              accessibilityHint="Ends active municipal staff session and returns to unauthenticated state"
+              accessibilityLabel="Log out of session"
+              accessibilityHint="Ends active session and redirects to login"
             >
               <Feather name="log-out" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
               <Text {...textProps} style={[styles.logoutButtonText, getTextStyle('base', { isHighContrast })]}>
@@ -202,55 +170,32 @@ export const SettingsScreen = () => {
               </View>
               <View style={{ flex: 1 }}>
                 <Text {...textProps} style={[styles.userName, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
-                  Public / Citizen Mode
+                  Unauthenticated
                 </Text>
                 <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
-                  Not signed into municipal administration
+                  Please sign in to access your UnityMap account
                 </Text>
               </View>
             </View>
 
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+            <View style={{ marginTop: 14 }}>
               <TouchableOpacity
                 style={[
                   styles.portalButton,
                   {
-                    flex: 1,
                     backgroundColor: palette.primary,
                     borderColor: isHighContrast ? '#000000' : palette.primary,
                     borderWidth: isHighContrast ? borderWidth : 0,
                   },
                 ]}
-                onPress={() => setIsPortalModalVisible(true)}
+                onPress={() => adminAuthService.logout()}
                 activeOpacity={0.8}
                 accessibilityRole="button"
-                accessibilityLabel="Sign In as Municipal Staff"
+                accessibilityLabel="Sign In to UnityMap"
               >
                 <Feather name="log-in" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
                 <Text {...textProps} style={[getTextStyle('sm', { isHighContrast }), { color: '#FFFFFF', fontWeight: 'bold' }]}>
-                  Staff Sign In
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.logoutButton,
-                  {
-                    flex: 1,
-                    marginTop: 0,
-                    backgroundColor: isHighContrast ? '#000000' : '#FEE2E2',
-                    borderColor: isHighContrast ? '#FFFFFF' : '#EF4444',
-                    borderWidth: isHighContrast ? borderWidth : 1,
-                  },
-                ]}
-                onPress={handleLogout}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Log Out and Reset Session"
-              >
-                <Feather name="log-out" size={16} color={isHighContrast ? '#FFFFFF' : '#DC2626'} style={{ marginRight: 6 }} />
-                <Text {...textProps} style={[getTextStyle('sm', { isHighContrast }), { color: isHighContrast ? '#FFFFFF' : '#DC2626', fontWeight: 'bold' }]}>
-                  Log Out
+                  Sign In to UnityMap
                 </Text>
               </TouchableOpacity>
             </View>
