@@ -8,6 +8,7 @@ const MunicipalStaff = require('./MunicipalStaff');
 const WardJurisdiction = require('./WardJurisdiction');
 const TriageUrgencyScore = require('./TriageUrgencyScore');
 const SpeechPrompt = require('./SpeechPrompt');
+const HazardCue = require('./HazardCue');
 
 module.exports = {
   Node,
@@ -20,4 +21,5 @@ module.exports = {
   WardJurisdiction,
   TriageUrgencyScore,
   SpeechPrompt,
+  HazardCue,
 };
