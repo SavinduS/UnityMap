@@ -14,10 +14,12 @@ import tw from 'twrnc';
 import { Feather, MaterialCommunityIcons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
 import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
+import Button from '../../components/Button';
 import SettingsScreen from '../settings/SettingsScreen';
 import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import VoiceNavigationScreen from '../audio/VoiceNavigationScreen';
+import SpokenGuidanceHazardWarningScreen from '../audio/SpokenGuidanceHazardWarningScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { useSpeech } from '../../hooks/useSpeech';
 import { getTextStyle, textProps } from '../../theme/typography';
@@ -82,6 +84,7 @@ const UnityMapScreen = () => {
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [voiceConfidence, setVoiceConfidence] = useState(0);
   const [voiceRouteSummary, setVoiceRouteSummary] = useState(null);
+  const [showGuidance, setShowGuidance] = useState(false);
   const [tappedLocation, setTappedLocation] = useState(null);
   const [tapRoute, setTapRoute] = useState(null);
   const [tapRouteLoading, setTapRouteLoading] = useState(false);
@@ -961,6 +964,14 @@ const UnityMapScreen = () => {
                       </Text>
                     </View>
                   )}
+                </View>
+                <View style={{ marginTop: 12 }}>
+                  <Button
+                    title="Open Guidance & Hazard Alerts"
+                    onPress={() => setShowGuidance(true)}
+                    accessibilityLabel="Open spoken guidance and hazard warnings"
+                    style={{ minHeight: 48 }}
+                  />
                 </View>
               </View>
             )}
@@ -1896,6 +1907,23 @@ const UnityMapScreen = () => {
           routeSummary={voiceRouteSummary}
           onConfirm={handleVoiceConfirm}
           onCancel={handleVoiceCancel}
+        />
+      </Modal>
+
+      {/* SPT-204: Spoken Guidance & Hazard Warning UI — modal over UnityMapScreen */}
+      <Modal
+        visible={showGuidance}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowGuidance(false)}
+        accessibilityViewIsModal
+      >
+        <SpokenGuidanceHazardWarningScreen
+          routeSummary={voiceRouteSummary || tapRouteMeta}
+          nearbyHazards={nearbyHazards}
+          safetyStatus={safetyStatus}
+          onReprompt={() => speak(voiceRouteSummary?.spokenSummary || tapRouteMeta?.spokenSummary || 'Reprompting guidance')}
+          onDismiss={() => setShowGuidance(false)}
         />
       </Modal>
     </View>
