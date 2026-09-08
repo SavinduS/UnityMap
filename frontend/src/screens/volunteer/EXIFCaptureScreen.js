@@ -15,7 +15,7 @@ import { saveVolunteerDraft, clearVolunteerDraft } from '../../theme/storage';
  * - Preview via URL.createObjectURL with revoke on replace/unmount
  * - Handles cancel, missing/invalid GPS/timestamp, unsupported image, camera unavailable
  */
-export const EXIFCaptureScreen = ({ onBack, onCaptured }) => {
+export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = false }) => {
   const { palette, borderWidth, isHighContrast } = useTheme();
   const [imageUri, setImageUri] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -326,13 +326,15 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured }) => {
     setErrorMsg(null);
     setIsLoading(false);
     setExifLoading(false);
-    try {
-      await clearVolunteerDraft();
-    } catch {}
+    if (!preserveDraftOnBack) {
+      try {
+        await clearVolunteerDraft();
+      } catch {}
+    }
     if (typeof onBack === 'function') {
       onBack();
     }
-  }, [onBack, revokePreview]);
+  }, [onBack, revokePreview, preserveDraftOnBack]);
 
   const hasImage = !!imageUri;
 

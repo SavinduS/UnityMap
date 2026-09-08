@@ -51,10 +51,26 @@ export const saveRecentSearches = async (searches) => {
   } catch {}
 };
 
+/**
+ * Volunteer draft shape for SPT-109 3-tap audit form:
+ * { imageUri, exifResult, category, rating, notes, updatedAt }
+ * Backward compatible with legacy drafts that only had { imageUri, exifResult, updatedAt }
+ */
 export const loadVolunteerDraft = async () => {
   try {
     const v = await AsyncStorage.getItem(VOLUNTEER_DRAFT_KEY);
-    return v ? JSON.parse(v) : null;
+    if (!v) return null;
+    const parsed = JSON.parse(v);
+    if (!parsed || typeof parsed !== 'object') return null;
+    // Normalize for backward compatibility – older drafts lack category/rating/notes
+    return {
+      imageUri: parsed.imageUri ?? null,
+      exifResult: parsed.exifResult ?? null,
+      category: parsed.category ?? null,
+      rating: parsed.rating ?? null,
+      notes: typeof parsed.notes === 'string' ? parsed.notes : '',
+      updatedAt: parsed.updatedAt ?? null,
+    };
   } catch {
     return null;
   }
@@ -62,7 +78,17 @@ export const loadVolunteerDraft = async () => {
 
 export const saveVolunteerDraft = async (draft) => {
   try {
-    await AsyncStorage.setItem(VOLUNTEER_DRAFT_KEY, JSON.stringify(draft));
+    if (!draft || typeof draft !== 'object') return;
+    const normalized = {
+      imageUri: draft.imageUri ?? null,
+      exifResult: draft.exifResult ?? null,
+      category: draft.category ?? null,
+      rating: draft.rating ?? null,
+      notes: typeof draft.notes === 'string' ? draft.notes : '',
+      updatedAt: draft.updatedAt || new Date().toISOString(),
+    };
+    // Preserve exifResult sub-shape if already stringified日期; keep as-is
+    await AsyncStorage.setItem(VOLUNTEER_DRAFT_KEY, JSON.stringify(normalized));
   } catch {}
 };
 

@@ -28,6 +28,10 @@ export const Input = ({
   style,
   inputStyle,
   suggestionsContainerStyle,
+  multiline = false,
+  numberOfLines,
+  maxLength,
+  textAlignVertical,
 }) => {
   const { isHighContrast, palette, borderWidth } = useTheme();
 
@@ -70,6 +74,7 @@ export const Input = ({
             },
             leftIcon ? { paddingLeft: 0 } : null,
             (hasClearButton || rightIcon) ? { paddingRight: 8 } : null,
+            multiline && { minHeight: 96, textAlignVertical: textAlignVertical || 'top', paddingTop: 12 },
             inputStyle,
             error && styles.inputError,
           ]}
@@ -78,6 +83,10 @@ export const Input = ({
           placeholder={placeholder}
           placeholderTextColor={palette.placeholder}
           secureTextEntry={secureTextEntry}
+          multiline={multiline}
+          numberOfLines={numberOfLines}
+          maxLength={maxLength}
+          textAlignVertical={textAlignVertical}
           accessible
           accessibilityLabel={accessibilityLabel || label || placeholder}
           accessibilityState={{}}

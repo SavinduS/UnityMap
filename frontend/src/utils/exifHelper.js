@@ -300,24 +300,30 @@ export async function extractExifData(file) {
 export const parseExifData = extractExifData;
 
 /**
- * Map EXIF result to BarrierReport fields (helper for SPT-108/206).
+ * Map EXIF result to BarrierReport fields (helper for SPT-108/206/109).
+ * Supports optional fallbackCoordinates for when EXIF GPS is missing (e.g., device location).
  * @param {ExifResult} exif
+ * @param {{latitude:number, longitude:number}} [fallbackCoordinates]
  * @returns {{ coordinates: {latitude:number|null, longitude:number|null}, capturedAt: Date|null, exifMetadata: {latitude:number|null, longitude:number|null, timestamp:Date|null, altitude:number|null} }}
  */
-export function toBarrierReportFields(exif) {
+export function toBarrierReportFields(exif, fallbackCoordinates) {
   if (!exif || typeof exif !== 'object') {
+    const fbLat = fallbackCoordinates?.latitude ?? null;
+    const fbLng = fallbackCoordinates?.longitude ?? null;
     return {
-      coordinates: { latitude: null, longitude: null },
+      coordinates: { latitude: fbLat, longitude: fbLng },
       capturedAt: null,
-      exifMetadata: { latitude: null, longitude: null, timestamp: null, altitude: null },
+      exifMetadata: { latitude: fbLat, longitude: fbLng, timestamp: null, altitude: null },
     };
   }
+  const lat = exif.latitude ?? fallbackCoordinates?.latitude ?? null;
+  const lng = exif.longitude ?? fallbackCoordinates?.longitude ?? null;
   return {
-    coordinates: { latitude: exif.latitude ?? null, longitude: exif.longitude ?? null },
+    coordinates: { latitude: lat, longitude: lng },
     capturedAt: exif.capturedAt ?? null,
     exifMetadata: {
-      latitude: exif.latitude ?? null,
-      longitude: exif.longitude ?? null,
+      latitude: lat,
+      longitude: lng,
       timestamp: exif.capturedAt ?? null,
       altitude: exif.altitude ?? null,
     },

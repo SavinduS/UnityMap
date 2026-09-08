@@ -45,15 +45,17 @@ export const API_BASE_URL = getBaseUrl();
 export const apiRequest = async (endpoint, options = {}) => {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+
   const defaultHeaders = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     Accept: 'application/json',
   };
 
   const tryFetch = async (baseUrl) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     console.log(`[API Request] Fetching: ${url}`);
 
@@ -243,6 +245,89 @@ export const previewSpeech = (body) => {
   });
 };
 
+// ——— Barrier Report Endpoints (Cloudinary photo upload) ———
+
+/**
+ * Get barrier reports with optional filters
+ */
+export const getReports = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return apiRequest(`/reports${query ? `?${query}` : ''}`);
+};
+
+export const getReportById = (id) => apiRequest(`/reports/${id}`);
+
+/**
+ * Create a barrier report — photo is uploaded to Cloudinary via backend.
+ *
+ * @param {object} reportData - { coordinates:{latitude,longitude}, category, rating, notes, exifMetadata, capturedAt, reporterId }
+ * @param {File|Blob|{uri:string, name?:string, type?:string}} [photoFile] - image file to upload (field `photo`)
+ * If photoFile is provided, request is sent as multipart/form-data; photoUrl is ignored (server uploads to Cloudinary).
+ * If no photoFile, photoUrl must be inside reportData.
+ */
+export const createReport = async (reportData, photoFile) => {
+  // If no file, fallback to JSON (backward compat)
+  if (!photoFile) {
+    return apiRequest('/reports', {
+      method: 'POST',
+      body: JSON.stringify(reportData),
+    });
+  }
+
+  const formData = new FormData();
+
+  // File field must be `photo` to match backend upload.single('photo')
+  if (typeof photoFile === 'object' && photoFile.uri) {
+    // React Native / Expo uri object
+    const uri = photoFile.uri;
+    const name = photoFile.name || `photo_${Date.now()}.jpg`;
+    const type = photoFile.type || 'image/jpeg';
+    // React Native FormData needs { uri, name, type } blob-like object
+    formData.append('photo', { uri, name, type });
+  } else if (photoFile instanceof File || photoFile instanceof Blob) {
+    const fileName = photoFile.name || `photo_${Date.now()}.jpg`;
+    formData.append('photo', photoFile, fileName);
+  } else {
+    // Fallback: treat as blob
+    formData.append('photo', photoFile);
+  }
+
+  // Append all other fields — stringify objects for multipart transport
+  // Backend parseJsonField handles JSON-stringified values
+  const appendField = (key, value) => {
+    if (value === undefined || value === null) return;
+    if (typeof value === 'object') {
+      formData.append(key, JSON.stringify(value));
+    } else {
+      formData.append(key, String(value));
+    }
+  };
+
+  appendField('coordinates', reportData.coordinates);
+  appendField('category', reportData.category);
+  appendField('rating', reportData.rating);
+  appendField('notes', reportData.notes);
+  appendField('exifMetadata', reportData.exifMetadata);
+  appendField('capturedAt', reportData.capturedAt instanceof Date ? reportData.capturedAt.toISOString() : reportData.capturedAt);
+  appendField('reporterId', reportData.reporterId);
+  // If caller also passed photoUrl explicitly without file, include it
+  if (reportData.photoUrl) appendField('photoUrl', reportData.photoUrl);
+
+  return apiRequest('/reports', {
+    method: 'POST',
+    body: formData,
+  });
+};
+
+/**
+ * Simple JSON barrier report submission (Prompt 2 spec).
+ */
+export const createBarrierReport = (reportData) =>
+  apiRequest('/reports', {
+    method: 'POST',
+    body: JSON.stringify(reportData),
+  });
+
 export default {
   API_BASE_URL,
   getBaseUrl,
@@ -265,4 +350,8 @@ export default {
   getLauncherPrompt,
   getAudioCues,
   previewSpeech,
+  getReports,
+  getReportById,
+  createReport,
+  createBarrierReport,
 };

@@ -15,7 +15,7 @@ import { Feather, MaterialCommunityIcons, FontAwesome5, MaterialIcons } from '@e
 import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
-import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
+import ThreeTapReportScreen from '../volunteer/ThreeTapReportScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { useSpeech } from '../../hooks/useSpeech';
@@ -695,7 +695,7 @@ const UnityMapScreen = () => {
         </View>
       ) : activeTab === 'Report' ? (
         <View style={tw`flex-1`}>
-          <EXIFCaptureScreen onBack={() => setActiveTab('Map')} />
+          <ThreeTapReportScreen onNavigateToMap={() => setActiveTab('Map')} onSuccess={() => setActiveTab('Map')} />
         </View>
       ) : activeTab === 'Profile' ? (
         <ScrollView style={tw`flex-1 p-5`}>
