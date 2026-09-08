@@ -1,4 +1,5 @@
 import { Platform, NativeModules } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * UnityMap Centralized API Service
@@ -419,6 +420,29 @@ export const createBarrierReport = (reportData) =>
     body: JSON.stringify(reportData),
   });
 
+const getAuthHeaders = async () => {
+  try {
+    const stored = await AsyncStorage.getItem('@unitymap_session');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed?.token) {
+        return { Authorization: `Bearer ${parsed.token}` };
+      }
+    }
+  } catch (_) {}
+  return {};
+};
+
+export const corroborateReport = async (reportId) => {
+  const authHeaders = await getAuthHeaders();
+  return apiRequest(`/reports/${reportId}/corroborate`, { method: 'POST', headers: authHeaders });
+};
+
+export const uncorroborateReport = async (reportId) => {
+  const authHeaders = await getAuthHeaders();
+  return apiRequest(`/reports/${reportId}/corroborate`, { method: 'DELETE', headers: authHeaders });
+};
+
 export default {
   API_BASE_URL,
   getBaseUrl,
@@ -445,4 +469,6 @@ export default {
   getReportById,
   createReport,
   createBarrierReport,
+  corroborateReport,
+  uncorroborateReport,
 };

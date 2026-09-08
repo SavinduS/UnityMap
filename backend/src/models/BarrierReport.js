@@ -5,13 +5,17 @@ const verificationLogEntrySchema = new mongoose.Schema(
     action: {
       type: String,
       required: true,
-      enum: ['created', 'verified', 'approved', 'rejected', 'info_requested', 'triaged', 'updated'],
+      enum: ['created', 'verified', 'approved', 'rejected', 'info_requested', 'triaged', 'updated', 'corroborated', 'uncorroborated'],
     },
     status: {
       type: String,
       trim: true,
     },
     verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
@@ -133,12 +137,24 @@ const barrierReportSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
-    upvotedBy: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+    upvotedBy: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+      ],
+      // Keep corroborationCount in sync even for sync validation / direct assignment
+      set: function setUpvotedBy(v) {
+        if (Array.isArray(v) && this && typeof this === 'object') {
+          try {
+            // `this` is the document during casting; set count synchronously
+            this.corroborationCount = v.length;
+          } catch (_) {}
+        }
+        return v;
       },
-    ],
+    },
     corroborationCount: {
       type: Number,
       default: 0,
@@ -155,9 +171,19 @@ const barrierReportSchema = new mongoose.Schema(
 barrierReportSchema.index({ location: '2dsphere' });
 barrierReportSchema.index({ createdAt: -1 });
 barrierReportSchema.index({ category: 1, triageStatus: 1 });
+barrierReportSchema.index({ upvotedBy: 1 });
 
-// Keep GeoJSON location in sync with coordinates [lng, lat]
+// Keep GeoJSON location in sync with coordinates [lng, lat] and keep corroborationCount in sync with upvotedBy
+barrierReportSchema.pre('validate', function preValidate() {
+  if (Array.isArray(this.upvotedBy)) {
+    this.corroborationCount = this.upvotedBy.length;
+  }
+});
+
 barrierReportSchema.pre('save', function preSave(next) {
+  if (Array.isArray(this.upvotedBy)) {
+    this.corroborationCount = this.upvotedBy.length;
+  }
   if (this.isModified('coordinates') && this.coordinates && this.coordinates.latitude != null && this.coordinates.longitude != null) {
     this.location = {
       type: 'Point',

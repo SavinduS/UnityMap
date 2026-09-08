@@ -137,6 +137,33 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
     [loadTriageData]
   );
 
+  // SPT-301: confirmation count pill dynamically reflects updated corroborationCount after refresh via loadTriageData
+  const handleCorroborationSuccess = useCallback(
+    (updatedReport) => {
+      if (!updatedReport?._id) return;
+      setReports((prev) =>
+        prev.map((r) =>
+          r._id === updatedReport._id
+            ? {
+                ...r,
+                corroborationCount: updatedReport.corroborationCount ?? r.corroborationCount,
+                upvotedBy: updatedReport.upvotedBy ?? r.upvotedBy,
+                triage: updatedReport.triage
+                  ? { ...r.triage, ...updatedReport.triage, formulaFactors: { ...(r.triage?.formulaFactors || {}), corroborationCount: updatedReport.corroborationCount ?? r.corroborationCount } }
+                  : r.triage,
+              }
+            : r
+        )
+      );
+      // Also refresh metrics so KPI reflects new corroboration
+      fetchTriageMetrics(selectedWardId).then(setMetrics).catch(() => {});
+      try {
+        AccessibilityInfo.announceForAccessibility(`Confirmations updated to ${updatedReport.corroborationCount}`);
+      } catch {}
+    },
+    [selectedWardId]
+  );
+
   const getPriorityBadgeStyle = (badge) => {
     switch (badge) {
       case 'CRITICAL':

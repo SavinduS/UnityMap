@@ -15,6 +15,7 @@ const MOCK_TRIAGED_REPORTS = [
     category: 'Lift',
     rating: 5,
     corroborationCount: 7,
+    upvotedBy: Array.from({ length: 7 }, (_, i) => `mock-upvoter-1001-${i + 1}`),
     triageStatus: 'pending',
     notes: 'Overpass lift display is dead and doors jammed shut. Wheelchair commuters unable to reach railway platforms.',
     photoUrl: 'https://images.unsplash.com/photo-1584467735815-f778f274e296?w=600&auto=format&fit=crop',
@@ -44,6 +45,7 @@ const MOCK_TRIAGED_REPORTS = [
     category: 'Ramp',
     rating: 4,
     corroborationCount: 5,
+    upvotedBy: Array.from({ length: 5 }, (_, i) => `mock-upvoter-1002-${i + 1}`),
     triageStatus: 'pending',
     notes: 'Severe concrete subsidence on ramp slope exceeding 12 degrees gradient. Wheelchair flipped backward yesterday.',
     photoUrl: 'https://images.unsplash.com/photo-1590402494682-cd3fb53b1f70?w=600&auto=format&fit=crop',
@@ -73,6 +75,7 @@ const MOCK_TRIAGED_REPORTS = [
     category: 'Tactile Paving',
     rating: 4,
     corroborationCount: 6,
+    upvotedBy: Array.from({ length: 6 }, (_, i) => `mock-upvoter-1003-${i + 1}`),
     triageStatus: 'pending',
     notes: 'Tactile paving warning tiles removed during pipe maintenance. Visually impaired patient tripped on open trench.',
     photoUrl: 'https://images.unsplash.com/photo-1508873696983-2df57036476b?w=600&auto=format&fit=crop',
@@ -102,6 +105,7 @@ const MOCK_TRIAGED_REPORTS = [
     category: 'Restroom',
     rating: 3,
     corroborationCount: 2,
+    upvotedBy: Array.from({ length: 2 }, (_, i) => `mock-upvoter-1004-${i + 1}`),
     triageStatus: 'pending',
     notes: 'Accessible stall lock broken and grab rail loose from wall.',
     photoUrl: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=600&auto=format&fit=crop',
@@ -125,6 +129,7 @@ const MOCK_TRIAGED_REPORTS = [
     category: 'Ramp',
     rating: 2,
     corroborationCount: 1,
+    upvotedBy: Array.from({ length: 1 }, (_, i) => `mock-upvoter-1005-${i + 1}`),
     triageStatus: 'pending',
     notes: 'Faded yellow high-contrast paint on ramp threshold. Minor cosmetic issue.',
     photoUrl: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=600&auto=format&fit=crop',
@@ -226,6 +231,9 @@ export const addMockTriageReport = (reportData = {}) => {
     category: reportData.category || 'Other',
     rating: Number(reportData.rating) || 3,
     corroborationCount: Number(reportData.corroborationCount) || 0,
+    upvotedBy: Array.isArray(reportData.upvotedBy)
+      ? [...reportData.upvotedBy]
+      : Array.from({ length: Number(reportData.corroborationCount) || 0 }, (_, i) => `mock-upvoter-${id}-${i + 1}`),
     triageStatus: 'pending',
     notes: reportData.notes || reportData.note || '',
     photoUrl: reportData.photoUrl || reportData.imageUri || 'https://images.unsplash.com/photo-1584467735815-f778f274e296?w=600&auto=format&fit=crop',
@@ -248,6 +256,38 @@ export const addMockTriageReport = (reportData = {}) => {
 };
 
 export const getMockReports = () => [...MOCK_TRIAGED_REPORTS];
+
+/**
+ * Toggle corroboration for a mock report (offline/demo mode).
+ * Finds report in MOCK_TRIAGED_REPORTS, toggles upvotedBy and corroborationCount, recalculates urgency.
+ * @param {string} reportId - _id of report to corroborate/uncorroborate
+ * @param {string} userId - user identifier (defaults to mock-user)
+ * @returns {object|null} updated report or null if not found
+ */
+export const corroborateMockReport = (reportId, userId = 'mock-user') => {
+  const report = MOCK_TRIAGED_REPORTS.find((r) => r._id === reportId);
+  if (!report) return null;
+  if (!Array.isArray(report.upvotedBy)) report.upvotedBy = [];
+  const idx = report.upvotedBy.indexOf(userId);
+  if (idx !== -1) {
+    // Already corroborated -> uncorroborate
+    report.upvotedBy.splice(idx, 1);
+  } else {
+    report.upvotedBy.push(userId);
+  }
+  // Keep count in sync
+  report.corroborationCount = report.upvotedBy.length;
+  // Recalculate urgency
+  const wardId = report.wardId || 'CMC-W01';
+  const newTriage = _calculateMockUrgency(report, wardId);
+  report.triage = {
+    ...report.triage,
+    ...newTriage,
+    crossReferencedAsset: report.triage?.crossReferencedAsset ?? null,
+    distanceToAssetMeters: report.triage?.distanceToAssetMeters ?? null,
+  };
+  return report;
+};
 
 /**
  * Fetch severity-sorted triage queue
@@ -421,4 +461,5 @@ export default {
   dispatchDecision,
   addMockTriageReport,
   getMockReports,
+  corroborateMockReport,
 };

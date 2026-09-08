@@ -1,5 +1,7 @@
+const mongoose = require('mongoose');
 const { BarrierReport } = require('../models');
 const { uploadBufferToCloudinary, uploadDataUriToCloudinary } = require('../config/cloudinary');
+const { calculateUrgencyIndex } = require('../services/triageEngine');
 
 const CATEGORY_ENUM = ['Ramp', 'Lift', 'Tactile Paving', 'Restroom', 'Other'];
 const TRIAGE_STATUS_ENUM = ['pending', 'under_review', 'verified', 'approved', 'rejected', 'info_requested'];
@@ -378,7 +380,7 @@ exports.createReport = async (req, res) => {
  */
 exports.getReports = async (req, res) => {
   try {
-    const { category, status, triageStatus, page = '1', limit = '20' } = req.query;
+    const { category, status, triageStatus, page = '1', limit = '20', near, radius, lat, lng } = req.query;
 
     const filter = {};
 
@@ -405,14 +407,60 @@ exports.getReports = async (req, res) => {
       filter.triageStatus = statusValue;
     }
 
+    // SPT-301: nearby geospatial filter (GET /api/reports?near=lat,lng&radius=250)
+    let isNearQuery = false;
+    if (near && typeof near === 'string' && near.includes(',')) {
+      const parts = near.split(',').map((v) => Number(v.trim()));
+      if (parts.length === 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+        const nearLat = parts[0];
+        const nearLng = parts[1];
+        const r = Math.min(5000, Math.max(10, Number(radius) || 250));
+        filter.location = {
+          $near: {
+            $geometry: { type: 'Point', coordinates: [nearLng, nearLat] },
+            $maxDistance: r,
+          },
+        };
+        isNearQuery = true;
+      }
+    } else if (lat !== undefined && lng !== undefined) {
+      const nearLat = Number(lat);
+      const nearLng = Number(lng);
+      if (Number.isFinite(nearLat) && Number.isFinite(nearLng)) {
+        const r = Math.min(5000, Math.max(10, Number(radius) || 250));
+        filter.location = {
+          $near: {
+            $geometry: { type: 'Point', coordinates: [nearLng, nearLat] },
+            $maxDistance: r,
+          },
+        };
+        isNearQuery = true;
+      }
+    }
+
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (pageNum - 1) * limitNum;
 
-    const [reports, total] = await Promise.all([
-      BarrierReport.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
-      BarrierReport.countDocuments(filter),
-    ]);
+    let reports;
+    let total;
+    if (isNearQuery) {
+      // $near sorts by distance, skip/limit still applies
+      reports = await BarrierReport.find(filter).skip(skip).limit(limitNum);
+      // countDocuments doesn't work with $near, use estimated
+      total = reports.length;
+      // For accurate total, try count without $near fallback
+      try {
+        const countFilter = { ...filter };
+        delete countFilter.location;
+        total = await BarrierReport.countDocuments(countFilter);
+      } catch {}
+    } else {
+      [reports, total] = await Promise.all([
+        BarrierReport.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+        BarrierReport.countDocuments(filter),
+      ]);
+    }
 
     return res.status(200).json({
       success: true,
@@ -456,5 +504,148 @@ exports.getReportById = async (req, res) => {
       message: 'Failed to fetch barrier report',
       error: error.message,
     });
+  }
+};
+
+/**
+ * @desc    Corroborate a barrier report (I see this too)
+ * @route   POST /api/reports/:id/corroborate
+ * @access  Private (JWT)
+ */
+exports.corroborateReport = async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const userId = req.user && (req.user._id || req.user.id);
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Not authorized, user not found' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(reportId)) {
+      return res.status(400).json({ success: false, message: 'Invalid report ID' });
+    }
+
+    const report = await BarrierReport.findById(reportId);
+    if (!report) {
+      return res.status(404).json({ success: false, message: 'Barrier report not found' });
+    }
+
+    // Prevent self-corroboration
+    if (report.reporterId && report.reporterId.toString() === userId.toString()) {
+      return res.status(403).json({ success: false, message: 'You cannot corroborate your own report' });
+    }
+
+    // Atomic update — only if not already upvoted
+    const updatedReport = await BarrierReport.findOneAndUpdate(
+      { _id: reportId, upvotedBy: { $ne: userId } },
+      {
+        $addToSet: { upvotedBy: userId },
+        $inc: { corroborationCount: 1 },
+        $push: {
+          verificationLog: {
+            action: 'corroborated',
+            verifiedBy: userId,
+            performedBy: userId,
+            status: report.triageStatus || 'pending',
+            timestamp: new Date(),
+          },
+        },
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedReport) {
+      // Report exists but already upvoted
+      return res.status(409).json({ success: false, message: 'You have already corroborated this report' });
+    }
+
+    // Re-calculate urgency index using triage engine
+    let triage = null;
+    try {
+      triage = calculateUrgencyIndex(updatedReport);
+    } catch (e) {
+      console.warn('[corroborateReport] triage calc failed:', e.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Report corroborated successfully',
+      data: updatedReport,
+      triage,
+    });
+  } catch (error) {
+    console.error('Corroborate error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to corroborate report', error: error.message });
+  }
+};
+
+/**
+ * @desc    Remove corroboration from a barrier report
+ * @route   DELETE /api/reports/:id/corroborate
+ * @access  Private (JWT)
+ */
+exports.uncorroborateReport = async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const userId = req.user && (req.user._id || req.user.id);
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Not authorized, user not found' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(reportId)) {
+      return res.status(400).json({ success: false, message: 'Invalid report ID' });
+    }
+
+    const report = await BarrierReport.findById(reportId);
+    if (!report) {
+      return res.status(404).json({ success: false, message: 'Barrier report not found' });
+    }
+
+    // Atomic update — only if currently upvoted
+    const updatedReport = await BarrierReport.findOneAndUpdate(
+      { _id: reportId, upvotedBy: userId },
+      {
+        $pull: { upvotedBy: userId },
+        $inc: { corroborationCount: -1 },
+        $push: {
+          verificationLog: {
+            action: 'uncorroborated',
+            verifiedBy: userId,
+            performedBy: userId,
+            status: report.triageStatus || 'pending',
+            timestamp: new Date(),
+          },
+        },
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedReport) {
+      return res.status(409).json({ success: false, message: 'You have not corroborated this report' });
+    }
+
+    // Guard against negative count due to race/mismatch — sync via hook will also correct but clamp here
+    if (updatedReport.corroborationCount < 0) {
+      updatedReport.corroborationCount = 0;
+      await updatedReport.save().catch(() => {});
+    }
+
+    let triage = null;
+    try {
+      triage = calculateUrgencyIndex(updatedReport);
+    } catch (e) {
+      console.warn('[uncorroborateReport] triage calc failed:', e.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Corroboration removed successfully',
+      data: updatedReport,
+      triage,
+    });
+  } catch (error) {
+    console.error('Uncorroborate error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to remove corroboration', error: error.message });
   }
 };
