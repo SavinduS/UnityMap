@@ -577,9 +577,9 @@ const UnityMapScreen = () => {
     });
   }, []);
 
-  // SPT-106: bridge spoken transcript to Voice Input & Summary Readout Screen (single-tap confirmation)
+  // SPT-106: bridge spoken transcript to Voice Input & Summary Readout Screen — summary first via getRoute includeSpeech, draw on Confirm
   const handleLauncherNavigate = useCallback(
-    (transcript, confidence) => {
+    async (transcript, confidence) => {
       setShowLauncher(false);
       const q = typeof transcript === 'string' ? transcript.trim() : '';
       if (!q) return;
@@ -604,62 +604,162 @@ const UnityMapScreen = () => {
         }
       }
 
-      // Build route summary for readout (distance, crossings, ETA, hazards) from tapRouteMeta or DB
-      const distanceText = tapRouteMeta?.distanceText || (best ? 'Calculating...' : '--');
-      const etaText = tapRouteMeta?.etaText || '--';
-      const crossings = tapRouteMeta ? tapRouteMeta.destName?.length % 5 : bestScore >= 0 ? bestScore : 0;
-      const hazardCount = nearbyHazards?.length ?? 0;
-      const summary = {
+      // Fetch real route preview for summary (reuse current BaseMap pipeline, no draw yet)
+      let summary = {
         destName: best?.title || q,
-        distanceText,
-        crossings,
-        etaText,
-        hazardCount,
-        spokenSummary: `Route to ${best?.title || q}: ${distanceText}, ${crossings} crossings, ${etaText}, ${hazardCount} hazards.`,
+        distanceText: '--',
+        crossings: 0,
+        etaText: '--',
+        hazardCount: nearbyHazards?.length ?? 0,
+        spokenSummary: `Route to ${best?.title || q}: calculating...`,
         confidence,
+        pendingBest: best,
       };
+
+      if (best?.lat && best?.lng) {
+        try {
+          const origin = currentLocation || (location?.latitude && location?.longitude ? location : null) || (dbNodes[0]?.lat ? { latitude: dbNodes[0].lat, longitude: dbNodes[0].lng } : { latitude: mapCenter[0], longitude: mapCenter[1] });
+          const originNode = await getNearestNode(origin.longitude, origin.latitude, 500).catch(() => null);
+          const destNode = await getNearestNode(best.lng, best.lat, 500).catch(() => null);
+          if (originNode && destNode) {
+            const routeRes = await getRoute(originNode._id || originNode.id, destNode._id || destNode.id, isWheelchairAccessible, { includeSpeech: true, locale: 'en' });
+            if (routeRes?.success) {
+              const d = routeRes.data;
+              summary = {
+                destName: d.destinationNode?.name || best.title,
+                distanceText: d.totalDistanceMeters ? formatDistance(d.totalDistanceMeters) : '--',
+                crossings: d.crossings ?? 0,
+                etaText: d.estimatedDurationSec ? formatDuration(Math.ceil(d.estimatedDurationSec / 60)) : '--',
+                hazardCount: d.hazardCount ?? nearbyHazards?.length ?? 0,
+                spokenSummary: d.spokenSummary || `Route to ${d.destinationNode?.name || best.title}: ${d.totalDistanceMeters ? formatDistance(d.totalDistanceMeters) : '--'}, ${d.crossings ?? 0} crossings.`,
+                confidence,
+                pendingOrigin: origin,
+                pendingDest: best,
+                pendingRouteRes: d,
+              };
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Fallback if no backend route yet
+      if (!summary.spokenSummary || summary.spokenSummary.includes('calculating')) {
+        const distanceText = tapRouteMeta?.distanceText || 'Calculating...';
+        const etaText = tapRouteMeta?.etaText || '--';
+        const crossings = tapRouteMeta ? 0 : bestScore >= 0 ? bestScore : 0;
+        summary = {
+          destName: best?.title || q,
+          distanceText,
+          crossings,
+          etaText,
+          hazardCount: nearbyHazards?.length ?? 0,
+          spokenSummary: `Route to ${best?.title || q}: ${distanceText}, ${crossings} crossings, ${etaText}, ${nearbyHazards?.length ?? 0} hazards.`,
+          confidence,
+          pendingBest: best,
+        };
+      }
+
       setVoiceRouteSummary(summary);
       setShowVoiceSummary(true);
       try {
         speak(summary.spokenSummary);
       } catch (_) {}
     },
-    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, speak]
+    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, currentLocation, location, mapCenter, dbPathways, isWheelchairAccessible, speak]
   );
 
   const handleVoiceConfirm = useCallback(
-    ({ transcript, routeSummary, targetCoordinates }) => {
+    async ({ transcript, routeSummary, targetCoordinates }) => {
+      const q = transcript || voiceTranscript;
       setShowVoiceSummary(false);
-      const destTitle = routeSummary?.destName || transcript || 'Selected Destination';
-      const originLat = location?.latitude ?? 6.9271;
-      const originLng = location?.longitude ?? 79.8612;
-      const destLat = targetCoordinates?.[0] ?? targetCoordinates?.latitude ?? 6.9325;
-      const destLng = targetCoordinates?.[1] ?? targetCoordinates?.longitude ?? 79.8655;
-
-      const coords =
-        tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
-          ? tapRoute.coordinates
-          : [
-              [originLat, originLng],
-              [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
-              [destLat, destLng],
-            ];
-
-      const navRoute = {
-        id: 'voice_nav_route',
-        title: destTitle,
-        destName: destTitle,
-        originName: 'Your Location',
-        distanceText: routeSummary?.distanceText || '1.2 km',
-        etaText: routeSummary?.etaText || '15 mins',
-        coordinates: coords,
-        color: '#10B981',
-        maxSlope: '4.8° (Safe)',
-      };
-      setActiveNavRoute(navRoute);
-      setIsTurnByTurnActive(true);
+      if (!q) return;
+      const all = [...dbNodes, ...recentDestinations];
+      const lowerQ = q.toLowerCase();
+      let best = null;
+      let bestScore = -1;
+      for (const dest of all) {
+        const titleLower = dest.title.toLowerCase();
+        let score = 0;
+        if (titleLower === lowerQ) score = 3;
+        else if (titleLower.includes(lowerQ) || lowerQ.includes(titleLower)) score = 2;
+        else if (titleLower.split(' ').some((w) => lowerQ.includes(w) || w.includes(lowerQ))) score = 1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = dest;
+        }
+      }
+      if (best?.lat && best?.lng) {
+        try {
+          speak(`Confirmed. Navigating to ${best.title}`);
+        } catch (_) {}
+        // Reuse current BaseMap pipeline — draws polyline via tapRoute (SPT-57)
+        await handleMapTap({ latitude: best.lat, longitude: best.lng });
+        handleSelectDestination(best);
+        // Also set turn-by-turn active route for develop SPT-103 if state exists
+        if (typeof setActiveNavRoute === 'function' && typeof setIsTurnByTurnActive === 'function') {
+          const destTitle = routeSummary?.destName || best.title;
+          const originLat = location?.latitude ?? 6.9271;
+          const originLng = location?.longitude ?? 79.8612;
+          const destLat = best.lat;
+          const destLng = best.lng;
+          const coords =
+            tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
+              ? tapRoute.coordinates
+              : [
+                  [originLat, originLng],
+                  [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
+                  [destLat, destLng],
+                ];
+          setActiveNavRoute({
+            id: 'voice_nav_route',
+            title: destTitle,
+            destName: destTitle,
+            originName: 'Your Location',
+            distanceText: routeSummary?.distanceText || '1.2 km',
+            etaText: routeSummary?.etaText || '15 mins',
+            coordinates: coords,
+            color: '#10B981',
+            maxSlope: '4.8° (Safe)',
+          });
+          setIsTurnByTurnActive(true);
+        }
+      } else if (best) {
+        handleSelectDestination(best);
+        try {
+          speak(`Confirmed. Navigating to ${best.title}`);
+        } catch (_) {}
+      } else if (targetCoordinates) {
+        // Fallback to develop synthetic targetCoordinates when no fuzzy best
+        const destTitle = routeSummary?.destName || transcript || 'Selected Destination';
+        const originLat = location?.latitude ?? 6.9271;
+        const originLng = location?.longitude ?? 79.8612;
+        const destLat = targetCoordinates?.[0] ?? targetCoordinates?.latitude ?? 6.9325;
+        const destLng = targetCoordinates?.[1] ?? targetCoordinates?.longitude ?? 79.8655;
+        const coords =
+          tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
+            ? tapRoute.coordinates
+            : [
+                [originLat, originLng],
+                [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
+                [destLat, destLng],
+              ];
+        if (typeof setActiveNavRoute === 'function') {
+          setActiveNavRoute({
+            id: 'voice_nav_route',
+            title: destTitle,
+            destName: destTitle,
+            originName: 'Your Location',
+            distanceText: routeSummary?.distanceText || '1.2 km',
+            etaText: routeSummary?.etaText || '15 mins',
+            coordinates: coords,
+            color: '#10B981',
+            maxSlope: '4.8° (Safe)',
+          });
+          setIsTurnByTurnActive(true);
+        }
+      }
     },
-    [location, tapRoute]
+    [voiceTranscript, dbNodes, recentDestinations, handleSelectDestination, handleMapTap, speak, location, tapRoute]
   );
 
   const handleVoiceCancel = useCallback(() => {
