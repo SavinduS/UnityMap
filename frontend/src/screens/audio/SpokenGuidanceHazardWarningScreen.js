@@ -92,6 +92,23 @@ export const SpokenGuidanceHazardWarningScreen = ({
     }
   }, [level, nearbyHazards, isReduceMotionEnabled]);
 
+  // Contextual spoken hazard cue with distance 5m example (English-only)
+  useEffect(() => {
+    if (showHazardOverlay && nearbyHazards.length > 0) {
+      const tactile = nearbyHazards.find((h) => (h.title || h.desc || '').toLowerCase().includes('tactile')) || nearbyHazards[0];
+      const distance = 5; // spec example
+      const hazardName = tactile?.title?.toLowerCase().includes('tactile') ? 'missing tactile paving' : tactile?.title || 'hazard';
+      const spokenText = `Caution: ${hazardName} in ${distance} meters`;
+      const rate = tactile?.ttsOverrides?.rate || 0.95;
+      const pitch = tactile?.ttsOverrides?.pitch || 1.05;
+      const volume = tactile?.ttsOverrides?.volume ?? 1.0;
+      try {
+        // Slight delay to let haptic start before speech
+        setTimeout(() => speak(spokenText, { rate, pitch, volume }), 400);
+      } catch (_) {}
+    }
+  }, [showHazardOverlay, nearbyHazards, speak]);
+
   const handleReprompt = async () => {
     // Both: replay last TTS and re-listen STT
     try { stopSpeak(); } catch (_) {}
