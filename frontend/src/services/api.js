@@ -281,7 +281,7 @@ export const getReportById = (id) => apiRequest(`/reports/${id}`);
  * If no photoFile, photoUrl must be inside reportData.
  */
 export const createReport = async (reportData, photoFile) => {
-  // If no file, fallback to JSON (backward compat)
+  // If no file, fallback to JSON (backward compat) - ensure flat lat/lng + new fields are stringified for backend aliases
   if (!photoFile) {
     return apiRequest('/reports', {
       method: 'POST',
@@ -291,73 +291,118 @@ export const createReport = async (reportData, photoFile) => {
 
   const formData = new FormData();
 
-  // File field must be `photo` to match backend upload.single('photo')
-  // Handles Expo Web (File/Blob + blob: URIs) and Native (RN {uri,name,type}) gracefully
-  if (typeof photoFile === 'object' && photoFile.uri) {
-    const uri = photoFile.uri;
-    const name = photoFile.name || `photo_${Date.now()}.jpg`;
-    const type = photoFile.type || 'image/jpeg';
-    // Expo Web: uri may be blob: URL -> fetch to real Blob for FormData
-    if (Platform.OS === 'web' && typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:'))) {
+  // FIX: Unsupported FormDataPart - Expo requires {uri, name, type} on native, File/Blob only on web
+  // Never append raw string, number, or File on native. Always convert to RN file object on native.
+  if (Platform.OS === 'web') {
+    // Web: browser FormData accepts File/Blob
+    if (photoFile instanceof File || photoFile instanceof Blob) {
+      const fileName = photoFile.name || `photo_${Date.now()}.jpg`;
+      formData.append('photo', photoFile, fileName);
+    } else if (typeof photoFile === 'object' && photoFile.uri) {
+      const uri = photoFile.uri;
+      const name = photoFile.name || `photo_${Date.now()}.jpg`;
+      const type = photoFile.type || 'image/jpeg';
+      if (typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:'))) {
+        try {
+          const resp = await fetch(uri);
+          const blob = await resp.blob();
+          const file = new File([blob], name, { type: blob.type || type });
+          formData.append('photo', file, name);
+        } catch {
+          // fallback to uri object even on web if fetch fails
+          formData.append('photo', { uri, name, type });
+        }
+      } else {
+        // web may also need blob fetch for file:// URIs
+        try {
+          const resp = await fetch(uri);
+          const blob = await resp.blob();
+          const file = new File([blob], name, { type: blob.type || type });
+          formData.append('photo', file, name);
+        } catch {
+          formData.append('photo', { uri, name, type });
+        }
+      }
+    } else if (typeof photoFile === 'string' && (photoFile.startsWith('blob:') || photoFile.startsWith('data:'))) {
       try {
-        const resp = await fetch(uri);
+        const resp = await fetch(photoFile);
         const blob = await resp.blob();
-        const file = new File([blob], name, { type: blob.type || type });
-        formData.append('photo', file, name);
+        const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
+        formData.append('photo', file, file.name);
       } catch {
-        // Native-compatible fallback if fetch fails
-        formData.append('photo', { uri, name, type });
+        formData.append('photo', photoFile);
       }
     } else {
-      // React Native / Expo native uri object
-      formData.append('photo', { uri, name, type });
-    }
-  } else if (photoFile instanceof File || photoFile instanceof Blob) {
-    const fileName = photoFile.name || `photo_${Date.now()}.jpg`;
-    formData.append('photo', photoFile, fileName);
-  } else if (typeof photoFile === 'string' && (photoFile.startsWith('blob:') || photoFile.startsWith('data:'))) {
-    // Direct string URI (web blob / data URI) -> fetch to Blob
-    try {
-      const resp = await fetch(photoFile);
-      const blob = await resp.blob();
-      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
-      formData.append('photo', file, file.name);
-    } catch {
       formData.append('photo', photoFile);
     }
   } else {
-    // Fallback: treat as blob
-    formData.append('photo', photoFile);
+    // Native (iOS/Android): MUST be { uri, name, type } - File/Blob causes "Unsupported FormDataPart"
+    if (typeof photoFile === 'object' && photoFile.uri) {
+      const uri = photoFile.uri;
+      const name = photoFile.name || `photo_${Date.now()}.jpg`;
+      const type = photoFile.type || 'image/jpeg';
+      formData.append('photo', { uri, name, type });
+    } else if (photoFile instanceof File || photoFile instanceof Blob) {
+      // Native should never receive File/Blob, but handle defensively by warning and converting to uri obj if possible
+      // Attempt to create temp uri - fallback to JSON photoUrl path
+      console.warn('[createReport] File/Blob on native - converting to uri object fallback');
+      formData.append('photo', {
+        uri: photoFile.uri || `file:///tmp/photo_${Date.now()}.jpg`,
+        name: photoFile.name || `photo_${Date.now()}.jpg`,
+        type: photoFile.type || 'image/jpeg',
+      });
+    } else if (typeof photoFile === 'string') {
+      formData.append('photo', {
+        uri: photoFile,
+        name: `photo_${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      });
+    } else {
+      formData.append('photo', photoFile);
+    }
   }
 
-  // Append all other fields — stringify objects for multipart transport
-  // Backend parseJsonField handles JSON-stringified values
-  const appendField = (key, value) => {
+  // Append text fields ensuring all are stringified (FormData only supports string/blob)
+  const appendString = (key, value) => {
+    if (value === undefined || value === null || value === '') return;
+    formData.append(key, String(value));
+  };
+  const appendJson = (key, value) => {
     if (value === undefined || value === null) return;
-    if (typeof value === 'object' && !(value instanceof Date)) {
-      formData.append(key, JSON.stringify(value));
-    } else if (value instanceof Date) {
-      formData.append(key, value.toISOString());
-    } else {
-      formData.append(key, String(value));
-    }
+    if (value instanceof Date) formData.append(key, value.toISOString());
+    else if (typeof value === 'object') formData.append(key, JSON.stringify(value));
+    else formData.append(key, String(value));
   };
 
-  appendField('name', reportData.name);
-  appendField('locationName', reportData.locationName || reportData.location);
-  appendField('coordinates', reportData.coordinates);
-  appendField('category', reportData.category);
-  appendField('rating', reportData.rating);
-  appendField('condition', reportData.condition);
-  // notes supports both `notes` and `note` alias
-  appendField('notes', reportData.notes ?? reportData.note);
-  appendField('exifMetadata', reportData.exifMetadata);
-  // timestamp aliases: capturedAt / timestamp / photoTakenAt — all map to capturedAt server-side
-  const ts = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
-  appendField('capturedAt', ts instanceof Date ? ts.toISOString() : ts);
-  appendField('reporterId', reportData.reporterId);
-  // If caller also passed photoUrl explicitly without file, include it
-  if (reportData.photoUrl) appendField('photoUrl', reportData.photoUrl);
+  // Required model fields - always stringified, never raw numbers/objects
+  const category = reportData.category;
+  const ratingStr = reportData.rating !== undefined && reportData.rating !== null ? String(reportData.rating) : undefined;
+  const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
+  const lng = reportData.coordinates?.longitude ?? reportData.longitude ?? reportData.lng ?? reportData.lon;
+  const capturedIso = (() => {
+    const raw = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
+    if (raw instanceof Date) return raw.toISOString();
+    if (typeof raw === 'string' && raw) return new Date(raw).toISOString();
+    return new Date().toISOString();
+  })();
+
+  appendString('name', reportData.name || (category ? `${category} Barrier` : `Barrier Report`));
+  appendString('locationName', reportData.locationName || reportData.location || 'Assigned Jurisdiction');
+  appendString('condition', reportData.condition || 'bad');
+  appendString('category', category);
+  appendString('rating', ratingStr);
+  appendString('notes', reportData.notes ?? reportData.note ?? '');
+  // Flat lat/lng as strings for backend robust handling (parseFloat)
+  if (lat !== undefined && lat !== null) appendString('latitude', String(lat));
+  if (lng !== undefined && lng !== null) appendString('longitude', String(lng));
+  appendString('capturedAt', capturedIso);
+  // Also append structured fields as JSON for backend parseJsonField
+  appendJson('coordinates', reportData.coordinates || (lat !== undefined && lng !== undefined ? { latitude: Number(lat), longitude: Number(lng) } : undefined));
+  appendJson('exifMetadata', reportData.exifMetadata);
+  // Optional relations
+  if (reportData.reporterId) appendString('reporterId', String(reportData.reporterId));
+  if (reportData.reporterName) appendString('reporterName', String(reportData.reporterName));
+  if (reportData.photoUrl) appendString('photoUrl', String(reportData.photoUrl));
 
   return apiRequest('/reports', {
     method: 'POST',

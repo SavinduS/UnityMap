@@ -18,12 +18,13 @@ import {
   SafeAreaView,
   StatusBar,
   Image,
+  AccessibilityInfo,
+  Alert,
 } from 'react-native';
 import { fetchTriageQueue, fetchTriageMetrics } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
 import { getWardById, MUNICIPAL_WARDS } from '../../utils/wardJurisdictions';
 import { Feather } from '@expo/vector-icons';
-import { Alert } from 'react-native';
 import AdminAddReportModal from '../../components/admin/AdminAddReportModal';
 
 const CATEGORIES = [
@@ -43,6 +44,13 @@ const SORT_OPTIONS = [
 export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: propWardId, onWardChange }) => {
   const currentUser = adminAuthService.getCurrentUser();
   const fallbackWard = currentUser?.assignedWardId || 'CMC-W01';
+  // Role gate: allow WARD_INSPECTOR, CHIEF_ENGINEER, BUDGET_OFFICER, SUPER_ADMIN (SPT-206)
+  const canAddReport = !!currentUser && (
+    adminAuthService.hasPermission('VIEW_TRIAGE') ||
+    ['WARD_INSPECTOR', 'CHIEF_ENGINEER', 'BUDGET_OFFICER', 'ADMIN', 'SUPER_ADMIN'].includes(currentUser.role) ||
+    !!currentUser.isSuperAdmin ||
+    currentUser.email === 'admin@unitymap.com'
+  );
   const [selectedWardId, setSelectedWardId] = useState(propWardId || fallbackWard);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedSort, setSelectedSort] = useState('urgency');
@@ -59,6 +67,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
 
   const loadTriageData = useCallback(async () => {
     try {
+      console.log(`🔄 Fetching Triage Queue: ward=${selectedWardId} category=${selectedCategory} status=pending sortBy=${selectedSort}`);
       const [queueData, metricsData] = await Promise.all([
         fetchTriageQueue({
           wardId: selectedWardId,
@@ -70,6 +79,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
         fetchTriageMetrics(selectedWardId),
       ]);
 
+      console.log(`✅ Queue loaded: ${queueData?.reports?.length || 0} reports (total: ${queueData?.totalReports}) | category filter: ${selectedCategory}`);
       if (queueData?.reports) {
         setReports(queueData.reports);
       }
@@ -110,12 +120,19 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
   const handleReportCreated = useCallback(
     (newReport) => {
       setIsAddReportOpen(false);
-      // Refresh queue + KPIs so new pending report appears sorted by urgency
-      loadTriageData();
+      // Reset category filter to "All Categories" so new report is visible regardless of previous filter
+      // and force refresh with updated filter. Without this, a report of a different category would stay hidden.
+      setSelectedCategory('all');
+      // Defer load to next tick so state update propagates (selectedCategory='all' will also trigger load via dependency)
+      setTimeout(() => loadTriageData(), 50);
       const ref = newReport?._id || newReport?.id || '';
+      try {
+        AccessibilityInfo.announceForAccessibility('Barrier report successfully added to queue');
+      } catch {}
       try {
         Alert.alert('Report Added', `Barrier report ${ref ? ref + ' ' : ''}added to Triage Queue.`);
       } catch {}
+      console.log('✅ Report created, queue will refresh with All Categories filter', newReport);
     },
     [loadTriageData]
   );
@@ -151,21 +168,27 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
           </Text>
         </View>
         <View style={styles.topBarActions}>
-          <TouchableOpacity
-            style={styles.addReportBtn}
-            onPress={() => setIsAddReportOpen(true)}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Add barrier report"
-          >
-            <Feather name="plus" size={14} color="#FFFFFF" />
-            <Text style={styles.addReportBtnText}>Add Report</Text>
-          </TouchableOpacity>
+          {canAddReport && (
+            <TouchableOpacity
+              style={styles.addReportBtn}
+              onPress={() => setIsAddReportOpen(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Add barrier report"
+              accessibilityHint="Opens admin barrier report creation modal"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Feather name="plus" size={14} color="#FFFFFF" />
+              <Text style={styles.addReportBtnText}>Add Report</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.recalculateBtn}
             onPress={handleRecalculate}
             disabled={isRecalculating}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Recalculate triage queue"
           >
             {isRecalculating ? (
               <ActivityIndicator size="small" color="#38BDF8" />
@@ -279,16 +302,20 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
             <Text style={styles.emptyText}>
               No pending accessibility barriers match the selected category or urgency filter.
             </Text>
-            <TouchableOpacity
-              style={styles.emptyCtaBtn}
-              onPress={() => setIsAddReportOpen(true)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Add first barrier report"
-            >
-              <Feather name="plus" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.emptyCtaText}>⊕ Add First Barrier Report</Text>
-            </TouchableOpacity>
+            {canAddReport && (
+              <TouchableOpacity
+                style={styles.emptyCtaBtn}
+                onPress={() => setIsAddReportOpen(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Add barrier report"
+                accessibilityHint="Opens admin barrier report creation modal"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Feather name="plus" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.emptyCtaText}>⊕ Add First Barrier Report</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           <View style={styles.reportsList}>
@@ -393,15 +420,19 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
       </ScrollView>
 
       {/* FAB */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => setIsAddReportOpen(true)}
-        activeOpacity={0.8}
-        accessibilityRole="button"
-        accessibilityLabel="Add barrier report"
-      >
-        <Feather name="plus" size={24} color="#FFFFFF" />
-      </TouchableOpacity>
+      {canAddReport && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setIsAddReportOpen(true)}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Add barrier report"
+          accessibilityHint="Opens admin barrier report creation modal"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Feather name="plus" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
 
       {/* Admin Add Report Modal */}
       <AdminAddReportModal
@@ -478,6 +509,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#047857',
     gap: 6,
+    minHeight: 48,
+    minWidth: 48,
+    justifyContent: 'center',
   },
   addReportBtnText: {
     color: '#FFFFFF',
@@ -658,6 +692,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 16,
+    minHeight: 48,
+    minWidth: 48,
   },
   emptyCtaText: {
     color: '#FFFFFF',

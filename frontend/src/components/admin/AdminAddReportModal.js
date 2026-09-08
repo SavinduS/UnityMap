@@ -18,6 +18,7 @@ import {
   Image,
   Platform,
   Alert,
+  AccessibilityInfo,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,6 +27,9 @@ import { useLocation } from '../../hooks/useLocation';
 import { extractExifData, toBarrierReportFields } from '../../utils/exifHelper';
 import { createReport, createBarrierReport } from '../../services/api';
 import { addMockTriageReport } from '../../services/triageService';
+import adminAuthService from '../../services/adminAuthService';
+
+import BaseMap from '../BaseMap';
 
 const CATEGORIES = [
   { value: 'Ramp', label: 'Ramp', icon: '♿', desc: 'Ramp / slope / curb' },
@@ -34,6 +38,117 @@ const CATEGORIES = [
   { value: 'Restroom', label: 'Restroom', icon: '🚻', desc: 'Accessible restroom' },
   { value: 'Other', label: 'Other', icon: '⚠', desc: 'Other barrier' },
 ];
+
+// Lightweight mini-map picker using BaseMap (Leaflet) for both web & native; falls back to nudger if BaseMap unavailable
+const MiniMapPicker = ({ center, selected, onPick }) => {
+  const mapCenter = selected || center || { latitude: 6.9271, longitude: 79.8612 };
+  const markers = selected ? [{ lat: selected.latitude, lng: selected.longitude, title: 'Selected Pin', type: 'destination' }] : [];
+  const handleMapClick = useCallback(
+    (payload) => {
+      const lat = payload?.latitude ?? payload?.lat;
+      const lng = payload?.longitude ?? payload?.lng;
+      if (typeof lat === 'number' && typeof lng === 'number') onPick(lat, lng);
+    },
+    [onPick]
+  );
+  const nudge = (dLat, dLng) => {
+    const cur = selected || mapCenter;
+    onPick(cur.latitude + dLat, cur.longitude + dLng);
+  };
+  return (
+    <View style={miniMapStyles.container}>
+      <View style={miniMapStyles.mapFrame}>
+        <BaseMap
+          center={[mapCenter.latitude, mapCenter.longitude]}
+          markers={markers}
+          onMapClick={handleMapClick}
+          zoom={16}
+          style={{ height: 200, borderRadius: 12 }}
+        />
+        {/* Center crosshair overlay */}
+        <View pointerEvents="none" style={miniMapStyles.crosshair}>
+          <Feather name="plus" size={18} color="#0F172A" style={{ opacity: 0.6 }} />
+        </View>
+      </View>
+      {/* Nudge controls for accessibility / precise picking without map drag */}
+      <View style={miniMapStyles.nudgeRow}>
+        <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(0.0005, 0)} accessibilityLabel="Nudge north">
+          <Feather name="chevron-up" size={14} color="#0F172A" />
+        </TouchableOpacity>
+        <View style={miniMapStyles.nudgeMiddle}>
+          <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(0, -0.0005)} accessibilityLabel="Nudge west">
+            <Feather name="chevron-left" size={14} color="#0F172A" />
+          </TouchableOpacity>
+          <View style={miniMapStyles.nudgeCenter}>
+            <Feather name="map-pin" size={16} color="#DC2626" />
+          </View>
+          <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(0, 0.0005)} accessibilityLabel="Nudge east">
+            <Feather name="chevron-right" size={14} color="#0F172A" />
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(-0.0005, 0)} accessibilityLabel="Nudge south">
+          <Feather name="chevron-down" size={14} color="#0F172A" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+const miniMapStyles = StyleSheet.create({
+  container: { gap: 8 },
+  mapFrame: {
+    height: 200,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#0F172A',
+    backgroundColor: '#E2E8F0',
+    position: 'relative',
+  },
+  crosshair: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -9,
+    marginLeft: -9,
+    width: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nudgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  nudgeMiddle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  nudgeCenter: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nudgeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});
 
 export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onReportCreated }) => {
   const { location: deviceLocation, getCurrentLocation } = useLocation();
@@ -48,9 +163,46 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
   const [errorMsg, setErrorMsg] = useState(null);
   const [fallbackLoading, setFallbackLoading] = useState(false);
 
-  const ward = getWardById(wardId);
+  // Enhanced model fields (SPT-206 polish) - locationName & capturedAt kept auto, hidden from UI
+  const [name, setName] = useState('');
+  const [locationName, setLocationName] = useState('');
+  const [condition, setCondition] = useState('bad');
+  const [capturedAt, setCapturedAt] = useState(new Date().toISOString());
+  const [nameTouched, setNameTouched] = useState(false);
+  const [locationTouched, setLocationTouched] = useState(false);
+  const [manualCoords, setManualCoords] = useState(null); // {latitude, longitude} from map picker
+  const [showMapPicker, setShowMapPicker] = useState(false);
 
-  // Reset state when modal opens/closes
+  const ward = getWardById(wardId);
+  const currentAdmin = adminAuthService.getCurrentUser();
+  const reporterName = currentAdmin?.name || currentAdmin?.email || 'Admin Officer';
+  const reporterId = currentAdmin?._id || currentAdmin?.id || undefined;
+
+  // Auto-fill locationName from ward context (if not manually edited)
+  useEffect(() => {
+    if (!locationTouched) {
+      setLocationName(ward.name);
+    }
+  }, [ward.name, locationTouched]);
+
+  // Auto-fill name from category (if not touched)
+  useEffect(() => {
+    if (category && !nameTouched) {
+      setName(`${category} Barrier`);
+    }
+  }, [category, nameTouched]);
+
+  // Auto-set capturedAt from EXIF or now
+  useEffect(() => {
+    if (exifResult?.capturedAt) {
+      const d = exifResult.capturedAt instanceof Date ? exifResult.capturedAt : new Date(exifResult.capturedAt);
+      if (!Number.isNaN(d.getTime())) setCapturedAt(d.toISOString());
+    } else if (visible) {
+      setCapturedAt(new Date().toISOString());
+    }
+  }, [exifResult, visible]);
+
+  // Reset state when modal closes
   useEffect(() => {
     if (!visible) {
       // Delay reset to allow close animation
@@ -64,10 +216,22 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
         setErrorMsg(null);
         setSubmitting(false);
         setFallbackLoading(false);
+        setName('');
+        setLocationName(ward.name);
+        setCondition('bad');
+        setCapturedAt(new Date().toISOString());
+        setNameTouched(false);
+        setLocationTouched(false);
+        setManualCoords(null);
+        setShowMapPicker(false);
       }, 300);
       return () => clearTimeout(t);
+    } else {
+      // On open, prime defaults (auto, hidden)
+      setLocationName((prev) => (prev ? prev : ward.name));
+      setCapturedAt(new Date().toISOString());
     }
-  }, [visible]);
+  }, [visible, ward.name]);
 
   const handleCapturedFromPicker = useCallback(async (asset) => {
     if (!asset) return;
@@ -149,6 +313,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
           hasGps: true,
           hasTimestamp: !!(prev?.hasTimestamp || prev?.capturedAt),
         }));
+        setManualCoords({ latitude: coords.latitude, longitude: coords.longitude });
       } else {
         setErrorMsg('Unable to retrieve current location. Please enable GPS.');
       }
@@ -158,6 +323,19 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       setFallbackLoading(false);
     }
   }, [getCurrentLocation]);
+
+  const handleMapPick = useCallback((lat, lng) => {
+    setManualCoords({ latitude: lat, longitude: lng });
+    setExifResult((prev) => ({
+      latitude: lat,
+      longitude: lng,
+      altitude: prev?.altitude ?? null,
+      capturedAt: prev?.capturedAt ?? new Date(),
+      hasGps: true,
+      hasTimestamp: !!(prev?.hasTimestamp || prev?.capturedAt),
+    }));
+    setErrorMsg(null);
+  }, []);
 
   const hasGps = !!(
     exifResult &&
@@ -190,21 +368,26 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       return;
     }
 
-    // Resolve coordinates: exif -> deviceLocation -> ward center
+    // Resolve coordinates: manual (map) -> exif -> deviceLocation -> ward center (hidden auto)
     let fallbackCoordinates = null;
     if (deviceLocation && typeof deviceLocation.latitude === 'number' && typeof deviceLocation.longitude === 'number') {
       fallbackCoordinates = { latitude: deviceLocation.latitude, longitude: deviceLocation.longitude };
     }
-    let latitude = exifResult?.latitude;
-    let longitude = exifResult?.longitude;
-    if (!hasGps && !fallbackCoordinates) {
+    // Manual map pick has highest priority
+    let latitude = manualCoords?.latitude ?? exifResult?.latitude;
+    let longitude = manualCoords?.longitude ?? exifResult?.longitude;
+    // If manualCoords exists, use it as fallbackCoordinates for barrierFields
+    if (manualCoords && typeof manualCoords.latitude === 'number') {
+      fallbackCoordinates = { ...manualCoords };
+    }
+    if ((!hasGps && !manualCoords) && !fallbackCoordinates) {
       try {
         setFallbackLoading(true);
         const coords = await getCurrentLocation();
         if (coords && typeof coords.latitude === 'number') {
           fallbackCoordinates = { latitude: coords.latitude, longitude: coords.longitude };
-          latitude = coords.latitude;
-          longitude = coords.longitude;
+          if (typeof latitude !== 'number') latitude = coords.latitude;
+          if (typeof longitude !== 'number') longitude = coords.longitude;
         }
       } catch {}
       setFallbackLoading(false);
@@ -250,7 +433,23 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       timestamp: barrierFields.capturedAt,
     };
 
+    const resolvedName = (name && name.trim()) || (category ? `${category} Barrier` : 'Barrier Report');
+    const resolvedLocationName = (locationName && locationName.trim()) || `Ward ${ward?.id || wardId || 'Default'}`;
+    const resolvedCondition = condition || 'bad';
+    const resolvedCapturedAt = (() => {
+      if (capturedAt) {
+        const d = new Date(capturedAt);
+        if (!Number.isNaN(d.getTime())) return d.toISOString();
+      }
+      if (barrierFields.capturedAt instanceof Date) return barrierFields.capturedAt.toISOString();
+      if (barrierFields.capturedAt) return String(barrierFields.capturedAt);
+      return new Date().toISOString();
+    })();
+
     const payload = {
+      name: resolvedName,
+      locationName: resolvedLocationName,
+      condition: resolvedCondition,
       coordinates: { latitude: finalLat, longitude: finalLng },
       latitude: finalLat,
       longitude: finalLng,
@@ -259,7 +458,10 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       rating,
       notes: notes?.trim() || undefined,
       exifMetadata,
-      capturedAt: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? new Date().toISOString(),
+      capturedAt: resolvedCapturedAt,
+      timestamp: resolvedCapturedAt,
+      reporterName,
+      reporterId,
     };
 
     setSubmitting(true);
@@ -283,6 +485,9 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       if (!ok && res && res.success === false) throw new Error(res.message || 'Submission failed');
 
       const newReport = res?.data || res;
+      try {
+        AccessibilityInfo.announceForAccessibility('Barrier report successfully added to queue');
+      } catch {}
       if (onReportCreated) onReportCreated(newReport);
       onClose && onClose();
     } catch (e) {
@@ -298,10 +503,17 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
             category,
             rating,
             notes: notes?.trim(),
+            name: (name && name.trim()) || (category ? `${category} Barrier` : 'Barrier Report'),
+            locationName: (locationName && locationName.trim()) || ward.name,
+            condition: condition || 'bad',
+            capturedAt: capturedAt || new Date().toISOString(),
             coordinates: { latitude: finalLat, longitude: finalLng },
             photoUrl: imageUri,
             wardId: ward?.id || wardId,
           });
+          try {
+            AccessibilityInfo.announceForAccessibility('Barrier report successfully added to queue');
+          } catch {}
           if (onReportCreated) onReportCreated(mockReport);
           onClose && onClose();
           return;
@@ -314,7 +526,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       setSubmitting(false);
       setFallbackLoading(false);
     }
-  }, [category, imageUri, photoFile, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, ward, onReportCreated, onClose]);
+  }, [category, imageUri, photoFile, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, name, locationName, condition, capturedAt, reporterName, reporterId, ward, wardId, manualCoords, onReportCreated, onClose]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
@@ -334,6 +546,8 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
               disabled={submitting}
               accessibilityRole="button"
               accessibilityLabel="Close modal"
+              accessibilityHint="Closes barrier report modal without saving"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Feather name="x" size={20} color="#FFFFFF" />
             </TouchableOpacity>
@@ -345,8 +559,44 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Category */}
-            <Text style={styles.sectionLabel}>1. Select Barrier Category *</Text>
+            {/* Reporter Context Badge (auto, subtle) */}
+            <View style={styles.reporterBadge}>
+              <Feather name="user" size={14} color="#0F172A" style={{ marginRight: 6 }} />
+              <Text style={styles.reporterBadgeText}>Reporting as: {reporterName}</Text>
+              <View style={styles.reporterDot} />
+              <Text style={styles.reporterBadgeSub}>{ward.id}</Text>
+            </View>
+
+            {/* 1. Barrier / Place Name */}
+            <Text style={styles.sectionLabel}>1. Barrier / Place Name</Text>
+            <View style={styles.sleekInputCard}>
+              <View style={styles.inputWrapper}>
+                <Feather name="tag" size={16} color="#0F172A" style={{ marginRight: 8 }} />
+                <TextInput
+                  value={name}
+                  onChangeText={(t) => {
+                    setName(t);
+                    setNameTouched(true);
+                  }}
+                  placeholder={category ? `${category} Barrier` : 'e.g. Main Entrance Ramp'}
+                  placeholderTextColor="#94A3B8"
+                  style={styles.inputField}
+                  accessibilityLabel="Barrier name"
+                  accessibilityHint="Enter place or barrier name, auto-fills from category"
+                  maxLength={100}
+                  returnKeyType="next"
+                />
+                {name.length > 0 && (
+                  <TouchableOpacity onPress={() => setName('')} style={styles.inputClear} accessibilityLabel="Clear barrier name">
+                    <Feather name="x-circle" size={16} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text style={styles.inputHint}>{name.length}/100 • Auto: "{category ? `${category} Barrier` : 'Barrier Report'}"</Text>
+            </View>
+
+            {/* 2. Category Chips */}
+            <Text style={styles.sectionLabel}>2. Category *</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
               {CATEGORIES.map((cat) => {
                 const selected = category === cat.value;
@@ -360,7 +610,9 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
                     }}
                     activeOpacity={0.7}
                     accessibilityRole="radio"
+                    accessibilityLabel={`${cat.label}${selected ? ', selected' : ''}`}
                     accessibilityState={{ selected }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                   >
                     <Text style={styles.chipIcon}>{cat.icon}</Text>
                     <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{cat.label}</Text>
@@ -369,8 +621,39 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
               })}
             </ScrollView>
 
-            {/* Photo Capture */}
-            <Text style={styles.sectionLabel}>2. Photo Evidence *</Text>
+            {/* 3. Condition Toggle */}
+            <Text style={styles.sectionLabel}>3. Condition *</Text>
+            <View style={styles.conditionRow}>
+              {[
+                { val: 'bad', label: 'Bad / Issue', icon: 'alert-triangle', color: '#DC2626', bg: '#FEF2F2', border: '#FCA5A5' },
+                { val: 'good', label: 'Good / Functional', icon: 'check-circle', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+              ].map((opt) => {
+                const selected = condition === opt.val;
+                return (
+                  <TouchableOpacity
+                    key={opt.val}
+                    style={[
+                      styles.conditionChip,
+                      { backgroundColor: selected ? opt.bg : '#FFFFFF', borderColor: selected ? opt.color : '#E2E8F0' },
+                      selected && { borderWidth: 2 },
+                    ]}
+                    onPress={() => setCondition(opt.val)}
+                    activeOpacity={0.7}
+                    accessibilityRole="radio"
+                    accessibilityLabel={opt.label}
+                    accessibilityState={{ selected }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Feather name={opt.icon} size={16} color={selected ? opt.color : '#94A3B8'} />
+                    <Text style={[styles.conditionText, { color: selected ? opt.color : '#475569', fontWeight: selected ? '800' : '600' }]}>{opt.label}</Text>
+                    {selected && <View style={[styles.conditionDot, { backgroundColor: opt.color }]} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* 4. Photo Capture / Upload */}
+            <Text style={styles.sectionLabel}>4. Photo *</Text>
             {hasPhoto ? (
               <View style={styles.photoPreviewWrap}>
                 <Image source={{ uri: imageUri }} style={styles.photoPreview} resizeMode="cover" />
@@ -412,51 +695,77 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
               </View>
             )}
 
-            {/* Location handling */}
-            {hasPhoto && !hasGps && (
-              <View style={styles.fallbackBox}>
-                <Text style={styles.fallbackText}>No GPS in photo. Use device location as fallback.</Text>
+            {/* 5. Location Selector (GPS + Map) */}
+            <Text style={styles.sectionLabel}>5. Location *</Text>
+            <View style={styles.locationSelectorCard}>
+              <View style={styles.locationBtnRow}>
                 <TouchableOpacity
-                  style={styles.fallbackBtn}
+                  style={[styles.locationBtn, styles.locationBtnPrimary]}
                   onPress={handleUseCurrentLocation}
                   disabled={fallbackLoading || submitting}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Use current GPS location"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   {fallbackLoading ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
-                    <Text style={styles.fallbackBtnText}>Use Current Device Location</Text>
+                    <>
+                      <Feather name="crosshair" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.locationBtnPrimaryText}>📍 Use Current GPS</Text>
+                    </>
                   )}
                 </TouchableOpacity>
-                {deviceLocation && (
-                  <Text style={styles.fallbackHint}>
-                    Device: {formatCoord(deviceLocation.latitude)}, {formatCoord(deviceLocation.longitude)}
-                  </Text>
-                )}
-                <Text style={styles.fallbackHint}>
-                  Fallback: Ward {ward.wardNumber} center {formatCoord(ward.centerCoordinate.latitude)}, {formatCoord(ward.centerCoordinate.longitude)} will be used if GPS unavailable.
-                </Text>
+                <TouchableOpacity
+                  style={[styles.locationBtn, styles.locationBtnSecondary, showMapPicker && styles.locationBtnActive]}
+                  onPress={() => setShowMapPicker((v) => !v)}
+                  disabled={submitting}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Select location on map"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Feather name="map" size={16} color={showMapPicker ? '#FFFFFF' : '#0F172A'} style={{ marginRight: 6 }} />
+                  <Text style={[styles.locationBtnSecondaryText, showMapPicker && { color: '#FFFFFF' }]}>🗺️ {showMapPicker ? 'Hide Map' : 'Pick on Map'}</Text>
+                </TouchableOpacity>
               </View>
-            )}
-            {hasPhoto && hasGps && (
-              <View style={styles.locationReadyBox}>
-                <Text style={styles.locationReadyTitle}>✓ Location ready</Text>
-                <Text style={styles.locationReadyDetail}>
-                  {formatCoord(exifResult.latitude)}, {formatCoord(exifResult.longitude)}
-                </Text>
-              </View>
-            )}
-            {!hasPhoto && (
-              <View style={styles.wardHintBox}>
-                <Feather name="map-pin" size={14} color="#64748B" style={{ marginRight: 6 }} />
-                <Text style={styles.wardHintText}>
-                  No GPS yet — will fallback to {ward.name} center if photo has no EXIF.
-                </Text>
-              </View>
-            )}
 
-            {/* Rating */}
-            <Text style={styles.sectionLabel}>3. Severity Rating *</Text>
+              {showMapPicker && (
+                <View style={styles.miniMapContainer}>
+                  <MiniMapPicker
+                    center={
+                      manualCoords ||
+                      (hasGps ? { latitude: exifResult.latitude, longitude: exifResult.longitude } : null) ||
+                      deviceLocation ||
+                      ward.centerCoordinate
+                    }
+                    selected={manualCoords || (hasGps ? { latitude: exifResult.latitude, longitude: exifResult.longitude } : null)}
+                    onPick={handleMapPick}
+                  />
+                  <Text style={styles.miniMapHint}>Tap map to place pin • Drag pin to adjust • High-contrast border for accessibility</Text>
+                </View>
+              )}
+
+              {/* Subtle coordinate badge */}
+              {(() => {
+                const display = manualCoords || (hasGps ? { latitude: exifResult.latitude, longitude: exifResult.longitude } : deviceLocation) || ward.centerCoordinate;
+                if (!display || typeof display.latitude !== 'number') return null;
+                return (
+                  <View style={styles.coordBadge}>
+                    <Feather name="navigation" size={12} color="#059669" style={{ marginRight: 6 }} />
+                    <Text style={styles.coordBadgeText}>Selected: {formatCoord(display.latitude)}, {formatCoord(display.longitude)}</Text>
+                    {manualCoords && <View style={styles.coordBadgeDot} />}
+                  </View>
+                );
+              })()}
+              {!hasGps && !manualCoords && !deviceLocation && (
+                <Text style={styles.locationFallbackHint}>No GPS yet — will auto-fallback to ward center if none selected</Text>
+              )}
+            </View>
+
+            {/* 6. Severity Rating */}
+            <Text style={styles.sectionLabel}>6. Severity Rating *</Text>
             <View style={styles.starsRow}>
               {[1, 2, 3, 4, 5].map((n) => {
                 const active = typeof rating === 'number' && n <= rating;
@@ -485,8 +794,8 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
               <Text style={styles.ratingHint}>Selected: {rating} / 5</Text>
             )}
 
-            {/* Notes */}
-            <Text style={styles.sectionLabel}>4. Notes (optional)</Text>
+            {/* 7. Notes */}
+            <Text style={styles.sectionLabel}>7. Notes (optional)</Text>
             <View style={styles.notesWrap}>
               <TextInput
                 value={notes}
@@ -501,23 +810,6 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
                 placeholderTextColor="#94A3B8"
               />
               <Text style={[styles.charCount, notes.length > 900 && { color: '#DC2626' }]}>{notes.length}/1000</Text>
-            </View>
-
-            {/* Location preview */}
-            <View style={styles.previewBadge}>
-              <Text style={styles.previewLabel}>LOCATION PREVIEW</Text>
-              <Text style={styles.previewValue}>
-                {hasGps
-                  ? `${formatCoord(exifResult.latitude)}, ${formatCoord(exifResult.longitude)}`
-                  : deviceLocation
-                  ? `${formatCoord(deviceLocation.latitude)}, ${formatCoord(deviceLocation.longitude)} (device)`
-                  : `${formatCoord(ward.centerCoordinate.latitude)}, ${formatCoord(ward.centerCoordinate.longitude)} (Ward ${ward.wardNumber} center)`}
-              </Text>
-              {category && (
-                <Text style={styles.previewMeta}>
-                  Category: {category} • Photo: {hasPhoto ? '✓' : '—'} • Rating: {rating ?? '—'}
-                </Text>
-              )}
             </View>
 
             {errorMsg && (
@@ -541,6 +833,10 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
               onPress={handleClose}
               disabled={submitting}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel barrier report"
+              accessibilityHint="Closes modal without submitting"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Text style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
@@ -553,6 +849,11 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
               onPress={handleSubmit}
               disabled={!canSubmit || submitting || fallbackLoading}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Add barrier report"
+              accessibilityHint="Submits barrier report to triage queue"
+              accessibilityState={{ disabled: !canSubmit || submitting || fallbackLoading }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               {submitting ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
@@ -607,6 +908,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderRadius: 8,
     marginLeft: 12,
+    minHeight: 48,
+    minWidth: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   body: {
     flex: 1,
@@ -670,6 +975,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderStyle: 'dashed',
+    minHeight: 48,
   },
   pickerBtnText: {
     fontSize: 13,
@@ -735,6 +1041,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 10,
     alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center',
   },
   fallbackBtnText: {
     color: '#FFFFFF',
@@ -891,6 +1199,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 48,
   },
   cancelBtn: {
     backgroundColor: '#F1F5F9',
@@ -912,6 +1221,325 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  sleekInputCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  locationSelectorCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  locationBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  locationBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    minHeight: 48,
+    gap: 6,
+  },
+  locationBtnPrimary: {
+    backgroundColor: '#0B3D2E',
+    borderColor: '#0B3D2E',
+  },
+  locationBtnPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  locationBtnSecondary: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#0F172A',
+  },
+  locationBtnSecondaryText: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  locationBtnActive: {
+    backgroundColor: '#0F172A',
+    borderColor: '#0F172A',
+  },
+  miniMapContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    gap: 6,
+  },
+  miniMapHint: {
+    fontSize: 10,
+    color: '#64748B',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  coordBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  coordBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  coordBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+    marginLeft: 6,
+  },
+  locationFallbackHint: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  // --- Polish: Reporter badge & Details Card (high-contrast, sleek) ---
+  reporterBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 4,
+    alignSelf: 'flex-start',
+  },
+  reporterBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  reporterDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#059669',
+    marginHorizontal: 8,
+  },
+  reporterBadgeSub: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  detailsCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  detailsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  detailsCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    flex: 1,
+  },
+  detailsCardBadge: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  detailsCardBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  inputGroup: {
+    marginBottom: 14,
+  },
+  inputLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  inputLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: 0.3,
+  },
+  inputOptional: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#94A3B8',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  autoPill: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  autoPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#1D4ED8',
+    letterSpacing: 0.5,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    minHeight: 48,
+  },
+  inputWrapperHighlight: {
+    borderColor: '#0B3D2E',
+    backgroundColor: '#FFFFFF',
+  },
+  inputField: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0F172A',
+    paddingVertical: 10,
+  },
+  inputClear: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  inputIconRight: {
+    marginLeft: 8,
+  },
+  inputHint: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  conditionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  conditionChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    gap: 6,
+    minHeight: 48,
+  },
+  conditionText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  conditionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 2,
+  },
+  capturedBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+    minHeight: 48,
+  },
+  capturedText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  capturedBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  capturedBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  exifPill: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  exifPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#34D399',
+    letterSpacing: 0.5,
   },
 });
 
