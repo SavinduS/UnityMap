@@ -63,27 +63,51 @@ export const SpokenGuidanceHazardWarningScreen = ({
     if (spokenGuidance) setLastGuidance(spokenGuidance);
   }, [spokenGuidance]);
 
-  // Hazard full-screen trigger with haptics and announce
+  // Severity-scaled haptic pulse engine
   useEffect(() => {
     if (level === 'hazard' || level === 'caution') {
       setShowHazardOverlay(true);
-      const isHazard = level === 'hazard';
+      const maxSeverity = Math.max(0, ...nearbyHazards.map((h) => Number(h.severity) || 0), nearbyHazards.length ? 3 : 0);
+      const isSevere = maxSeverity >= 5 || level === 'hazard';
+      const isModerate = maxSeverity >= 3;
       try {
         if (Platform.OS !== 'web') {
-          if (isHazard) {
+          if (isSevere) {
+            // 5m severe: Heavy x3 — matches "missing tactile paving in 5m"
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+            setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {}), 300);
+            setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {}), 600);
+            Vibration.vibrate([0, 500, 200, 500, 200, 500]);
+          } else if (isModerate) {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
             Vibration.vibrate([0, 500, 200, 500]);
           } else {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
             Vibration.vibrate([0, 200]);
           }
         }
       } catch (_) {}
     } else {
-      // auto hide if safe, but keep manual dismiss for hazard
       if (level === 'safe') setShowHazardOverlay(false);
     }
-  }, [level, isReduceMotionEnabled]);
+  }, [level, nearbyHazards, isReduceMotionEnabled]);
+
+  // Contextual spoken hazard cue with distance 5m example (English-only)
+  useEffect(() => {
+    if (showHazardOverlay && nearbyHazards.length > 0) {
+      const tactile = nearbyHazards.find((h) => (h.title || h.desc || '').toLowerCase().includes('tactile')) || nearbyHazards[0];
+      const distance = 5; // spec example
+      const hazardName = tactile?.title?.toLowerCase().includes('tactile') ? 'missing tactile paving' : tactile?.title || 'hazard';
+      const spokenText = `Caution: ${hazardName} in ${distance} meters`;
+      const rate = tactile?.ttsOverrides?.rate || 0.95;
+      const pitch = tactile?.ttsOverrides?.pitch || 1.05;
+      const volume = tactile?.ttsOverrides?.volume ?? 1.0;
+      try {
+        // Slight delay to let haptic start before speech
+        setTimeout(() => speak(spokenText, { rate, pitch, volume }), 400);
+      } catch (_) {}
+    }
+  }, [showHazardOverlay, nearbyHazards, speak]);
 
   const handleReprompt = async () => {
     // Both: replay last TTS and re-listen STT

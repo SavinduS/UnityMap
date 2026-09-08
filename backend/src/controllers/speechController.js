@@ -1,6 +1,6 @@
 const SpeechPrompt = require('../models/SpeechPrompt');
 const HazardCue = require('../models/HazardCue');
-const { interpolateTemplate } = require('../services/speechService');
+const { interpolateTemplate, getContextualHazardCue } = require('../services/speechService');
 
 /**
  * GET /api/speech/prompts?triggerType=&locale=&verbosity=&isActive=
@@ -22,17 +22,31 @@ const getSpeechPrompts = async (req, res, next) => {
 };
 
 /**
- * GET /api/audio/cues?obstacleType=&severity=&locale=
+ * GET /api/audio/cues?obstacleType=&severity=&locale=&distance=
+ * If distance provided, returns contextual spokenText with {{distance}} resolved.
  */
 const getAudioCues = async (req, res, next) => {
   try {
-    const { obstacleType, severity, isActive } = req.query;
+    const { obstacleType, severity, isActive, distance, locale = 'en' } = req.query;
     const filter = {};
     if (obstacleType) filter.obstacleType = obstacleType;
     if (severity) filter.severity = Number(severity);
     if (isActive !== undefined) filter.isActive = isActive === 'true';
 
     const cues = await HazardCue.find(filter).sort({ severity: -1 }).lean();
+
+    // If distance provided, also return contextual spokenText for English-only
+    if (distance !== undefined) {
+      const distNum = Number(distance);
+      const contextual = await Promise.all(
+        cues.map(async (cue) => {
+          const ctx = await getContextualHazardCue(cue.obstacleType, distNum, locale);
+          return ctx ? { ...cue, spokenText: ctx.spokenText, earconUrl: ctx.earconUrl, ttsOverrides: ctx.ttsOverrides } : cue;
+        })
+      );
+      return res.json({ count: contextual.length, cues: contextual });
+    }
+
     res.json({ count: cues.length, cues });
   } catch (err) {
     next(err);
