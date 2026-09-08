@@ -380,7 +380,7 @@ exports.createReport = async (req, res) => {
  */
 exports.getReports = async (req, res) => {
   try {
-    const { category, status, triageStatus, page = '1', limit = '20' } = req.query;
+    const { category, status, triageStatus, page = '1', limit = '20', near, radius, lat, lng } = req.query;
 
     const filter = {};
 
@@ -407,14 +407,60 @@ exports.getReports = async (req, res) => {
       filter.triageStatus = statusValue;
     }
 
+    // SPT-301: nearby geospatial filter (GET /api/reports?near=lat,lng&radius=250)
+    let isNearQuery = false;
+    if (near && typeof near === 'string' && near.includes(',')) {
+      const parts = near.split(',').map((v) => Number(v.trim()));
+      if (parts.length === 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+        const nearLat = parts[0];
+        const nearLng = parts[1];
+        const r = Math.min(5000, Math.max(10, Number(radius) || 250));
+        filter.location = {
+          $near: {
+            $geometry: { type: 'Point', coordinates: [nearLng, nearLat] },
+            $maxDistance: r,
+          },
+        };
+        isNearQuery = true;
+      }
+    } else if (lat !== undefined && lng !== undefined) {
+      const nearLat = Number(lat);
+      const nearLng = Number(lng);
+      if (Number.isFinite(nearLat) && Number.isFinite(nearLng)) {
+        const r = Math.min(5000, Math.max(10, Number(radius) || 250));
+        filter.location = {
+          $near: {
+            $geometry: { type: 'Point', coordinates: [nearLng, nearLat] },
+            $maxDistance: r,
+          },
+        };
+        isNearQuery = true;
+      }
+    }
+
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (pageNum - 1) * limitNum;
 
-    const [reports, total] = await Promise.all([
-      BarrierReport.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
-      BarrierReport.countDocuments(filter),
-    ]);
+    let reports;
+    let total;
+    if (isNearQuery) {
+      // $near sorts by distance, skip/limit still applies
+      reports = await BarrierReport.find(filter).skip(skip).limit(limitNum);
+      // countDocuments doesn't work with $near, use estimated
+      total = reports.length;
+      // For accurate total, try count without $near fallback
+      try {
+        const countFilter = { ...filter };
+        delete countFilter.location;
+        total = await BarrierReport.countDocuments(countFilter);
+      } catch {}
+    } else {
+      [reports, total] = await Promise.all([
+        BarrierReport.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+        BarrierReport.countDocuments(filter),
+      ]);
+    }
 
     return res.status(200).json({
       success: true,

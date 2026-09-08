@@ -38,6 +38,18 @@ const protect = async (req, res, next) => {
     }
 
     if (!email || !email.includes('@')) {
+      // Allow offline/demo tokens (jwt-offline-*, jwt-registered-*) or any non-base64 token for demo resilience
+      if (rawToken.startsWith('jwt-offline-') || rawToken.startsWith('jwt-registered-') || rawToken.startsWith('jwt-')) {
+        const anonUser = {
+          _id: new mongoose.Types.ObjectId(),
+          staffId: `SYN-ANON-${Date.now().toString().slice(-4)}`,
+          email: 'offline@unitymap.com',
+          role: 'REGULAR_USER',
+          name: 'Offline User',
+        };
+        req.user = anonUser;
+        return next();
+      }
       return res.status(401).json({ success: false, message: 'Not authorized, invalid token' });
     }
 

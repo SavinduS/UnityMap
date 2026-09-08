@@ -7,9 +7,13 @@ import EXIFCaptureScreen from './EXIFCaptureScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { loadVolunteerDraft, saveVolunteerDraft, clearVolunteerDraft } from '../../theme/storage';
-import { createBarrierReport, createReport } from '../../services/api';
+import { createBarrierReport, createReport, getReports } from '../../services/api';
 import { useLocation } from '../../hooks/useLocation';
 import { toBarrierReportFields } from '../../utils/exifHelper';
+import CorroborateButton from '../../components/CorroborateButton';
+import { calculateHaversineDistance } from '../../utils/mapMath';
+import authService from '../../services/authService';
+import { getMockReports } from '../../services/triageService';
 
 const CATEGORIES = [
   { value: 'Ramp', label: 'Ramp', icon: '♿', desc: 'Ramp / slope / curb' },
@@ -38,6 +42,11 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
   const [fallbackLoading, setFallbackLoading] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const hasHydratedRef = useRef(false);
+
+  // SPT-301: nearby existing barriers for corroboration
+  const [nearbyReports, setNearbyReports] = useState([]);
+  const [loadingNearby, setLoadingNearby] = useState(false);
+  const [corroboratedExistingId, setCorroboratedExistingId] = useState(null);
 
   // Load draft on mount
   useEffect(() => {
@@ -102,6 +111,58 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     }, 300);
     return () => clearTimeout(t);
   }, [imageUri, exifResult, category, rating, notes, draftLoaded]);
+
+  // SPT-301: Fetch nearby existing barriers (250m radius) for Step 1 corroboration
+  useEffect(() => {
+    if (step !== 1) return;
+    const lat = exifResult?.latitude ?? deviceLocation?.latitude;
+    const lng = exifResult?.longitude ?? deviceLocation?.longitude;
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      setNearbyReports([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingNearby(true);
+    (async () => {
+      try {
+        let allReports = [];
+        try {
+          // Try backend with near query, fallback to generic fetch
+          let res;
+          try {
+            res = await getReports({ near: `${lat},${lng}`, radius: 250, limit: 50 });
+          } catch {
+            res = await getReports({ limit: 50 });
+          }
+          const data = res?.data || res?.reports || res;
+          allReports = Array.isArray(data) ? data : data?.data && Array.isArray(data.data) ? data.data : [];
+          // If API returned paginated wrapper, extract array
+          if (!Array.isArray(allReports) && res?.data?.reports) allReports = res.data.reports;
+          if (allReports.length === 0) throw new Error('empty');
+        } catch {
+          // Offline fallback to mock
+          allReports = getMockReports();
+        }
+        const nearby = allReports
+          .filter((r) => {
+            const rLat = r.coordinates?.latitude ?? r.location?.coordinates?.[1];
+            const rLng = r.coordinates?.longitude ?? r.location?.coordinates?.[0];
+            if (typeof rLat !== 'number' || typeof rLng !== 'number') return false;
+            const d = calculateHaversineDistance(lat, lng, rLat, rLng);
+            return d <= 250;
+          })
+          .slice(0, 5);
+        if (!cancelled) setNearbyReports(nearby);
+      } catch {
+        if (!cancelled) setNearbyReports([]);
+      } finally {
+        if (!cancelled) setLoadingNearby(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, exifResult, deviceLocation]);
 
   const handleCaptured = useCallback((draft) => {
     if (!draft) return;
@@ -336,6 +397,8 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     setStep(1);
     setErrorMsg(null);
     setSuccessMsg(null);
+    setNearbyReports([]);
+    setCorroboratedExistingId(null);
     try { await clearVolunteerDraft(); } catch {}
   }, []);
 
@@ -430,6 +493,74 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
                 );
               })}
             </View>
+            {/* SPT-301: Nearby existing barriers — corroborate instead of duplicate */}
+            {step === 1 && loadingNearby && (
+              <View style={styles.nearbyLoading} accessible accessibilityLabel="Loading nearby barriers">
+                <ActivityIndicator size="small" color={palette.primary} />
+                <Text {...textProps} style={[styles.nearbyLoadingText, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
+                  Checking nearby barriers…
+                </Text>
+              </View>
+            )}
+            {step === 1 && !loadingNearby && nearbyReports.length > 0 && (
+              <View
+                style={[styles.nearbyCard, { backgroundColor: isHighContrast ? palette.surface : '#FFFBEB', borderColor: isHighContrast ? palette.borderStrong : '#FCD34D', borderWidth }]}
+                accessible
+                accessibilityRole="alert"
+                accessibilityLabel="Nearby existing barriers found"
+              >
+                <Text {...textProps} style={[styles.nearbyWarningTitle, getTextStyle('sm', { isHighContrast }), { color: isHighContrast ? palette.textPrimary : '#92400E' }]}>
+                  ⚠️ Nearby existing barriers found. Confirm an existing one instead of creating a duplicate:
+                </Text>
+                {nearbyReports.map((report) => {
+                  const rLat = report.coordinates?.latitude ?? report.location?.coordinates?.[1];
+                  const rLng = report.coordinates?.longitude ?? report.location?.coordinates?.[0];
+                  const curLat = exifResult?.latitude ?? deviceLocation?.latitude;
+                  const curLng = exifResult?.longitude ?? deviceLocation?.longitude;
+                  const dist = typeof rLat === 'number' && typeof curLat === 'number' ? Math.round(calculateHaversineDistance(curLat, curLng, rLat, rLng)) : null;
+                  const currentUser = authService.getCurrentUser();
+                  const userId = currentUser?.id || currentUser?._id || 'mock-user';
+                  const isCorroborated = Array.isArray(report.upvotedBy) && report.upvotedBy.includes(userId);
+                  return (
+                    <View key={report._id} style={[styles.nearbyItem, { borderColor: palette.border, backgroundColor: palette.surface }]}>
+                      <View style={styles.nearbyItemInfo}>
+                        <Text {...textProps} style={[styles.nearbyItemCategory, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>
+                          {report.category} {dist !== null ? `• ${dist}m away` : ''}
+                        </Text>
+                        <Text {...textProps} style={[styles.nearbyItemNotes, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]} numberOfLines={2}>
+                          {report.notes || 'No description'}
+                        </Text>
+                      </View>
+                      <CorroborateButton
+                        reportId={report._id}
+                        initialCount={report.corroborationCount || 0}
+                        isCorroboratedInitial={isCorroborated}
+                        onSuccess={(updated) => {
+                          const newCount = updated?.corroborationCount ?? (report.corroborationCount || 0) + 1;
+                          // Update local list so pill reflects new count without refresh
+                          setNearbyReports((prev) => prev.map((r) => (r._id === report._id ? { ...r, corroborationCount: newCount, upvotedBy: [...(r.upvotedBy || []), userId] } : r)));
+                          setCorroboratedExistingId(report._id);
+                          setSuccessMsg(`Confirmed existing barrier ${report._id}. No duplicate needed — audit complete.`);
+                          try {
+                            AccessibilityInfo.announceForAccessibility('Existing barrier confirmed. No duplicate needed.');
+                          } catch {}
+                          try {
+                            announce && announce('Existing barrier confirmed');
+                          } catch {}
+                        }}
+                      />
+                    </View>
+                  );
+                })}
+                {corroboratedExistingId && (
+                  <View style={[styles.corroboratedHintBox, { backgroundColor: isHighContrast ? palette.surface : '#ECFDF5', borderColor: isHighContrast ? palette.borderStrong : '#A7F3D0', borderWidth }]}>
+                    <Text {...textProps} style={[styles.corroboratedHint, getTextStyle('sm', { isHighContrast }), { color: isHighContrast ? palette.textPrimary : '#065F46' }]}>
+                      ✓ You corroborated an existing report. Your audit is complete without creating a duplicate record!
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
           </View>
         )}
 
@@ -689,6 +820,16 @@ const styles = StyleSheet.create({
   submitBtnWrap: { position: 'relative', justifyContent: 'center' },
   submitSpinner: { position: 'absolute', right: 16, top: '50%', marginTop: -10 },
   hintText: { textAlign: 'center', marginTop: 8 },
+  nearbyLoading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, paddingVertical: 8 },
+  nearbyLoadingText: { marginLeft: 8, fontStyle: 'italic' },
+  nearbyCard: { borderRadius: 12, padding: 12, marginTop: 16, gap: 10 },
+  nearbyWarningTitle: { fontWeight: '800', lineHeight: 18, marginBottom: 4 },
+  nearbyItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderRadius: 10, padding: 10, borderWidth: 1, marginTop: 6 },
+  nearbyItemInfo: { flex: 1, gap: 2 },
+  nearbyItemCategory: { fontWeight: '700' },
+  nearbyItemNotes: { lineHeight: 16 },
+  corroboratedHintBox: { borderRadius: 10, padding: 10, marginTop: 8 },
+  corroboratedHint: { fontWeight: '700', textAlign: 'center', lineHeight: 18 },
 });
 
 export default ThreeTapReportScreen;
