@@ -349,6 +349,9 @@ exports.createReport = async (req, res) => {
       verificationLog: [{ action: 'created', status: 'pending', timestamp: new Date() }],
     });
 
+    console.log('✅ New Report Created in DB:', report);
+    console.log(`   → Category: ${report.category} | Rating: ${report.rating} | Location: ${report.locationName || 'N/A'} | Coords: ${report.coordinates.latitude}, ${report.coordinates.longitude}`);
+
     return res.status(201).json({
       success: true,
       data: report,

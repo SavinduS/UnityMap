@@ -44,6 +44,11 @@ const getQueue = async (req, res) => {
       page: parseInt(page, 10) || 1,
     });
 
+    console.log(`✅ Triage Queue fetched: ward=${wardId} category=${category || 'all'} status=${status} → ${result.totalReports} reports (showing ${result.reports.length})`);
+    if (result.reports.length > 0) {
+      console.log('   → Latest:', result.reports[0]._id, result.reports[0].category, result.reports[0].triage?.urgencyIndex);
+    }
+
     return res.status(200).json({
       success: true,
       data: result,
