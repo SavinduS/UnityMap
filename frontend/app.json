@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -14,7 +13,10 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "permissions": ["android.permission.RECORD_AUDIO"]
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.frontend"
     },
     "ios": {
       "infoPlist": {
@@ -22,6 +24,13 @@
         "NSMicrophoneUsageDescription": "UnityMap needs microphone access to transcribe your spoken destination."
       }
     },
-    "plugins": ["expo-speech-recognition"]
+    "plugins": [
+      "expo-speech-recognition"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "17ecf664-b78c-425b-aa2a-ba24660622b7"
+      }
+    }
   }
 }
