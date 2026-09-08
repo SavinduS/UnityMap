@@ -180,13 +180,28 @@ export const getPathways = (options = {}) => {
 
 /**
  * SPT-102 — Fetch a computed route between two nodes.
+ * SPT-106 — Optionally include spoken summary via includeSpeech & locale (en only).
  */
-export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible = false) => {
+export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible = false, options = {}) => {
+  // Backward compat: wheelchairAccessible may be options object
+  let includeSpeech = false;
+  let locale = 'en';
+  if (typeof wheelchairAccessible === 'object' && wheelchairAccessible !== null) {
+    options = wheelchairAccessible;
+    wheelchairAccessible = false;
+  }
+  if (options.includeSpeech) includeSpeech = options.includeSpeech;
+  if (options.locale) locale = options.locale;
+
   const params = new URLSearchParams({
     originNodeId,
     destinationNodeId,
     wheelchairAccessible: String(wheelchairAccessible),
   });
+  if (includeSpeech) {
+    params.append('includeSpeech', 'true');
+    params.append('locale', locale);
+  }
   return apiRequest(`/pathways/route?${params.toString()}`);
 };
 
