@@ -17,6 +17,7 @@ import Input from '../../components/Input';
 import SettingsScreen from '../settings/SettingsScreen';
 import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
+import VoiceNavigationScreen from '../audio/VoiceNavigationScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { useSpeech } from '../../hooks/useSpeech';
 import { getTextStyle, textProps } from '../../theme/typography';
@@ -77,6 +78,10 @@ const UnityMapScreen = () => {
   const [dataError, setDataError] = useState(null);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
   const [showLauncher, setShowLauncher] = useState(false);
+  const [showVoiceSummary, setShowVoiceSummary] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceConfidence, setVoiceConfidence] = useState(0);
+  const [voiceRouteSummary, setVoiceRouteSummary] = useState(null);
   const [tappedLocation, setTappedLocation] = useState(null);
   const [tapRoute, setTapRoute] = useState(null);
   const [tapRouteLoading, setTapRouteLoading] = useState(false);
@@ -506,28 +511,62 @@ const UnityMapScreen = () => {
     });
   }, []);
 
-  // SPT-105: bridge spoken transcript to typed search with high-accuracy handling
+  // SPT-106: bridge spoken transcript to Voice Input & Summary Readout Screen (single-tap confirmation)
   const handleLauncherNavigate = useCallback(
     (transcript, confidence) => {
       setShowLauncher(false);
       const q = typeof transcript === 'string' ? transcript.trim() : '';
       if (!q) return;
-      const confOk = confidence === undefined || confidence === 0 || confidence >= 0.6;
-      if (!confOk) {
-        try {
-          speak(`Low confidence ${Math.round(confidence * 100)} percent, please try again`);
-        } catch (_) {}
-        setSearchQuery(q);
-        setIsSearchExpanded(true);
-        return;
-      }
+      setVoiceTranscript(q);
+      setVoiceConfidence(confidence || 0);
       setSearchQuery(q);
       setIsSearchExpanded(true);
-      try {
-        speak(`Searching for ${q}`);
-      } catch (_) {}
+
       const all = [...dbNodes, ...recentDestinations];
-      if (all.length === 0) return;
+      let best = null;
+      let bestScore = -1;
+      const lowerQ = q.toLowerCase();
+      for (const dest of all) {
+        const titleLower = dest.title.toLowerCase();
+        let score = 0;
+        if (titleLower === lowerQ) score = 3;
+        else if (titleLower.includes(lowerQ) || lowerQ.includes(titleLower)) score = 2;
+        else if (titleLower.split(' ').some((w) => lowerQ.includes(w) || w.includes(lowerQ))) score = 1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = dest;
+        }
+      }
+
+      // Build route summary for readout (distance, crossings, ETA, hazards) from tapRouteMeta or DB
+      const distanceText = tapRouteMeta?.distanceText || (best ? 'Calculating...' : '--');
+      const etaText = tapRouteMeta?.etaText || '--';
+      const crossings = tapRouteMeta ? tapRouteMeta.destName?.length % 5 : bestScore >= 0 ? bestScore : 0;
+      const hazardCount = nearbyHazards?.length ?? 0;
+      const summary = {
+        destName: best?.title || q,
+        distanceText,
+        crossings,
+        etaText,
+        hazardCount,
+        spokenSummary: `Route to ${best?.title || q}: ${distanceText}, ${crossings} crossings, ${etaText}, ${hazardCount} hazards.`,
+        confidence,
+      };
+      setVoiceRouteSummary(summary);
+      setShowVoiceSummary(true);
+      try {
+        speak(summary.spokenSummary);
+      } catch (_) {}
+    },
+    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, speak]
+  );
+
+  const handleVoiceConfirm = useCallback(
+    ({ transcript, routeSummary }) => {
+      const q = transcript || voiceTranscript;
+      setShowVoiceSummary(false);
+      if (!q) return;
+      const all = [...dbNodes, ...recentDestinations];
       const lowerQ = q.toLowerCase();
       let best = null;
       let bestScore = -1;
@@ -542,21 +581,19 @@ const UnityMapScreen = () => {
           best = dest;
         }
       }
-      if (best && bestScore >= 1) {
-        if (confidence >= 0.7 || bestScore >= 2) {
-          try {
-            speak(`Heard ${q}, navigating to ${best.title}`);
-          } catch (_) {}
-          setTimeout(() => handleSelectDestination(best), 600);
-        } else {
-          try {
-            speak(`Heard ${q}, showing results. Did you mean ${best.title}?`);
-          } catch (_) {}
-        }
+      if (best) {
+        handleSelectDestination(best);
+        try {
+          speak(`Confirmed. Navigating to ${best.title}`);
+        } catch (_) {}
       }
     },
-    [dbNodes, recentDestinations, speak, handleSelectDestination]
+    [voiceTranscript, dbNodes, recentDestinations, handleSelectDestination, speak]
   );
+
+  const handleVoiceCancel = useCallback(() => {
+    setShowVoiceSummary(false);
+  }, []);
 
   // Combined and filtered destinations (DB nodes + real recent searches)
   const filteredDestinations = useMemo(() => {
@@ -1844,6 +1881,22 @@ const UnityMapScreen = () => {
         >
           <Text style={tw`text-white text-xs font-bold`}>Skip to Map</Text>
         </TouchableOpacity>
+      </Modal>
+
+      {/* SPT-106: Voice Input & Summary Readout Screen — single-tap confirmation modal */}
+      <Modal
+        visible={showVoiceSummary}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={handleVoiceCancel}
+        accessibilityViewIsModal
+      >
+        <VoiceNavigationScreen
+          initialTranscript={voiceTranscript}
+          routeSummary={voiceRouteSummary}
+          onConfirm={handleVoiceConfirm}
+          onCancel={handleVoiceCancel}
+        />
       </Modal>
     </View>
   );
