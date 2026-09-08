@@ -24,7 +24,6 @@ export const SettingsScreen = () => {
     isHighContrast,
     setHighContrast,
     isScreenReaderEnabled,
-    setIsScreenReaderEnabled,
     isReduceMotionEnabled,
     setIsReduceMotionEnabled,
     isAudioLauncherEnabled,
@@ -272,6 +271,9 @@ export const SettingsScreen = () => {
             styles.row,
             { borderColor: palette.border, borderWidth, backgroundColor: palette.surface },
           ]}
+          accessible
+          accessibilityRole="text"
+          accessibilityLabel={`${screenReaderName} ${isScreenReaderEnabled ? 'enabled' : 'off'}`}
         >
           <View style={styles.rowText}>
             <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
@@ -281,19 +283,19 @@ export const SettingsScreen = () => {
               {isScreenReaderEnabled ? 'Enabled — announceForAccessibility active' : 'Off — standard speech'}
             </Text>
             <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted, fontStyle: 'italic', marginTop: 2 }]}>
-              {Platform.OS === 'android' ? 'TalkBack (Android)' : Platform.OS === 'ios' ? 'VoiceOver (iOS)' : 'Screen reader'} via AccessibilityInfo + Platform.select
+              {Platform.OS === 'android' ? 'TalkBack (Android)' : Platform.OS === 'ios' ? 'VoiceOver (iOS)' : 'Screen reader'} via AccessibilityInfo + Platform.select — OS-driven, not manual
             </Text>
           </View>
-          <Switch
-            value={isScreenReaderEnabled}
-            onValueChange={setIsScreenReaderEnabled}
-            trackColor={{ false: '#E5E7EB', true: palette.primary }}
-            thumbColor="#FFFFFF"
-            accessibilityRole="switch"
-            accessibilityLabel={`${screenReaderName} toggle`}
-            accessibilityState={{ checked: isScreenReaderEnabled }}
-            style={styles.switch}
-          />
+          <View
+            style={[
+              styles.badge,
+              { backgroundColor: isScreenReaderEnabled ? palette.primary : palette.surfaceAlt, borderColor: palette.border, borderWidth: isScreenReaderEnabled ? borderWidth : 1 },
+            ]}
+          >
+            <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: isScreenReaderEnabled ? palette.primaryText : palette.textMuted, fontWeight: '700' }]}>
+              {isScreenReaderEnabled ? 'ON' : 'OFF'}
+            </Text>
+          </View>
         </View>
 
         <View
@@ -497,6 +499,15 @@ const styles = StyleSheet.create({
   rowLabel: {},
   rowHint: { marginTop: 2 },
   switch: { transform: [{ scaleX: 1.05 }, { scaleY: 1.05 }] },
+  badge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    minWidth: 48,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   preview: {
     marginTop: 16,
     borderRadius: 12,
