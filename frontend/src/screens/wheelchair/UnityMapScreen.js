@@ -534,9 +534,9 @@ const UnityMapScreen = () => {
     });
   }, []);
 
-  // SPT-106: bridge spoken transcript to Voice Input & Summary Readout Screen (single-tap confirmation)
+  // SPT-106: bridge spoken transcript to Voice Input & Summary Readout Screen — summary first via getRoute includeSpeech, draw on Confirm
   const handleLauncherNavigate = useCallback(
-    (transcript, confidence) => {
+    async (transcript, confidence) => {
       setShowLauncher(false);
       const q = typeof transcript === 'string' ? transcript.trim() : '';
       if (!q) return;
@@ -561,31 +561,72 @@ const UnityMapScreen = () => {
         }
       }
 
-      // Build route summary for readout (distance, crossings, ETA, hazards) from tapRouteMeta or DB
-      const distanceText = tapRouteMeta?.distanceText || (best ? 'Calculating...' : '--');
-      const etaText = tapRouteMeta?.etaText || '--';
-      const crossings = tapRouteMeta ? tapRouteMeta.destName?.length % 5 : bestScore >= 0 ? bestScore : 0;
-      const hazardCount = nearbyHazards?.length ?? 0;
-      const summary = {
+      // Fetch real route preview for summary (reuse current BaseMap pipeline, no draw yet)
+      let summary = {
         destName: best?.title || q,
-        distanceText,
-        crossings,
-        etaText,
-        hazardCount,
-        spokenSummary: `Route to ${best?.title || q}: ${distanceText}, ${crossings} crossings, ${etaText}, ${hazardCount} hazards.`,
+        distanceText: '--',
+        crossings: 0,
+        etaText: '--',
+        hazardCount: nearbyHazards?.length ?? 0,
+        spokenSummary: `Route to ${best?.title || q}: calculating...`,
         confidence,
+        pendingBest: best,
       };
+
+      if (best?.lat && best?.lng) {
+        try {
+          const origin = currentLocation || (location?.latitude && location?.longitude ? location : null) || (dbNodes[0]?.lat ? { latitude: dbNodes[0].lat, longitude: dbNodes[0].lng } : { latitude: mapCenter[0], longitude: mapCenter[1] });
+          const originNode = await getNearestNode(origin.longitude, origin.latitude, 500).catch(() => null);
+          const destNode = await getNearestNode(best.lng, best.lat, 500).catch(() => null);
+          if (originNode && destNode) {
+            const routeRes = await getRoute(originNode._id || originNode.id, destNode._id || destNode.id, isWheelchairAccessible, { includeSpeech: true, locale: 'en' });
+            if (routeRes?.success) {
+              const d = routeRes.data;
+              summary = {
+                destName: d.destinationNode?.name || best.title,
+                distanceText: d.totalDistanceMeters ? formatDistance(d.totalDistanceMeters) : '--',
+                crossings: d.crossings ?? 0,
+                etaText: d.estimatedDurationSec ? formatDuration(Math.ceil(d.estimatedDurationSec / 60)) : '--',
+                hazardCount: d.hazardCount ?? nearbyHazards?.length ?? 0,
+                spokenSummary: d.spokenSummary || `Route to ${d.destinationNode?.name || best.title}: ${d.totalDistanceMeters ? formatDistance(d.totalDistanceMeters) : '--'}, ${d.crossings ?? 0} crossings.`,
+                confidence,
+                pendingOrigin: origin,
+                pendingDest: best,
+                pendingRouteRes: d,
+              };
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Fallback if no backend route yet
+      if (!summary.spokenSummary || summary.spokenSummary.includes('calculating')) {
+        const distanceText = tapRouteMeta?.distanceText || 'Calculating...';
+        const etaText = tapRouteMeta?.etaText || '--';
+        const crossings = tapRouteMeta ? 0 : bestScore >= 0 ? bestScore : 0;
+        summary = {
+          destName: best?.title || q,
+          distanceText,
+          crossings,
+          etaText,
+          hazardCount: nearbyHazards?.length ?? 0,
+          spokenSummary: `Route to ${best?.title || q}: ${distanceText}, ${crossings} crossings, ${etaText}, ${nearbyHazards?.length ?? 0} hazards.`,
+          confidence,
+          pendingBest: best,
+        };
+      }
+
       setVoiceRouteSummary(summary);
       setShowVoiceSummary(true);
       try {
         speak(summary.spokenSummary);
       } catch (_) {}
     },
-    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, speak]
+    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, currentLocation, location, mapCenter, dbPathways, isWheelchairAccessible, speak]
   );
 
   const handleVoiceConfirm = useCallback(
-    ({ transcript, routeSummary }) => {
+    async ({ transcript, routeSummary }) => {
       const q = transcript || voiceTranscript;
       setShowVoiceSummary(false);
       if (!q) return;
@@ -604,14 +645,21 @@ const UnityMapScreen = () => {
           best = dest;
         }
       }
-      if (best) {
+      if (best?.lat && best?.lng) {
+        try {
+          speak(`Confirmed. Navigating to ${best.title}`);
+        } catch (_) {}
+        // Reuse current BaseMap pipeline — draws polyline via tapRoute
+        await handleMapTap({ latitude: best.lat, longitude: best.lng });
+        handleSelectDestination(best);
+      } else if (best) {
         handleSelectDestination(best);
         try {
           speak(`Confirmed. Navigating to ${best.title}`);
         } catch (_) {}
       }
     },
-    [voiceTranscript, dbNodes, recentDestinations, handleSelectDestination, speak]
+    [voiceTranscript, dbNodes, recentDestinations, handleSelectDestination, handleMapTap, speak]
   );
 
   const handleVoiceCancel = useCallback(() => {
