@@ -249,7 +249,12 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       timestamp: barrierFields.capturedAt,
     };
 
+    const volunteerName = `${category} Barrier`;
+    const volunteerLocationName = deviceLocation ? `Volunteer Report ${finalLat.toFixed(3)}, ${finalLng.toFixed(3)}` : 'Volunteer Report Location';
     const payload = {
+      name: volunteerName,
+      locationName: volunteerLocationName,
+      condition: 'bad',
       coordinates: { latitude: finalLat, longitude: finalLng },
       latitude: finalLat,
       longitude: finalLng,
@@ -258,7 +263,8 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       rating,
       notes: notes?.trim() || undefined,
       exifMetadata,
-      capturedAt: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? undefined,
+      capturedAt: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? new Date().toISOString(),
+      timestamp: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? new Date().toISOString(),
     };
 
     setSubmitting(true);
