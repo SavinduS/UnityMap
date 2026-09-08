@@ -260,7 +260,7 @@ export const getReportById = (id) => apiRequest(`/reports/${id}`);
 /**
  * Create a barrier report — photo is uploaded to Cloudinary via backend.
  *
- * @param {object} reportData - { coordinates:{latitude,longitude}, category, rating, notes, exifMetadata, capturedAt, reporterId }
+ * @param {object} reportData - { name, reporterName, locationName, coordinates:{latitude,longitude}, category, rating, condition:'good'|'bad', notes/note, exifMetadata, capturedAt/timestamp, reporterId }
  * @param {File|Blob|{uri:string, name?:string, type?:string}} [photoFile] - image file to upload (field `photo`)
  * If photoFile is provided, request is sent as multipart/form-data; photoUrl is ignored (server uploads to Cloudinary).
  * If no photoFile, photoUrl must be inside reportData.
@@ -296,19 +296,28 @@ export const createReport = async (reportData, photoFile) => {
   // Backend parseJsonField handles JSON-stringified values
   const appendField = (key, value) => {
     if (value === undefined || value === null) return;
-    if (typeof value === 'object') {
+    if (typeof value === 'object' && !(value instanceof Date)) {
       formData.append(key, JSON.stringify(value));
+    } else if (value instanceof Date) {
+      formData.append(key, value.toISOString());
     } else {
       formData.append(key, String(value));
     }
   };
 
+  appendField('name', reportData.name);
+  appendField('reporterName', reportData.reporterName);
+  appendField('locationName', reportData.locationName || reportData.location);
   appendField('coordinates', reportData.coordinates);
   appendField('category', reportData.category);
   appendField('rating', reportData.rating);
-  appendField('notes', reportData.notes);
+  appendField('condition', reportData.condition);
+  // notes supports both `notes` and `note` alias
+  appendField('notes', reportData.notes ?? reportData.note);
   appendField('exifMetadata', reportData.exifMetadata);
-  appendField('capturedAt', reportData.capturedAt instanceof Date ? reportData.capturedAt.toISOString() : reportData.capturedAt);
+  // timestamp aliases: capturedAt / timestamp / photoTakenAt — all map to capturedAt server-side
+  const ts = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
+  appendField('capturedAt', ts instanceof Date ? ts.toISOString() : ts);
   appendField('reporterId', reportData.reporterId);
   // If caller also passed photoUrl explicitly without file, include it
   if (reportData.photoUrl) appendField('photoUrl', reportData.photoUrl);
