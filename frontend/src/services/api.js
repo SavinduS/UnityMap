@@ -292,16 +292,39 @@ export const createReport = async (reportData, photoFile) => {
   const formData = new FormData();
 
   // File field must be `photo` to match backend upload.single('photo')
+  // Handles Expo Web (File/Blob + blob: URIs) and Native (RN {uri,name,type}) gracefully
   if (typeof photoFile === 'object' && photoFile.uri) {
-    // React Native / Expo uri object
     const uri = photoFile.uri;
     const name = photoFile.name || `photo_${Date.now()}.jpg`;
     const type = photoFile.type || 'image/jpeg';
-    // React Native FormData needs { uri, name, type } blob-like object
-    formData.append('photo', { uri, name, type });
+    // Expo Web: uri may be blob: URL -> fetch to real Blob for FormData
+    if (Platform.OS === 'web' && typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:'))) {
+      try {
+        const resp = await fetch(uri);
+        const blob = await resp.blob();
+        const file = new File([blob], name, { type: blob.type || type });
+        formData.append('photo', file, name);
+      } catch {
+        // Native-compatible fallback if fetch fails
+        formData.append('photo', { uri, name, type });
+      }
+    } else {
+      // React Native / Expo native uri object
+      formData.append('photo', { uri, name, type });
+    }
   } else if (photoFile instanceof File || photoFile instanceof Blob) {
     const fileName = photoFile.name || `photo_${Date.now()}.jpg`;
     formData.append('photo', photoFile, fileName);
+  } else if (typeof photoFile === 'string' && (photoFile.startsWith('blob:') || photoFile.startsWith('data:'))) {
+    // Direct string URI (web blob / data URI) -> fetch to Blob
+    try {
+      const resp = await fetch(photoFile);
+      const blob = await resp.blob();
+      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
+      formData.append('photo', file, file.name);
+    } catch {
+      formData.append('photo', photoFile);
+    }
   } else {
     // Fallback: treat as blob
     formData.append('photo', photoFile);
