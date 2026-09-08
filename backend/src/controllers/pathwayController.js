@@ -1,4 +1,5 @@
 const { Pathway, Node, ElevatorStatusLog } = require('../models');
+const speechService = require('../services/speechService');
 
 /**
  * @desc    Create a new pathway connecting two nodes
@@ -260,7 +261,7 @@ exports.deletePathway = async (req, res) => {
  */
 exports.getWheelchairRoute = async (req, res) => {
   try {
-    const { originNodeId, destinationNodeId, wheelchairAccessible } = req.query;
+    const { originNodeId, destinationNodeId, wheelchairAccessible, includeSpeech, locale } = req.query;
     const filterWheelchair = wheelchairAccessible === 'true';
 
     /* ── 0. Basic param validation ────────────────────────────────────────── */
@@ -429,16 +430,71 @@ exports.getWheelchairRoute = async (req, res) => {
     for (const n of pathNodes) nodeMap[n._id.toString()] = n;
     const orderedPath = pathNodeIds.map((id) => nodeMap[id]).filter(Boolean);
 
-    /* ── 8. Respond ──────────────────────────────────────────────────────── */
+    /* ── 8. Compute crossings, ETA and spoken summary ───────────────────── */
+    // Find pathways along the computed route to aggregate crossings and max slope
+    let totalCrossings = 0;
+    let maxRouteSlope = 0;
+    const routePathways = [];
+    for (let i = 0; i < pathNodeIds.length - 1; i++) {
+      const a = pathNodeIds[i];
+      const b = pathNodeIds[i + 1];
+      const pw = pathways.find(
+        (p) =>
+          (p.startNode._id.toString() === a && p.endNode._id.toString() === b) ||
+          (p.startNode._id.toString() === b && p.endNode._id.toString() === a)
+      );
+      if (pw) {
+        routePathways.push(pw);
+        totalCrossings += pw.crossings || 0;
+        const absIncline = Math.abs(pw.inclineDegrees || 0);
+        if (absIncline > maxRouteSlope) maxRouteSlope = absIncline;
+      }
+    }
+    // Fallback crossings = segmentCount if no per-pathway data
+    if (totalCrossings === 0 && orderedPath.length > 1) {
+      totalCrossings = Math.max(0, orderedPath.length - 1);
+    }
+
+    // ETA estimation similar to frontend mapMath.calculateWheelchairETA (1.1 m/s with slope penalty)
+    const baseSpeed = 1.1; // m/s
+    const slopePenalty = Math.min(0.5, Math.max(0, (maxRouteSlope - 2) * 0.075));
+    const effectiveSpeed = Math.max(0.4, baseSpeed - slopePenalty);
+    const totalDistance = Math.round(dist[destination] * 10) / 10;
+    const estimatedDurationSec = Math.round(totalDistance / effectiveSpeed);
+
+    let spokenSummary = null;
+    if (includeSpeech === 'true' || includeSpeech === true) {
+      const distanceText = totalDistance >= 1000 ? `${(totalDistance / 1000).toFixed(1)} km` : `${Math.round(totalDistance)} m`;
+      const etaMins = Math.ceil(estimatedDurationSec / 60);
+      const etaText = etaMins >= 60 ? `${Math.floor(etaMins / 60)} hr ${etaMins % 60} mins` : `${etaMins} mins`;
+      try {
+        spokenSummary = await speechService.getRouteSummary(
+          {
+            landmark: destinationNode.name,
+            distance: distanceText,
+            crossings: totalCrossings,
+            eta: etaText,
+            hazardCount: 0,
+          },
+          locale || 'en'
+        );
+      } catch (_) {}
+    }
+
+    /* ── 9. Respond ──────────────────────────────────────────────────────── */
     return res.status(200).json({
       success: true,
       data: {
         path: orderedPath,
-        totalDistanceMeters: Math.round(dist[destination] * 10) / 10,
+        totalDistanceMeters: totalDistance,
         segmentCount: orderedPath.length - 1,
+        crossings: totalCrossings,
+        estimatedDurationSec,
+        maxRouteSlope,
         isWheelchairFiltered: filterWheelchair,
         originNode: { id: originNode._id, name: originNode.name },
         destinationNode: { id: destinationNode._id, name: destinationNode.name },
+        spokenSummary,
       },
     });
   } catch (error) {
