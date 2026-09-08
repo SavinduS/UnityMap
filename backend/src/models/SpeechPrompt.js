@@ -25,6 +25,7 @@ const speechPromptSchema = new mongoose.Schema(
           'barrier_ahead',
           'route_start',
           'launcher_prompt',
+          'route_summary',
         ],
         message: '{VALUE} is not a valid trigger type',
       },
