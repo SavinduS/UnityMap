@@ -60,6 +60,17 @@ const barrierReportSchema = new mongoose.Schema(
       required: [true, 'Photo URL is required'],
       trim: true,
     },
+    // User-facing fields requested: name, locationName, condition (good/bad), timestamp (capturedAt) - rating kept
+    name: {
+      type: String,
+      trim: true,
+      maxlength: [100, 'Name must be at most 100 characters'],
+    },
+    locationName: {
+      type: String,
+      trim: true,
+      maxlength: [300, 'Location name must be at most 300 characters'],
+    },
     category: {
       type: String,
       required: [true, 'Category is required'],
@@ -78,6 +89,17 @@ const barrierReportSchema = new mongoose.Schema(
         validator: Number.isInteger,
         message: '{VALUE} is not an integer value',
       },
+    },
+    // issue(bad) or good — maps to UI toggle, also index for filtering
+    condition: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      enum: {
+        values: ['good', 'bad'],
+        message: '{VALUE} is not a valid condition (use good or bad)',
+      },
+      index: true,
     },
     triageStatus: {
       type: String,
