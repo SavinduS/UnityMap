@@ -202,13 +202,15 @@ export const useSpeechRecognition = () => {
         nativeListenersRef.current.push(resultSub, errorSub, endSub, startSub);
       }
 
+      // Offline support: require on-device recognition when offline
+      const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
       // Start recognition with high-accuracy options
       await ExpoSpeechRecognitionModule.start({
         lang: bcp47,
         interimResults: true,
         maxAlternatives: 3,
         continuous: false,
-        requiresOnDeviceRecognition: false,
+        requiresOnDeviceRecognition: isOffline,
         addsPunctuation: false,
         contextualStrings: [],
         volumeChangeEventOptions: { enabled: false },

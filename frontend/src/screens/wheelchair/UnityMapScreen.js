@@ -29,7 +29,10 @@ import {
   saveWheelchairAccessible,
   loadRecentSearches,
   saveRecentSearches,
+  loadNodesCache,
+  saveNodesCache,
 } from '../../theme/storage';
+import { warmCache } from '../../services/offlineVoiceCache';
 import {
   getNodes,
   getObstacles,
@@ -110,6 +113,11 @@ const UnityMapScreen = () => {
     }
   }, [isAudioLauncherEnabled]);
 
+  // SPT-303: Warm offline cache (key subset prompts/cues earcons via FileSystem + nodes)
+  useEffect(() => {
+    warmCache().catch(() => {});
+  }, []);
+
   // Load persistent Wheelchair Accessible state & real search history
   useEffect(() => {
     loadWheelchairAccessible().then((val) => {
@@ -174,7 +182,7 @@ const UnityMapScreen = () => {
           elevators: elevatorsRes?.data?.length || 0,
         });
 
-        // 1. Process Nodes
+        // 1. Process Nodes — save to offline cache for voice search fallback
         if (nodesRes?.success && Array.isArray(nodesRes.data) && nodesRes.data.length > 0) {
           const liveNodes = nodesRes.data.map((node) => ({
             id: node._id || node.id,
@@ -187,10 +195,22 @@ const UnityMapScreen = () => {
             isAccessible: true,
           }));
           setDbNodes(liveNodes);
+          saveNodesCache(liveNodes).catch(() => {});
 
           if (!location && liveNodes[0]?.lat && liveNodes[0]?.lng) {
             setMapCenter([liveNodes[0].lat, liveNodes[0].lng]);
           }
+        } else {
+          // Offline fallback: load cached nodes for voice search
+          try {
+            const cached = await loadNodesCache();
+            if (cached && Array.isArray(cached) && cached.length > 0) {
+              setDbNodes(cached);
+              if (!location && cached[0]?.lat && cached[0]?.lng) {
+                setMapCenter([cached[0].lat, cached[0].lng]);
+              }
+            }
+          } catch (_) {}
         }
 
         // 2. Process Obstacles
