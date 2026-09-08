@@ -122,9 +122,36 @@ const getRouteSummary = async (params, locale = 'en') => {
   }
 };
 
+/**
+ * Get contextual hazard cue with distance injection.
+ * Returns spokenText with {{distance}} resolved, earconUrl, ttsOverrides, severity.
+ */
+const getContextualHazardCue = async (obstacleType, distanceMeters, locale = 'en') => {
+  const distance = Math.round(distanceMeters);
+  try {
+    let cue = await HazardCue.findOne({ obstacleType, isActive: true }).sort({ severity: -1 }).lean();
+    if (!cue) cue = await HazardCue.findOne({ isActive: true }).sort({ severity: -1 }).lean();
+    if (!cue) return null;
+    const rawText = (cue.cueText && (cue.cueText[locale] || cue.cueText.en)) || cue.cueText?.en || 'Caution ahead';
+    const spokenText = interpolateTemplate(rawText, { distance, hazard: cue.cueText.en });
+    return {
+      spokenText,
+      earconUrl: cue.earconUrl,
+      ttsOverrides: cue.ttsOverrides,
+      severity: cue.severity,
+      cueCode: cue.cueCode,
+      obstacleType: cue.obstacleType,
+      cue,
+    };
+  } catch (_) {
+    return null;
+  }
+};
+
 module.exports = {
   interpolateTemplate,
   generateTurnSnippets,
   getLauncherPrompt,
   getRouteSummary,
+  getContextualHazardCue,
 };
