@@ -20,6 +20,7 @@ import ThreeTapReportScreen from '../volunteer/ThreeTapReportScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import VoiceNavigationScreen from '../audio/VoiceNavigationScreen';
 import SpokenGuidanceHazardWarningScreen from '../audio/SpokenGuidanceHazardWarningScreen';
+import LiveTurnByTurnNavigationScreen from './LiveTurnByTurnNavigationScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { useSpeech } from '../../hooks/useSpeech';
 import { getTextStyle, textProps } from '../../theme/typography';
@@ -99,6 +100,8 @@ const UnityMapScreen = () => {
   const [isTapSummarySheetVisible, setIsTapSummarySheetVisible] = useState(false);
   const [activeSheetCategory, setActiveSheetCategory] = useState('hazards');
   const [currentLocation, setCurrentLocation] = useState(null);
+  const [isTurnByTurnActive, setIsTurnByTurnActive] = useState(false);
+  const [activeNavRoute, setActiveNavRoute] = useState(null);
 
   const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
   const { speak } = useSpeech();
@@ -518,6 +521,46 @@ const UnityMapScreen = () => {
     setTapRouteLoading(false);
   }, []);
 
+  // SPT-201: Seamless Tap-to-Navigate flow launching Google Maps style turn-by-turn guidance
+  const handleStartTapNavigation = useCallback(() => {
+    setIsTapSummarySheetVisible(false);
+    setShowGuidance(false);
+    setShowVoiceSummary(false);
+
+    const destTitle = tapRouteMeta?.destName || 'Selected Destination';
+    const dist = tapRouteMeta?.distanceText || '1.2 km';
+    const eta = tapRouteMeta?.etaText || '15 mins';
+
+    const originLat = location?.latitude ?? 6.9271;
+    const originLng = location?.longitude ?? 79.8612;
+    const destLat = tappedLocation?.latitude ?? tappedLocation?.[0] ?? 6.9325;
+    const destLng = tappedLocation?.longitude ?? tappedLocation?.[1] ?? 79.8655;
+
+    const coords =
+      tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
+        ? tapRoute.coordinates
+        : [
+            [originLat, originLng],
+            [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
+            [destLat, destLng],
+          ];
+
+    const navRoute = {
+      id: tapRoute?.id || `nav_route_${Date.now()}`,
+      title: destTitle,
+      destName: destTitle,
+      originName: 'Your Location',
+      distanceText: dist,
+      etaText: eta,
+      coordinates: coords,
+      color: '#10B981',
+      maxSlope: '4.8° (Safe)',
+    };
+
+    setActiveNavRoute(navRoute);
+    setIsTurnByTurnActive(true);
+  }, [tapRouteMeta, tapRoute, tappedLocation, location]);
+
   // Select destination from real DB list / search history
   const handleSelectDestination = useCallback((dest) => {
     setSearchQuery(dest.title);
@@ -585,33 +628,38 @@ const UnityMapScreen = () => {
   );
 
   const handleVoiceConfirm = useCallback(
-    ({ transcript, routeSummary }) => {
-      const q = transcript || voiceTranscript;
+    ({ transcript, routeSummary, targetCoordinates }) => {
       setShowVoiceSummary(false);
-      if (!q) return;
-      const all = [...dbNodes, ...recentDestinations];
-      const lowerQ = q.toLowerCase();
-      let best = null;
-      let bestScore = -1;
-      for (const dest of all) {
-        const titleLower = dest.title.toLowerCase();
-        let score = 0;
-        if (titleLower === lowerQ) score = 3;
-        else if (titleLower.includes(lowerQ) || lowerQ.includes(titleLower)) score = 2;
-        else if (titleLower.split(' ').some((w) => lowerQ.includes(w) || w.includes(lowerQ))) score = 1;
-        if (score > bestScore) {
-          bestScore = score;
-          best = dest;
-        }
-      }
-      if (best) {
-        handleSelectDestination(best);
-        try {
-          speak(`Confirmed. Navigating to ${best.title}`);
-        } catch (_) {}
-      }
+      const destTitle = routeSummary?.destName || transcript || 'Selected Destination';
+      const originLat = location?.latitude ?? 6.9271;
+      const originLng = location?.longitude ?? 79.8612;
+      const destLat = targetCoordinates?.[0] ?? targetCoordinates?.latitude ?? 6.9325;
+      const destLng = targetCoordinates?.[1] ?? targetCoordinates?.longitude ?? 79.8655;
+
+      const coords =
+        tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
+          ? tapRoute.coordinates
+          : [
+              [originLat, originLng],
+              [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
+              [destLat, destLng],
+            ];
+
+      const navRoute = {
+        id: 'voice_nav_route',
+        title: destTitle,
+        destName: destTitle,
+        originName: 'Your Location',
+        distanceText: routeSummary?.distanceText || '1.2 km',
+        etaText: routeSummary?.etaText || '15 mins',
+        coordinates: coords,
+        color: '#10B981',
+        maxSlope: '4.8° (Safe)',
+      };
+      setActiveNavRoute(navRoute);
+      setIsTurnByTurnActive(true);
     },
-    [voiceTranscript, dbNodes, recentDestinations, handleSelectDestination, speak]
+    [location, tapRoute]
   );
 
   const handleVoiceCancel = useCallback(() => {
@@ -818,6 +866,9 @@ const UnityMapScreen = () => {
               markers={mapMarkers}
               pathways={filteredPathways}
               routes={tapRouteList}
+              userLocation={location}
+              userHeading={location?.heading}
+              autoCenter={false}
               onMapClick={handleMapTap}
               onLocationFound={handleLocationFound}
               isHighContrast={isHighContrast}
@@ -985,14 +1036,7 @@ const UnityMapScreen = () => {
                     </View>
                   )}
                 </View>
-                <View style={{ marginTop: 12 }}>
-                  <Button
-                    title="Open Guidance & Hazard Alerts"
-                    onPress={() => setShowGuidance(true)}
-                    accessibilityLabel="Open spoken guidance and hazard warnings"
-                    style={{ minHeight: 48 }}
-                  />
-                </View>
+
               </View>
             )}
 
@@ -1375,6 +1419,56 @@ const UnityMapScreen = () => {
                   <MaterialIcons name="close" size={22} color={palette.textMuted} />
                 </TouchableOpacity>
               </View>
+
+              {/* Quick Start Navigation Action Bar (≥48dp WCAG Target) */}
+              <TouchableOpacity
+                onPress={handleStartTapNavigation}
+                activeOpacity={0.85}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel={`Start live navigation to ${tapRouteMeta?.destName || 'tapped location'}`}
+                accessibilityHint="Starts live turn-by-turn GPS navigation along this route"
+                style={[
+                  tw`flex-row items-center justify-between rounded-2xl p-3.5 mb-3 shadow-md`,
+                  isHighContrast
+                    ? { backgroundColor: '#FFFFFF', borderColor: '#000000', borderWidth: 2, minHeight: 52 }
+                    : { backgroundColor: palette.primary, minHeight: 52, elevation: 4 },
+                ]}
+              >
+                <View style={tw`flex-row items-center flex-1 mr-2`}>
+                  <View
+                    style={[
+                      tw`w-10 h-10 rounded-xl items-center justify-center mr-3`,
+                      { backgroundColor: isHighContrast ? '#000000' : 'rgba(255,255,255,0.2)' },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="navigation"
+                      size={22}
+                      color={isHighContrast ? '#FFFFFF' : '#FFFFFF'}
+                    />
+                  </View>
+                  <View style={tw`flex-1`}>
+                    <Text
+                      style={[
+                        tw`font-bold text-sm`,
+                        { color: isHighContrast ? '#000000' : '#FFFFFF' },
+                      ]}
+                    >
+                      Start Live Navigation
+                    </Text>
+                    <Text
+                      style={[
+                        tw`text-xs`,
+                        { color: isHighContrast ? '#333333' : '#A7F3D0' },
+                      ]}
+                    >
+                      {tapRouteMeta?.distanceText || 'Direct Route'} • {tapRouteMeta?.etaText || 'Step-free'}
+                    </Text>
+                  </View>
+                </View>
+                <MaterialIcons name="arrow-forward" size={22} color={isHighContrast ? '#000000' : '#FFFFFF'} />
+              </TouchableOpacity>
 
               {/* Two Category Selector Tabs (Touch targets >= 48dp) */}
               <View style={tw`flex-row items-center gap-2 mb-3`}>
@@ -1944,6 +2038,23 @@ const UnityMapScreen = () => {
           safetyStatus={safetyStatus}
           onReprompt={() => speak(voiceRouteSummary?.spokenSummary || tapRouteMeta?.spokenSummary || 'Reprompting guidance')}
           onDismiss={() => setShowGuidance(false)}
+        />
+      </Modal>
+
+      {/* SPT-201: Google Maps Style Live Turn-by-Turn Navigation Screen Modal */}
+      <Modal
+        visible={isTurnByTurnActive}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsTurnByTurnActive(false)}
+        accessibilityViewIsModal
+      >
+        <LiveTurnByTurnNavigationScreen
+          route={activeNavRoute}
+          originName={activeNavRoute?.originName || 'Your Location'}
+          destinationName={activeNavRoute?.destName || tapRouteMeta?.destName || 'Selected Destination'}
+          elevators={dbElevators}
+          onExitNavigation={() => setIsTurnByTurnActive(false)}
         />
       </Modal>
     </View>

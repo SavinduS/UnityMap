@@ -5,6 +5,7 @@ import { getTextStyle, textProps } from '../theme/typography';
 
 // Import Feature Screens
 import WheelchairRoutingScreen from '../screens/wheelchair/WheelchairRoutingScreen';
+import LiveTurnByTurnNavigationScreen from '../screens/wheelchair/LiveTurnByTurnNavigationScreen';
 import OSMCanvasScreen from '../screens/wheelchair/OSMCanvasScreen';
 import VoiceNavigationScreen from '../screens/audio/VoiceNavigationScreen';
 import TTSInterfaceScreen from '../screens/audio/TTSInterfaceScreen';
@@ -15,6 +16,7 @@ import AdminPortalScaffoldScreen from '../screens/admin/AdminPortalScaffoldScree
 const STREAMS = [
   { id: 'admin_portal', title: 'Admin Portal', component: AdminPortalScaffoldScreen },
   { id: 'wheelchair_route', title: 'Barrier Routing', component: WheelchairRoutingScreen },
+  { id: 'wheelchair_turn_by_turn', title: 'Turn-by-Turn Nav', component: LiveTurnByTurnNavigationScreen },
   { id: 'osm_canvas', title: 'OSM Map Canvas', component: OSMCanvasScreen },
   { id: 'voice_nav', title: 'Voice Navigation', component: VoiceNavigationScreen },
   { id: 'tts_interface', title: 'TTS Interfaces', component: TTSInterfaceScreen },
@@ -25,6 +27,7 @@ const STREAMS = [
 const TAB_ICONS = {
   admin_portal: '🏛️',
   wheelchair_route: '♿',
+  wheelchair_turn_by_turn: '🧭',
   osm_canvas: '⌖',
   voice_nav: '🎙',
   tts_interface: '🔊',
