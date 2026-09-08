@@ -20,6 +20,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { fetchReportDetails, dispatchDecision } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
@@ -38,6 +39,7 @@ export const ReportInspectionScreen = ({
   const currentUser = adminAuthService.getCurrentUser();
   const [report, setReport] = useState(initialReport || null);
   const [isLoading, setIsLoading] = useState(!initialReport && !!reportId);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
 
   // Decision Modal States
@@ -59,6 +61,18 @@ export const ReportInspectionScreen = ({
   // Request Info Form State
   const [infoRequestMessage, setInfoRequestMessage] = useState('');
 
+  const refreshReport = React.useCallback(async () => {
+    if (!reportId && !report?._id) return;
+    const id = reportId || report._id;
+    setIsRefreshing(true);
+    try {
+      const data = await fetchReportDetails(id);
+      if (data) setReport(data);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [reportId, report?._id]);
+
   useEffect(() => {
     if (reportId && (!initialReport || initialReport._id !== reportId)) {
       setIsLoading(true);
@@ -69,6 +83,13 @@ export const ReportInspectionScreen = ({
         .finally(() => setIsLoading(false));
     }
   }, [reportId, initialReport]);
+
+  // SPT-301: ensure corroboration pill dynamically reflects after refresh — sync when initialReport updates
+  useEffect(() => {
+    if (initialReport && initialReport._id === report?._id && initialReport.corroborationCount !== report?.corroborationCount) {
+      setReport((prev) => (prev ? { ...prev, corroborationCount: initialReport.corroborationCount, upvotedBy: initialReport.upvotedBy } : prev));
+    }
+  }, [initialReport]);
 
   const triage = report?.triage || {};
   const factors = triage.formulaFactors || {};
@@ -259,6 +280,7 @@ export const ReportInspectionScreen = ({
         style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={refreshReport} tintColor="#38BDF8" />}
       >
         {/* Urgency & Priority Scorecard */}
         <View style={styles.scoreCard}>

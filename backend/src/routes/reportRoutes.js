@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { createReport, getReports, getReportById } = require('../controllers/reportController');
+const { createReport, getReports, getReportById, corroborateReport, uncorroborateReport } = require('../controllers/reportController');
 const upload = require('../middleware/upload');
+const { protect } = require('../middleware/auth');
 
 // POST /api/reports — supports multipart/form-data (photo file -> Cloudinary) or JSON (photoUrl)
 router
@@ -34,6 +35,10 @@ router
 // Allow alternative upload field `image` via separate route handling (optional)
 router.post('/upload-image', upload.single('image'), createReport);
 router.post('/upload-file', upload.single('file'), createReport);
+
+// Community Corroboration (SPT-301) — must be before generic /:id route
+router.post('/:id/corroborate', protect, corroborateReport);
+router.delete('/:id/corroborate', protect, uncorroborateReport);
 
 router.route('/:id').get(getReportById);
 
