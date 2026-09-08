@@ -54,7 +54,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
     }
   }, []);
 
-  const persistDraft = useCallback(async (uri, exif) => {
+  const persistDraft = useCallback(async (uri, exif, file) => {
     try {
       const draft = {
         imageUri: uri,
@@ -72,7 +72,8 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       };
       await saveVolunteerDraft(draft);
       if (typeof onCaptured === 'function') {
-        onCaptured(draft);
+        // Include original file for upstream upload (SPT-109 triage integration)
+        onCaptured({ ...draft, file: file || null, exifRaw: exif || null });
       }
     } catch {}
   }, [onCaptured]);
@@ -131,7 +132,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       if (!isMountedRef.current) return;
       // Validate GPS/timestamp are already normalized to null if invalid by helper
       setExifResult(exif);
-      await persistDraft(previewUrl, exif);
+      await persistDraft(previewUrl, exif, file);
     } catch (exifErr) {
       if (!isMountedRef.current) return;
       // Unsupported/invalid image fallback — do not claim GPS/timestamp
@@ -144,7 +145,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
         hasTimestamp: false,
       };
       setExifResult(fallback);
-      await persistDraft(previewUrl, fallback);
+      await persistDraft(previewUrl, fallback, file);
       // If exif error was due to corrupt image, surface generic message only if no preview
       if (!exifErr || /unsupported|invalid|exif/i.test(exifErr.message || '')) {
         // Keep preview but ensure badges show missing data — no additional error needed
@@ -211,7 +212,8 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           const exif = await extractExifData({ uri: asset.uri });
           if (!isMountedRef.current) return;
           setExifResult(exif);
-          await persistDraft(asset.uri, exif);
+          const assetFile = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' };
+          await persistDraft(asset.uri, exif, assetFile);
         } catch (exifErr) {
           if (!isMountedRef.current) return;
           const fallback = {
@@ -223,7 +225,8 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
             hasTimestamp: false,
           };
           setExifResult(fallback);
-          await persistDraft(asset.uri, fallback);
+          const assetFileFallback = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' };
+          await persistDraft(asset.uri, fallback, assetFileFallback);
         } finally {
           if (isMountedRef.current) {
             setExifLoading(false);

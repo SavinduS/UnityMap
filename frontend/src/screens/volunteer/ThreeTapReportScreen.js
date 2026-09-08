@@ -7,7 +7,7 @@ import EXIFCaptureScreen from './EXIFCaptureScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { loadVolunteerDraft, saveVolunteerDraft, clearVolunteerDraft } from '../../theme/storage';
-import { createBarrierReport } from '../../services/api';
+import { createBarrierReport, createReport } from '../../services/api';
 import { useLocation } from '../../hooks/useLocation';
 import { toBarrierReportFields } from '../../utils/exifHelper';
 
@@ -29,6 +29,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
   const [category, setCategory] = useState(null);
   const [imageUri, setImageUri] = useState(null);
   const [exifResult, setExifResult] = useState(null);
+  const [photoFile, setPhotoFile] = useState(null);
   const [rating, setRating] = useState(null);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -64,6 +65,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           const hasGps = typeof exif.latitude === 'number' && typeof exif.longitude === 'number';
           setExifResult({ ...exif, hasGps });
         }
+        if (draft.file) setPhotoFile(draft.file);
         if (typeof draft.rating === 'number' && draft.rating >= 1 && draft.rating <= 5) setRating(draft.rating);
         if (typeof draft.notes === 'string') setNotes(draft.notes);
       } catch {}
@@ -104,6 +106,10 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
   const handleCaptured = useCallback((draft) => {
     if (!draft) return;
     if (draft.imageUri) setImageUri(draft.imageUri);
+    if (draft.file) setPhotoFile(draft.file);
+    else if (draft.imageUri && typeof draft.imageUri === 'string' && draft.imageUri.startsWith('blob:')) {
+      // No file provided but we have blob url – will fetch as blob on submit
+    }
     if (draft.exifResult) {
       let exif = draft.exifResult;
       if (exif.capturedAt && typeof exif.capturedAt === 'string') {
@@ -245,7 +251,9 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
 
     const payload = {
       coordinates: { latitude: finalLat, longitude: finalLng },
-      photoUrl: imageUri,
+      latitude: finalLat,
+      longitude: finalLng,
+      photoUrl: photoFile ? undefined : imageUri,
       category,
       rating,
       notes: notes?.trim() || undefined,
@@ -255,7 +263,22 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
 
     setSubmitting(true);
     try {
-      const res = await createBarrierReport(payload);
+      let res;
+      // Prefer multipart file upload when we have a File (fixes blob: local URL issue)
+      if (photoFile) {
+        res = await createReport(payload, photoFile);
+      } else if (imageUri && typeof imageUri === 'string' && imageUri.startsWith('blob:')) {
+        try {
+          const blobResp = await fetch(imageUri);
+          const blob = await blobResp.blob();
+          const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
+          res = await createReport(payload, file);
+        } catch {
+          res = await createBarrierReport(payload);
+        }
+      } else {
+        res = await createBarrierReport(payload);
+      }
       const ok = res && (res.success || res.data);
       if (!ok && res && res.success === false) throw new Error(res.message || 'Submission failed');
 
@@ -272,6 +295,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       setCategory(null);
       setImageUri(null);
       setExifResult(null);
+      setPhotoFile(null);
       setRating(null);
       setNotes('');
       setStep(1);
@@ -294,12 +318,13 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     } finally {
       setSubmitting(false);
     }
-  }, [category, imageUri, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, announce, onSuccess, onNavigateToMap, navigation]);
+  }, [category, imageUri, photoFile, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, announce, onSuccess, onNavigateToMap, navigation]);
 
   const handleReset = useCallback(async () => {
     setCategory(null);
     setImageUri(null);
     setExifResult(null);
+    setPhotoFile(null);
     setRating(null);
     setNotes('');
     setStep(1);

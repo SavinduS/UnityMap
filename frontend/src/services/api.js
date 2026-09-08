@@ -55,7 +55,7 @@ export const apiRequest = async (endpoint, options = {}) => {
   const tryFetch = async (baseUrl) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     console.log(`[API Request] Fetching: ${url}`);
 
@@ -260,7 +260,7 @@ export const getReportById = (id) => apiRequest(`/reports/${id}`);
 /**
  * Create a barrier report — photo is uploaded to Cloudinary via backend.
  *
- * @param {object} reportData - { name, reporterName, locationName, coordinates:{latitude,longitude}, category, rating, condition:'good'|'bad', notes/note, exifMetadata, capturedAt/timestamp, reporterId }
+ * @param {object} reportData - { name, locationName, coordinates:{latitude,longitude}, category, rating(1-5 kept), condition:'good'|'bad', notes/note, exifMetadata, capturedAt/timestamp, reporterId }
  * @param {File|Blob|{uri:string, name?:string, type?:string}} [photoFile] - image file to upload (field `photo`)
  * If photoFile is provided, request is sent as multipart/form-data; photoUrl is ignored (server uploads to Cloudinary).
  * If no photoFile, photoUrl must be inside reportData.
@@ -306,7 +306,6 @@ export const createReport = async (reportData, photoFile) => {
   };
 
   appendField('name', reportData.name);
-  appendField('reporterName', reportData.reporterName);
   appendField('locationName', reportData.locationName || reportData.location);
   appendField('coordinates', reportData.coordinates);
   appendField('category', reportData.category);
