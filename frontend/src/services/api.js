@@ -419,6 +419,12 @@ export const createBarrierReport = (reportData) =>
     body: JSON.stringify(reportData),
   });
 
+export const corroborateReport = (reportId) =>
+  apiRequest(`/reports/${reportId}/corroborate`, { method: 'POST' });
+
+export const uncorroborateReport = (reportId) =>
+  apiRequest(`/reports/${reportId}/corroborate`, { method: 'DELETE' });
+
 export default {
   API_BASE_URL,
   getBaseUrl,
@@ -445,4 +451,6 @@ export default {
   getReportById,
   createReport,
   createBarrierReport,
+  corroborateReport,
+  uncorroborateReport,
 };
