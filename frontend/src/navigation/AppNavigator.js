@@ -37,6 +37,13 @@ export const AppNavigator = () => {
   const { palette, borderWidth, isHighContrast } = useTheme();
 
   const ActiveComponent = STREAMS.find(s => s.id === activeStream)?.component || WheelchairRoutingScreen;
+  const activeProps =
+    activeStream === 'volunteer_report'
+      ? {
+          onNavigateToMap: () => setActiveStream('osm_canvas'),
+          onSuccess: () => setTimeout(() => setActiveStream('osm_canvas'), 800),
+        }
+      : {};
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
@@ -47,7 +54,7 @@ export const AppNavigator = () => {
       </View>
 
       <View style={[styles.screenContainer, { backgroundColor: palette.background }]}>
-        <ActiveComponent />
+        <ActiveComponent {...activeProps} />
       </View>
 
       <View

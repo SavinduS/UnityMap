@@ -16,7 +16,7 @@ import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
 import Button from '../../components/Button';
 import SettingsScreen from '../settings/SettingsScreen';
-import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
+import ThreeTapReportScreen from '../volunteer/ThreeTapReportScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
 import VoiceNavigationScreen from '../audio/VoiceNavigationScreen';
 import SpokenGuidanceHazardWarningScreen from '../audio/SpokenGuidanceHazardWarningScreen';
@@ -735,7 +735,7 @@ const UnityMapScreen = () => {
         </View>
       ) : activeTab === 'Report' ? (
         <View style={tw`flex-1`}>
-          <EXIFCaptureScreen onBack={() => setActiveTab('Map')} />
+          <ThreeTapReportScreen onNavigateToMap={() => setActiveTab('Map')} onSuccess={() => setActiveTab('Map')} />
         </View>
       ) : activeTab === 'Profile' ? (
         <ScrollView style={tw`flex-1 p-5`}>
