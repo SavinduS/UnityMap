@@ -27,6 +27,9 @@ const BaseMap = ({
   pathways = [],
   activeRouteId = null,
   autoFitBounds = false,
+  userLocation = null,
+  userHeading = 0,
+  autoCenter = false,
   onMapClick,
   onRouteClick,
   onMarkerClick,
@@ -40,6 +43,9 @@ const BaseMap = ({
   const webViewRef = useRef(null);
   // Track last injected route id so we only re-inject when it truly changes.
   const lastInjectedRouteRef = useRef(null);
+  // Store the latest route script so we can replay it after WebView loads.
+  const pendingRouteScriptRef = useRef(null);
+  const isWebViewReadyRef = useRef(false);
 
   // Normalize center: [lat, lng] or { latitude, longitude }
   const normalizedCenter = useMemo(() => {
@@ -162,14 +168,36 @@ const BaseMap = ({
       ${isHighContrast ? 'border: 1px solid #FFFFFF;' : ''}
     }
 
-    /* User GPS Pulsing Dot */
+    /* User GPS Pulsing Dot with Direction Cone */
+    .user-marker-container {
+      position: relative;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .user-heading-cone {
+      position: absolute;
+      width: 0;
+      height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 16px solid ${isHighContrast ? '#000000' : '#2563EB'};
+      top: -4px;
+      left: 11px;
+      transform-origin: center 18px;
+      opacity: 0.9;
+      display: none;
+      transition: transform 0.2s linear;
+    }
     .user-dot {
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       background: #FFFFFF;
       border: 4px solid ${isHighContrast ? '#000000' : '#2563EB'};
       border-radius: 50%;
-      box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 6px rgba(37, 99, 235, 0.3), 0 3px 8px rgba(0,0,0,0.3)'};
+      box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 5px rgba(37, 99, 235, 0.3), 0 3px 8px rgba(0,0,0,0.3)'};
       animation: ${isReduceMotionEnabled ? 'none' : isHighContrast ? 'none' : 'pulse 2.2s infinite'};
     }
     @keyframes pulse {
@@ -230,20 +258,32 @@ const BaseMap = ({
 
     // ── User Location Marker ───────────────────────────────────────────
     const userIcon = L.divIcon({
-      html: '<div class="user-dot"></div>',
+      html: '<div class="user-marker-container"><div class="user-heading-cone"></div><div class="user-dot"></div></div>',
       className: '',
-      iconSize: [24, 24],
-      iconAnchor: [12, 12]
+      iconSize: [36, 36],
+      iconAnchor: [18, 18]
     });
     const userMarker = L.marker(initialCenter, { icon: userIcon, zIndexOffset: 1000 }).addTo(map);
     window.userMarker = userMarker;
 
-    window.updateUserLocation = function(lat, lng, shouldPan) {
+    window.updateUserLocation = function(lat, lng, shouldPan, heading) {
       if (window.userMarker) {
         window.userMarker.setLatLng([lat, lng]);
+        const el = window.userMarker.getElement();
+        if (el) {
+          const cone = el.querySelector('.user-heading-cone');
+          if (cone) {
+            if (typeof heading === 'number' && !isNaN(heading) && heading >= 0) {
+              cone.style.display = 'block';
+              cone.style.transform = 'rotate(' + heading + 'deg)';
+            } else {
+              cone.style.display = 'none';
+            }
+          }
+        }
       }
       if (shouldPan && window.mapInstance) {
-        window.mapInstance.setView([lat, lng], ${zoom}, { animate: true });
+        window.mapInstance.panTo([lat, lng], { animate: true, duration: 0.6 });
       }
     };
 
@@ -498,9 +538,19 @@ const BaseMap = ({
   ]);
 
   // ── Inject user location pan without reloading ─────────────────────────────
+  // ── Inject user location pan & heading without reloading ─────────────────────────────
   useEffect(() => {
-    if (webViewRef.current && normalizedCenter) {
-      const script = `if (typeof window.updateUserLocation === 'function') { window.updateUserLocation(${normalizedCenter[0]}, ${normalizedCenter[1]}, true); } true;`;
+    const lat = userLocation?.latitude ?? normalizedCenter?.[0];
+    const lng = userLocation?.longitude ?? normalizedCenter?.[1];
+    const heading =
+      typeof userLocation?.heading === 'number' && userLocation.heading >= 0
+        ? userLocation.heading
+        : typeof userHeading === 'number' && userHeading >= 0
+        ? userHeading
+        : -1;
+
+    if (webViewRef.current && typeof lat === 'number' && typeof lng === 'number') {
+      const script = `if (typeof window.updateUserLocation === 'function') { window.updateUserLocation(${lat}, ${lng}, ${autoCenter ? 'true' : 'false'}, ${heading}); } true;`;
       if (Platform.OS !== 'web') {
         webViewRef.current.injectJavaScript(script);
       } else {
@@ -508,7 +558,7 @@ const BaseMap = ({
         if (win) {
           try {
             if (typeof win.updateUserLocation === 'function') {
-              win.updateUserLocation(normalizedCenter[0], normalizedCenter[1], true);
+              win.updateUserLocation(lat, lng, autoCenter, heading);
             } else {
               win.eval?.(script);
             }
@@ -516,9 +566,34 @@ const BaseMap = ({
         }
       }
     }
-  }, [normalizedCenter]);
+  }, [userLocation, normalizedCenter, autoCenter, userHeading]);
 
   // ── Inject route changes without reloading WebView ─────────────────────────
+  const injectRouteScript = useCallback((script, activeRoute) => {
+    if (Platform.OS !== 'web') {
+      if (webViewRef.current && isWebViewReadyRef.current) {
+        webViewRef.current.injectJavaScript(script);
+      }
+    } else {
+      const win = webViewRef.current?.contentWindow;
+      if (win) {
+        try {
+          if (activeRoute && Array.isArray(activeRoute.coordinates) && activeRoute.coordinates.length >= 2) {
+            if (typeof win.updateRoute === 'function') {
+              win.updateRoute(activeRoute.coordinates, activeRoute.color || '#3B82F6', true);
+            } else {
+              win.eval?.(script);
+            }
+          } else {
+            if (typeof win.clearRoute === 'function') win.clearRoute();
+            if (typeof win.clearDestinationMarker === 'function') win.clearDestinationMarker();
+            win.eval?.(script);
+          }
+        } catch (_) {}
+      }
+    }
+  }, []);
+
   useEffect(() => {
     // Find the first selected route (tap route)
     const activeRoute = routes.find((r) => r.isSelected) || routes[0] || null;
@@ -540,7 +615,6 @@ const BaseMap = ({
         true;
       `;
     } else {
-      // No active route — clear whatever is drawn
       script = `
         if (typeof window.clearRoute === 'function') { window.clearRoute(); }
         if (typeof window.clearDestinationMarker === 'function') { window.clearDestinationMarker(); }
@@ -548,29 +622,10 @@ const BaseMap = ({
       `;
     }
 
-    if (Platform.OS !== 'web') {
-      if (webViewRef.current) {
-        webViewRef.current.injectJavaScript(script);
-      }
-    } else {
-      const win = webViewRef.current?.contentWindow;
-      if (win) {
-        try {
-          if (activeRoute && Array.isArray(activeRoute.coordinates) && activeRoute.coordinates.length >= 2) {
-            if (typeof win.updateRoute === 'function') {
-              win.updateRoute(activeRoute.coordinates, activeRoute.color || '#3B82F6', true);
-            } else {
-              win.eval?.(script);
-            }
-          } else {
-            if (typeof win.clearRoute === 'function') win.clearRoute();
-            if (typeof win.clearDestinationMarker === 'function') win.clearDestinationMarker();
-            win.eval?.(script);
-          }
-        } catch (_) {}
-      }
-    }
-  }, [routes]);
+    // Always store as pending so onLoadEnd can replay it if WebView wasn't ready yet
+    pendingRouteScriptRef.current = { script, activeRoute };
+    injectRouteScript(script, activeRoute);
+  }, [routes, injectRouteScript]);
 
   // ── Inject destination marker when routes are present ─────────────────────
   useEffect(() => {
@@ -677,7 +732,17 @@ const BaseMap = ({
         style={[tw`flex-1`, { backgroundColor: themeBg }]}
         onMessage={handleMessage}
         onLoadEnd={() => {
+          isWebViewReadyRef.current = true;
           if (typeof onReady === 'function') onReady();
+          // Re-inject any route that was queued before the WebView was ready
+          if (pendingRouteScriptRef.current) {
+            const { script, activeRoute } = pendingRouteScriptRef.current;
+            setTimeout(() => {
+              if (webViewRef.current) {
+                webViewRef.current.injectJavaScript(script);
+              }
+            }, 400);
+          }
         }}
         mixedContentMode="always"
         geolocationEnabled

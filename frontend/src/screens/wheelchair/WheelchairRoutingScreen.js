@@ -15,6 +15,7 @@ import * as Location from 'expo-location';
 import tw from 'twrnc';
 import BaseMap from '../../components/BaseMap';
 import RouteSelectionCard from '../../components/RouteSelectionCard';
+import LiveTurnByTurnNavigationScreen from './LiveTurnByTurnNavigationScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { radius, spacing } from '../../theme/tokens';
 import { accessibilityService } from '../../services/accessibilityService';
@@ -179,17 +180,26 @@ export const WheelchairRoutingScreen = () => {
   // Handle primary "Select Route" button press
   const handleStartNavigation = useCallback(
     (route) => {
+      if (route?.id) {
+        setSelectedRouteId(route.id);
+      }
       setIsNavigating(true);
-      const title = route ? route.title : activeRoute?.title || 'Selected Route';
-      const eta = route ? route.etaText : activeRoute?.etaText || '18 mins';
-      Alert.alert(
-        '♿ Navigation Started',
-        `Starting guidance on "${title}".\nEstimated arrival time: ${eta}.\nReal-time incline and elevator status monitoring active.`,
-        [{ text: 'OK', onPress: () => setIsNavigating(false) }]
-      );
     },
-    [activeRoute]
+    []
   );
+
+  // If user launched Live Navigation, render Page 3
+  if (isNavigating && activeRoute) {
+    return (
+      <LiveTurnByTurnNavigationScreen
+        route={activeRoute}
+        originName={originName || 'Main Entrance North'}
+        destinationName={destinationName || 'Science Block Level 2'}
+        elevators={elevators}
+        onExitNavigation={() => setIsNavigating(false)}
+      />
+    );
+  }
 
   return (
     <SafeAreaView
