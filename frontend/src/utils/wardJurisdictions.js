@@ -11,7 +11,7 @@ export const MUNICIPAL_ROLES = {
     id: 'CHIEF_ENGINEER',
     title: 'Chief Municipal Engineer',
     permissions: ['VIEW_TRIAGE', 'APPROVE_BUDGET', 'REJECT_REPORT', 'ALLOCATE_FUNDS', 'EDIT_ASSETS'],
-    badgeColor: '#2563EB',
+    badgeColor: '#0B3D2E',
   },
   WARD_INSPECTOR: {
     id: 'WARD_INSPECTOR',

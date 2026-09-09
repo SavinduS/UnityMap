@@ -231,7 +231,7 @@ export const AdminPortalScaffoldScreen = () => {
                 activeOpacity={0.7}
               >
                 <Text style={[styles.kpiNumber, { color: '#047857' }]}>{activeWard.activeBarriers}</Text>
-                <Text style={styles.kpiCaption}>Pending Triage →</Text>
+                <Text style={styles.kpiCaption} numberOfLines={1}>Pending Triage →</Text>
               </TouchableOpacity>
 
               <View style={styles.kpiDivider} />
@@ -242,16 +242,16 @@ export const AdminPortalScaffoldScreen = () => {
                 activeOpacity={0.7}
               >
                 <Text style={[styles.kpiNumber, { color: '#0B3D2E' }]}>{activeWard.complianceScore}%</Text>
-                <Text style={styles.kpiCaption}>Compliance →</Text>
+                <Text style={styles.kpiCaption} numberOfLines={1}>Compliance →</Text>
               </TouchableOpacity>
 
               <View style={styles.kpiDivider} />
 
               <View style={styles.kpiBox}>
-                <Text style={[styles.kpiNumber, { color: '#1D4ED8' }]}>
+                <Text style={[styles.kpiNumber, { color: '#0B3D2E' }]}>
                   {(activeWard.allocatedBudgetLKR / 1000000).toFixed(1)}M
                 </Text>
-                <Text style={styles.kpiCaption}>Budget (LKR)</Text>
+                <Text style={styles.kpiCaption} numberOfLines={1}>Budget (LKR)</Text>
               </View>
             </View>
           </View>
@@ -293,8 +293,8 @@ export const AdminPortalScaffoldScreen = () => {
             }}
             activeOpacity={0.7}
           >
-            <View style={[styles.moduleIconBadge, { backgroundColor: '#EFF6FF' }]}>
-              <Feather name="check-square" size={22} color="#1D4ED8" />
+            <View style={[styles.moduleIconBadge, { backgroundColor: '#ECFDF5' }]}>
+              <Feather name="check-square" size={22} color="#047857" />
             </View>
             <View style={styles.moduleTextContent}>
               <Text style={styles.moduleHeading}>Photo Inspection & Decision Workspace</Text>
@@ -302,7 +302,7 @@ export const AdminPortalScaffoldScreen = () => {
                 Cross-check evidence against municipal records. Approve repair budgets or reject.
               </Text>
             </View>
-            <Feather name="chevron-right" size={20} color="#1D4ED8" />
+            <Feather name="chevron-right" size={20} color="#047857" />
           </TouchableOpacity>
 
           {/* Module 3: Ward Compliance Analytics */}
@@ -578,6 +578,7 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontWeight: '600',
     marginTop: 2,
+    textAlign: 'center',
   },
   kpiDivider: {
     width: 1,

@@ -79,7 +79,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
 
   const getScoreColor = (score) => {
     if (score >= 85) return { text: '#16A34A', bg: '#DCFCE7', border: '#86EFAC', label: 'EXCELLENT' };
-    if (score >= 75) return { text: '#2563EB', bg: '#DBEAFE', border: '#93C5FD', label: 'GOOD' };
+    if (score >= 75) return { text: '#047857', bg: '#ECFDF5', border: '#A7F3D0', label: 'GOOD' };
     if (score >= 65) return { text: '#D97706', bg: '#FEF3C7', border: '#FCD34D', label: 'NEEDS ATTENTION' };
     return { text: '#DC2626', bg: '#FEE2E2', border: '#FCA5A5', label: 'CRITICAL DEFICIT' };
   };
@@ -89,7 +89,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
   const getWorkOrderStatusBadge = (status) => {
     switch (status) {
       case 'IN_PROGRESS':
-        return { label: 'IN PROGRESS', bg: '#DBEAFE', text: '#1E40AF', border: '#93C5FD' };
+        return { label: 'IN PROGRESS', bg: '#ECFDF5', text: '#047857', border: '#A7F3D0' };
       case 'PENDING_INSPECTION':
         return { label: 'INSPECTION DUE', bg: '#FEF3C7', text: '#92400E', border: '#FCD34D' };
       default:
@@ -99,33 +99,37 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+      <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
 
       {/* Top Header */}
       <View style={styles.topBar}>
-        {onBack && (
-          <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
-            <Text style={styles.backBtnText}>← Dashboard</Text>
+        <View style={styles.topBarNavRow}>
+          {onBack ? (
+            <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
+              <Text style={styles.backBtnText}>← Dashboard</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
+          <TouchableOpacity
+            style={styles.exportTopBtn}
+            onPress={handleExportAudit}
+            disabled={isExporting}
+            activeOpacity={0.7}
+          >
+            {isExporting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.exportTopBtnText}>📑 Audit Report</Text>
+            )}
           </TouchableOpacity>
-        )}
-        <View style={styles.topBarCenter}>
+        </View>
+        <View style={styles.topBarTitleRow}>
           <Text style={styles.topBarTitle}>Ward Compliance & Budget</Text>
           <Text style={styles.topBarSub}>
             {activeWard.name} • Ward {activeWard.wardNumber}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.exportTopBtn}
-          onPress={handleExportAudit}
-          disabled={isExporting}
-          activeOpacity={0.7}
-        >
-          {isExporting ? (
-            <ActivityIndicator size="small" color="#38BDF8" />
-          ) : (
-            <Text style={styles.exportTopBtnText}>📑 Audit</Text>
-          )}
-        </TouchableOpacity>
       </View>
 
       {/* Ward Switcher Chips */}
@@ -152,12 +156,12 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#38BDF8" />}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#0B3D2E" />}
         showsVerticalScrollIndicator={false}
       >
         {isLoading || !complianceData ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#2563EB" />
+            <ActivityIndicator size="large" color="#0B3D2E" />
             <Text style={styles.loadingText}>Compiling Ward Accessibility Metrics...</Text>
           </View>
         ) : (
@@ -233,7 +237,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                   <Text style={styles.budgetLbl}>Allocated (LKR)</Text>
                 </View>
                 <View style={styles.budgetItem}>
-                  <Text style={[styles.budgetNum, { color: '#2563EB' }]}>
+                  <Text style={[styles.budgetNum, { color: '#0B3D2E' }]}>
                     {(complianceData.spentBudgetLKR / 1000000).toFixed(2)}M
                   </Text>
                   <Text style={styles.budgetLbl}>Committed (LKR)</Text>
@@ -296,7 +300,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                               cat.compliancePercent >= 80
                                 ? '#10B981'
                                 : cat.compliancePercent >= 70
-                                ? '#3B82F6'
+                                ? '#059669'
                                 : '#F59E0B',
                           },
                         ]}
@@ -461,7 +465,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
 
                 <View style={styles.auditDetailRow}>
                   <Text style={styles.auditDetailKey}>Audit Classification</Text>
-                  <Text style={[styles.auditDetailVal, { color: '#2563EB', fontWeight: '800' }]}>
+                  <Text style={[styles.auditDetailVal, { color: '#0B3D2E', fontWeight: '800' }]}>
                     {auditModalData.auditStatus}
                   </Text>
                 </View>
@@ -491,7 +495,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
   },
   container: {
     flex: 1,
@@ -501,61 +505,64 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   topBar: {
+    backgroundColor: '#0B3D2E',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  topBarNavRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    marginBottom: 8,
+  },
+  topBarTitleRow: {
+    alignItems: 'flex-start',
   },
   backBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
     borderRadius: 8,
   },
   backBtnText: {
-    color: '#38BDF8',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
   },
-  topBarCenter: {
-    alignItems: 'center',
-    flex: 1,
-  },
   topBarTitle: {
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: 0.3,
   },
   topBarSub: {
-    fontSize: 11,
-    color: '#94A3B8',
+    fontSize: 12,
+    color: '#A7F3D0',
     marginTop: 2,
+    fontWeight: '500',
   },
   exportTopBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#38BDF8',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   exportTopBtnText: {
-    color: '#38BDF8',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
   },
   wardPickerBar: {
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
     paddingBottom: 12,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
   wardChipsScroll: {
     flexDirection: 'row',
@@ -564,22 +571,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   wardChipSelected: {
-    backgroundColor: '#38BDF8',
-    borderColor: '#38BDF8',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFFFFF',
   },
   wardChipText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: 'rgba(255, 255, 255, 0.85)',
   },
   wardChipTextSelected: {
-    color: '#0F172A',
+    color: '#0B3D2E',
     fontWeight: '800',
   },
   loadingBox: {
@@ -617,7 +624,7 @@ const styles = StyleSheet.create({
     borderRadius: 48,
     backgroundColor: '#F8FAFC',
     borderWidth: 5,
-    borderColor: '#38BDF8',
+    borderColor: '#10B981',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 16,
@@ -661,7 +668,7 @@ const styles = StyleSheet.create({
   },
   scoreTargetSla: {
     fontSize: 10,
-    color: '#2563EB',
+    color: '#047857',
     fontWeight: '600',
     marginTop: 4,
   },
@@ -728,8 +735,8 @@ const styles = StyleSheet.create({
   workOrderCountBadge: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#2563EB',
-    backgroundColor: '#EFF6FF',
+    color: '#047857',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
@@ -761,7 +768,7 @@ const styles = StyleSheet.create({
   },
   budgetProgressBarFill: {
     height: '100%',
-    backgroundColor: '#2563EB',
+    backgroundColor: '#0B3D2E',
     borderRadius: 5,
   },
   budgetBarFooter: {
@@ -832,7 +839,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'monospace',
     fontWeight: '700',
-    color: '#2563EB',
+    color: '#0B3D2E',
   },
   workOrderTitle: {
     fontSize: 13,
@@ -913,7 +920,7 @@ const styles = StyleSheet.create({
   trendResolvedVal: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#2563EB',
+    color: '#0B3D2E',
     marginBottom: 4,
   },
   trendBarTrack: {
@@ -926,7 +933,7 @@ const styles = StyleSheet.create({
   },
   trendBarFill: {
     width: '100%',
-    backgroundColor: '#38BDF8',
+    backgroundColor: '#10B981',
     borderRadius: 6,
   },
   trendMonthLbl: {
@@ -939,20 +946,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
     marginHorizontal: 16,
     marginTop: 14,
     paddingVertical: 14,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#38BDF8',
+    borderColor: '#0B3D2E',
   },
   exportFullBtnIcon: {
     fontSize: 16,
     marginRight: 8,
   },
   exportFullBtnText: {
-    color: '#38BDF8',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1004,7 +1011,7 @@ const styles = StyleSheet.create({
   auditRefVal: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#2563EB',
+    color: '#0B3D2E',
     fontFamily: 'monospace',
     marginTop: 2,
   },
@@ -1031,7 +1038,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   downloadReportBtn: {
-    backgroundColor: '#059669',
+    backgroundColor: '#0B3D2E',
     borderRadius: 12,
     paddingVertical: 13,
     alignItems: 'center',

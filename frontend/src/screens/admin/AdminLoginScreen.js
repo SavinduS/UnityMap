@@ -84,7 +84,7 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+      <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardAvoid}
@@ -173,12 +173,18 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                 {Object.keys(MUNICIPAL_ROLES).map((roleKey) => {
                   const role = MUNICIPAL_ROLES[roleKey];
                   const isSelected = selectedRole === roleKey;
+                  const shortRoleLabel =
+                    roleKey === 'CHIEF_ENGINEER'
+                      ? 'Engineer'
+                      : roleKey === 'WARD_INSPECTOR'
+                      ? 'Inspector'
+                      : 'Budget';
                   return (
                     <TouchableOpacity
                       key={roleKey}
                       style={[
                         styles.roleChip,
-                        isSelected && { borderColor: role.badgeColor, backgroundColor: '#EFF6FF' },
+                        isSelected && { borderColor: role.badgeColor, backgroundColor: '#ECFDF5' },
                       ]}
                       onPress={() => setSelectedRole(roleKey)}
                       activeOpacity={0.7}
@@ -196,7 +202,7 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                         ]}
                         numberOfLines={1}
                       >
-                        {role.title.split(' ')[0]} {role.title.split(' ')[1]}
+                        {shortRoleLabel}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -255,8 +261,8 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                   handleQuickFill('CHIEF_ENGINEER', 'CMC-W01', 'k.perera@cmc.gov.lk')
                 }
               >
-                <Text style={styles.presetTitle}>Chief Engineer</Text>
-                <Text style={styles.presetDesc}>Fort & Pettah (W1)</Text>
+                <Text style={styles.presetTitle} numberOfLines={1}>Chief Engineer</Text>
+                <Text style={styles.presetDesc} numberOfLines={1}>Fort (W1)</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -265,8 +271,8 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                   handleQuickFill('WARD_INSPECTOR', 'CMC-W06', 'r.wickramasinghe@cmc.gov.lk')
                 }
               >
-                <Text style={styles.presetTitle}>Ward Inspector</Text>
-                <Text style={styles.presetDesc}>Borella Health (W6)</Text>
+                <Text style={styles.presetTitle} numberOfLines={1}>Inspector</Text>
+                <Text style={styles.presetDesc} numberOfLines={1}>Borella (W6)</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -275,8 +281,8 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                   handleQuickFill('BUDGET_OFFICER', 'CMC-W03', 't.jayawardena@cmc.gov.lk')
                 }
               >
-                <Text style={styles.presetTitle}>Budget Officer</Text>
-                <Text style={styles.presetDesc}>Kollupitiya (W3)</Text>
+                <Text style={styles.presetTitle} numberOfLines={1}>Budget Officer</Text>
+                <Text style={styles.presetDesc} numberOfLines={1}>Kollupitiya (W3)</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -353,42 +359,46 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
   },
   keyboardAvoid: {
     flex: 1,
   },
   container: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#F8FAFC',
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
     paddingBottom: 40,
   },
   header: {
+    backgroundColor: '#0B3D2E',
     alignItems: 'center',
-    marginBottom: 20,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 24 : 12,
+    paddingBottom: 24,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    marginBottom: 16,
   },
   emblemBadge: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
     borderWidth: 2,
-    borderColor: '#38BDF8',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   emblemIcon: {
     fontSize: 30,
   },
   govTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
-    color: '#38BDF8',
+    color: '#A7F3D0',
     letterSpacing: 1.5,
   },
   portalTitle: {
@@ -399,7 +409,7 @@ const styles = StyleSheet.create({
   },
   portalSubtitle: {
     fontSize: 12,
-    color: '#94A3B8',
+    color: '#A7F3D0',
     textAlign: 'center',
     marginTop: 4,
     paddingHorizontal: 12,
@@ -407,11 +417,12 @@ const styles = StyleSheet.create({
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#7F1D1D',
+    backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#EF4444',
     padding: 12,
     borderRadius: 10,
+    marginHorizontal: 16,
     marginBottom: 16,
   },
   errorIcon: {
@@ -419,7 +430,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   errorText: {
-    color: '#FEE2E2',
+    color: '#DC2626',
     fontSize: 12,
     fontWeight: '600',
     flex: 1,
@@ -428,11 +439,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 20,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
   },
   formSectionHeader: {
     fontSize: 15,
@@ -538,20 +552,20 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   loginButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#0B3D2E',
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
-    shadowColor: '#2563EB',
+    shadowColor: '#0B3D2E',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 3,
   },
   loginButtonDisabled: {
-    backgroundColor: '#93C5FD',
+    backgroundColor: 'rgba(11, 61, 46, 0.4)',
   },
   loginButtonText: {
     fontSize: 15,
@@ -565,17 +579,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   demoBox: {
-    backgroundColor: '#1E293B',
+    backgroundColor: '#F0FDF4',
     borderRadius: 16,
     padding: 16,
-    marginTop: 18,
+    marginTop: 16,
+    marginHorizontal: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#BBF7D0',
   },
   demoHeader: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#38BDF8',
+    color: '#0B3D2E',
     letterSpacing: 0.8,
     marginBottom: 10,
     textAlign: 'center',
@@ -586,21 +601,24 @@ const styles = StyleSheet.create({
   },
   presetButton: {
     flex: 1,
-    backgroundColor: '#0F172A',
-    padding: 10,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#BBF7D0',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   presetTitle: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: '#0B3D2E',
+    textAlign: 'center',
   },
   presetDesc: {
-    fontSize: 9,
-    color: '#94A3B8',
+    fontSize: 8.5,
+    color: '#166534',
     marginTop: 2,
     textAlign: 'center',
   },
@@ -649,8 +667,8 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   selectedModalWardCard: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#2563EB',
+    backgroundColor: '#ECFDF5',
+    borderColor: '#10B981',
   },
   modalWardTop: {
     flexDirection: 'row',
@@ -661,7 +679,7 @@ const styles = StyleSheet.create({
   modalWardNumber: {
     fontSize: 12,
     fontWeight: '800',
-    color: '#2563EB',
+    color: '#0B3D2E',
   },
   modalPriorityBadge: {
     paddingHorizontal: 6,
@@ -685,7 +703,7 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   selectedText: {
-    color: '#1D4ED8',
+    color: '#047857',
   },
   modalWardDetails: {
     fontSize: 11,
