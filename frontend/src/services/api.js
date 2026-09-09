@@ -1,4 +1,5 @@
 import { Platform, NativeModules } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * UnityMap Centralized API Service
@@ -45,15 +46,17 @@ export const API_BASE_URL = getBaseUrl();
 export const apiRequest = async (endpoint, options = {}) => {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+
   const defaultHeaders = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     Accept: 'application/json',
   };
 
   const tryFetch = async (baseUrl) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     console.log(`[API Request] Fetching: ${url}`);
 
@@ -180,13 +183,28 @@ export const getPathways = (options = {}) => {
 
 /**
  * SPT-102 — Fetch a computed route between two nodes.
+ * SPT-106 — Optionally include spoken summary via includeSpeech & locale (en only).
  */
-export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible = false) => {
+export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible = false, options = {}) => {
+  // Backward compat: wheelchairAccessible may be options object
+  let includeSpeech = false;
+  let locale = 'en';
+  if (typeof wheelchairAccessible === 'object' && wheelchairAccessible !== null) {
+    options = wheelchairAccessible;
+    wheelchairAccessible = false;
+  }
+  if (options.includeSpeech) includeSpeech = options.includeSpeech;
+  if (options.locale) locale = options.locale;
+
   const params = new URLSearchParams({
     originNodeId,
     destinationNodeId,
     wheelchairAccessible: String(wheelchairAccessible),
   });
+  if (includeSpeech) {
+    params.append('includeSpeech', 'true');
+    params.append('locale', locale);
+  }
   return apiRequest(`/pathways/route?${params.toString()}`);
 };
 
@@ -243,6 +261,188 @@ export const previewSpeech = (body) => {
   });
 };
 
+// ——— Barrier Report Endpoints (Cloudinary photo upload) ———
+
+/**
+ * Get barrier reports with optional filters
+ */
+export const getReports = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return apiRequest(`/reports${query ? `?${query}` : ''}`);
+};
+
+export const getReportById = (id) => apiRequest(`/reports/${id}`);
+
+/**
+ * Create a barrier report — photo is uploaded to Cloudinary via backend.
+ *
+ * @param {object} reportData - { name, locationName, coordinates:{latitude,longitude}, category, rating(1-5 kept), condition:'good'|'bad', notes/note, exifMetadata, capturedAt/timestamp, reporterId }
+ * @param {File|Blob|{uri:string, name?:string, type?:string}} [photoFile] - image file to upload (field `photo`)
+ * If photoFile is provided, request is sent as multipart/form-data; photoUrl is ignored (server uploads to Cloudinary).
+ * If no photoFile, photoUrl must be inside reportData.
+ */
+export const createReport = async (reportData, photoFile) => {
+  // If no file, fallback to JSON (backward compat) - ensure flat lat/lng + new fields are stringified for backend aliases
+  if (!photoFile) {
+    return apiRequest('/reports', {
+      method: 'POST',
+      body: JSON.stringify(reportData),
+    });
+  }
+
+  const formData = new FormData();
+
+  // FIX: Unsupported FormDataPart - Expo requires {uri, name, type} on native, File/Blob only on web
+  // Never append raw string, number, or File on native. Always convert to RN file object on native.
+  if (Platform.OS === 'web') {
+    // Web: browser FormData accepts File/Blob
+    if (photoFile instanceof File || photoFile instanceof Blob) {
+      const fileName = photoFile.name || `photo_${Date.now()}.jpg`;
+      formData.append('photo', photoFile, fileName);
+    } else if (typeof photoFile === 'object' && photoFile.uri) {
+      const uri = photoFile.uri;
+      const name = photoFile.name || `photo_${Date.now()}.jpg`;
+      const type = photoFile.type || 'image/jpeg';
+      if (typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:'))) {
+        try {
+          const resp = await fetch(uri);
+          const blob = await resp.blob();
+          const file = new File([blob], name, { type: blob.type || type });
+          formData.append('photo', file, name);
+        } catch {
+          // fallback to uri object even on web if fetch fails
+          formData.append('photo', { uri, name, type });
+        }
+      } else {
+        // web may also need blob fetch for file:// URIs
+        try {
+          const resp = await fetch(uri);
+          const blob = await resp.blob();
+          const file = new File([blob], name, { type: blob.type || type });
+          formData.append('photo', file, name);
+        } catch {
+          formData.append('photo', { uri, name, type });
+        }
+      }
+    } else if (typeof photoFile === 'string' && (photoFile.startsWith('blob:') || photoFile.startsWith('data:'))) {
+      try {
+        const resp = await fetch(photoFile);
+        const blob = await resp.blob();
+        const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
+        formData.append('photo', file, file.name);
+      } catch {
+        formData.append('photo', photoFile);
+      }
+    } else {
+      formData.append('photo', photoFile);
+    }
+  } else {
+    // Native (iOS/Android): MUST be { uri, name, type } - File/Blob causes "Unsupported FormDataPart"
+    if (typeof photoFile === 'object' && photoFile.uri) {
+      const uri = photoFile.uri;
+      const name = photoFile.name || `photo_${Date.now()}.jpg`;
+      const type = photoFile.type || 'image/jpeg';
+      formData.append('photo', { uri, name, type });
+    } else if (photoFile instanceof File || photoFile instanceof Blob) {
+      // Native should never receive File/Blob, but handle defensively by warning and converting to uri obj if possible
+      // Attempt to create temp uri - fallback to JSON photoUrl path
+      console.warn('[createReport] File/Blob on native - converting to uri object fallback');
+      formData.append('photo', {
+        uri: photoFile.uri || `file:///tmp/photo_${Date.now()}.jpg`,
+        name: photoFile.name || `photo_${Date.now()}.jpg`,
+        type: photoFile.type || 'image/jpeg',
+      });
+    } else if (typeof photoFile === 'string') {
+      formData.append('photo', {
+        uri: photoFile,
+        name: `photo_${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      });
+    } else {
+      formData.append('photo', photoFile);
+    }
+  }
+
+  // Append text fields ensuring all are stringified (FormData only supports string/blob)
+  const appendString = (key, value) => {
+    if (value === undefined || value === null || value === '') return;
+    formData.append(key, String(value));
+  };
+  const appendJson = (key, value) => {
+    if (value === undefined || value === null) return;
+    if (value instanceof Date) formData.append(key, value.toISOString());
+    else if (typeof value === 'object') formData.append(key, JSON.stringify(value));
+    else formData.append(key, String(value));
+  };
+
+  // Required model fields - always stringified, never raw numbers/objects
+  const category = reportData.category;
+  const ratingStr = reportData.rating !== undefined && reportData.rating !== null ? String(reportData.rating) : undefined;
+  const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
+  const lng = reportData.coordinates?.longitude ?? reportData.longitude ?? reportData.lng ?? reportData.lon;
+  const capturedIso = (() => {
+    const raw = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
+    if (raw instanceof Date) return raw.toISOString();
+    if (typeof raw === 'string' && raw) return new Date(raw).toISOString();
+    return new Date().toISOString();
+  })();
+
+  appendString('name', reportData.name || (category ? `${category} Barrier` : `Barrier Report`));
+  appendString('locationName', reportData.locationName || reportData.location || 'Assigned Jurisdiction');
+  appendString('condition', reportData.condition || 'bad');
+  appendString('category', category);
+  appendString('rating', ratingStr);
+  appendString('notes', reportData.notes ?? reportData.note ?? '');
+  // Flat lat/lng as strings for backend robust handling (parseFloat)
+  if (lat !== undefined && lat !== null) appendString('latitude', String(lat));
+  if (lng !== undefined && lng !== null) appendString('longitude', String(lng));
+  appendString('capturedAt', capturedIso);
+  // Also append structured fields as JSON for backend parseJsonField
+  appendJson('coordinates', reportData.coordinates || (lat !== undefined && lng !== undefined ? { latitude: Number(lat), longitude: Number(lng) } : undefined));
+  appendJson('exifMetadata', reportData.exifMetadata);
+  // Optional relations
+  if (reportData.reporterId) appendString('reporterId', String(reportData.reporterId));
+  if (reportData.reporterName) appendString('reporterName', String(reportData.reporterName));
+  if (reportData.photoUrl) appendString('photoUrl', String(reportData.photoUrl));
+
+  return apiRequest('/reports', {
+    method: 'POST',
+    body: formData,
+  });
+};
+
+/**
+ * Simple JSON barrier report submission (Prompt 2 spec).
+ */
+export const createBarrierReport = (reportData) =>
+  apiRequest('/reports', {
+    method: 'POST',
+    body: JSON.stringify(reportData),
+  });
+
+const getAuthHeaders = async () => {
+  try {
+    const stored = await AsyncStorage.getItem('@unitymap_session');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed?.token) {
+        return { Authorization: `Bearer ${parsed.token}` };
+      }
+    }
+  } catch (_) {}
+  return {};
+};
+
+export const corroborateReport = async (reportId) => {
+  const authHeaders = await getAuthHeaders();
+  return apiRequest(`/reports/${reportId}/corroborate`, { method: 'POST', headers: authHeaders });
+};
+
+export const uncorroborateReport = async (reportId) => {
+  const authHeaders = await getAuthHeaders();
+  return apiRequest(`/reports/${reportId}/corroborate`, { method: 'DELETE', headers: authHeaders });
+};
+
 export default {
   API_BASE_URL,
   getBaseUrl,
@@ -265,4 +465,10 @@ export default {
   getLauncherPrompt,
   getAudioCues,
   previewSpeech,
+  getReports,
+  getReportById,
+  createReport,
+  createBarrierReport,
+  corroborateReport,
+  uncorroborateReport,
 };

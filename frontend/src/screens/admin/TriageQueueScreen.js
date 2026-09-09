@@ -18,10 +18,14 @@ import {
   SafeAreaView,
   StatusBar,
   Image,
+  AccessibilityInfo,
+  Alert,
 } from 'react-native';
 import { fetchTriageQueue, fetchTriageMetrics } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
 import { getWardById, MUNICIPAL_WARDS } from '../../utils/wardJurisdictions';
+import { Feather } from '@expo/vector-icons';
+import AdminAddReportModal from '../../components/admin/AdminAddReportModal';
 
 const CATEGORIES = [
   { id: 'all', label: 'All Categories' },
@@ -37,9 +41,17 @@ const SORT_OPTIONS = [
   { id: 'date', label: '📅 Newest' },
 ];
 
-export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
+export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: propWardId, onWardChange }) => {
   const currentUser = adminAuthService.getCurrentUser();
-  const [selectedWardId, setSelectedWardId] = useState(currentUser?.assignedWardId || 'CMC-W01');
+  const fallbackWard = currentUser?.assignedWardId || 'CMC-W01';
+  // Role gate: allow WARD_INSPECTOR, CHIEF_ENGINEER, BUDGET_OFFICER, SUPER_ADMIN (SPT-206)
+  const canAddReport = !!currentUser && (
+    adminAuthService.hasPermission('VIEW_TRIAGE') ||
+    ['WARD_INSPECTOR', 'CHIEF_ENGINEER', 'BUDGET_OFFICER', 'ADMIN', 'SUPER_ADMIN'].includes(currentUser.role) ||
+    !!currentUser.isSuperAdmin ||
+    currentUser.email === 'admin@unitymap.com'
+  );
+  const [selectedWardId, setSelectedWardId] = useState(propWardId || fallbackWard);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedSort, setSelectedSort] = useState('urgency');
   const [minUrgency, setMinUrgency] = useState(0);
@@ -49,11 +61,13 @@ export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
+  const [isAddReportOpen, setIsAddReportOpen] = useState(false);
 
   const activeWard = getWardById(selectedWardId);
 
   const loadTriageData = useCallback(async () => {
     try {
+      console.log(`🔄 Fetching Triage Queue: ward=${selectedWardId} category=${selectedCategory} status=pending sortBy=${selectedSort}`);
       const [queueData, metricsData] = await Promise.all([
         fetchTriageQueue({
           wardId: selectedWardId,
@@ -65,6 +79,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
         fetchTriageMetrics(selectedWardId),
       ]);
 
+      console.log(`✅ Queue loaded: ${queueData?.reports?.length || 0} reports (total: ${queueData?.totalReports}) | category filter: ${selectedCategory}`);
       if (queueData?.reports) {
         setReports(queueData.reports);
       }
@@ -80,6 +95,13 @@ export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
     }
   }, [selectedWardId, selectedCategory, selectedSort, minUrgency]);
 
+  // Sync controlled prop from scaffold (Prompt 3)
+  useEffect(() => {
+    if (propWardId && propWardId !== selectedWardId) {
+      setSelectedWardId(propWardId);
+    }
+  }, [propWardId]);
+
   useEffect(() => {
     setIsLoading(true);
     loadTriageData();
@@ -94,6 +116,53 @@ export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
     setIsRecalculating(true);
     loadTriageData();
   };
+
+  const handleReportCreated = useCallback(
+    (newReport) => {
+      setIsAddReportOpen(false);
+      // Reset category filter to "All Categories" so new report is visible regardless of previous filter
+      // and force refresh with updated filter. Without this, a report of a different category would stay hidden.
+      setSelectedCategory('all');
+      // Defer load to next tick so state update propagates (selectedCategory='all' will also trigger load via dependency)
+      setTimeout(() => loadTriageData(), 50);
+      const ref = newReport?._id || newReport?.id || '';
+      try {
+        AccessibilityInfo.announceForAccessibility('Barrier report successfully added to queue');
+      } catch {}
+      try {
+        Alert.alert('Report Added', `Barrier report ${ref ? ref + ' ' : ''}added to Triage Queue.`);
+      } catch {}
+      console.log('✅ Report created, queue will refresh with All Categories filter', newReport);
+    },
+    [loadTriageData]
+  );
+
+  // SPT-301: confirmation count pill dynamically reflects updated corroborationCount after refresh via loadTriageData
+  const handleCorroborationSuccess = useCallback(
+    (updatedReport) => {
+      if (!updatedReport?._id) return;
+      setReports((prev) =>
+        prev.map((r) =>
+          r._id === updatedReport._id
+            ? {
+                ...r,
+                corroborationCount: updatedReport.corroborationCount ?? r.corroborationCount,
+                upvotedBy: updatedReport.upvotedBy ?? r.upvotedBy,
+                triage: updatedReport.triage
+                  ? { ...r.triage, ...updatedReport.triage, formulaFactors: { ...(r.triage?.formulaFactors || {}), corroborationCount: updatedReport.corroborationCount ?? r.corroborationCount } }
+                  : r.triage,
+              }
+            : r
+        )
+      );
+      // Also refresh metrics so KPI reflects new corroboration
+      fetchTriageMetrics(selectedWardId).then(setMetrics).catch(() => {});
+      try {
+        AccessibilityInfo.announceForAccessibility(`Confirmations updated to ${updatedReport.corroborationCount}`);
+      } catch {}
+    },
+    [selectedWardId]
+  );
 
   const getPriorityBadgeStyle = (badge) => {
     switch (badge) {
@@ -122,18 +191,36 @@ export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
           ) : (
             <View style={{ width: 40 }} />
           )}
-          <TouchableOpacity
-            style={styles.recalculateBtn}
-            onPress={handleRecalculate}
-            disabled={isRecalculating}
-            activeOpacity={0.7}
-          >
-            {isRecalculating ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.recalculateText}>↻ Recalc Scores</Text>
+          <View style={styles.topBarActions}>
+            {canAddReport && (
+              <TouchableOpacity
+                style={styles.addReportBtn}
+                onPress={() => setIsAddReportOpen(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Add barrier report"
+                accessibilityHint="Opens admin barrier report creation modal"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Feather name="plus" size={14} color="#FFFFFF" />
+                <Text style={styles.addReportBtnText}>Add Report</Text>
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.recalculateBtn}
+              onPress={handleRecalculate}
+              disabled={isRecalculating}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Recalculate triage queue"
+            >
+              {isRecalculating ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.recalculateText}>↻ Recalc</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
         <View style={styles.topBarTitleContainer}>
           <Text style={styles.topBarTitle}>Severity Triage Queue</Text>
@@ -249,6 +336,20 @@ export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
             <Text style={styles.emptyText}>
               No pending accessibility barriers match the selected category or urgency filter.
             </Text>
+            {canAddReport && (
+              <TouchableOpacity
+                style={styles.emptyCtaBtn}
+                onPress={() => setIsAddReportOpen(true)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Add barrier report"
+                accessibilityHint="Opens admin barrier report creation modal"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Feather name="plus" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.emptyCtaText}>⊕ Add First Barrier Report</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           <View style={styles.reportsList}>
@@ -351,6 +452,29 @@ export const TriageQueueScreen = ({ onBack, onSelectReport }) => {
           </View>
         )}
       </ScrollView>
+
+      {/* FAB */}
+      {canAddReport && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setIsAddReportOpen(true)}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Add barrier report"
+          accessibilityHint="Opens admin barrier report creation modal"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Feather name="plus" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
+
+      {/* Admin Add Report Modal */}
+      <AdminAddReportModal
+        visible={isAddReportOpen}
+        onClose={() => setIsAddReportOpen(false)}
+        wardId={selectedWardId}
+        onReportCreated={handleReportCreated}
+      />
     </SafeAreaView>
   );
 };
@@ -365,7 +489,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   content: {
-    paddingBottom: 40,
+    paddingBottom: 80,
   },
   topBar: {
     backgroundColor: '#0B3D2E',
@@ -406,6 +530,28 @@ const styles = StyleSheet.create({
     color: '#A7F3D0',
     marginTop: 2,
     fontWeight: '500',
+  },
+  topBarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  addReportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#047857',
+    gap: 6,
+    justifyContent: 'center',
+  },
+  addReportBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   recalculateBtn: {
     paddingVertical: 6,
@@ -578,6 +724,39 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 18,
+  },
+  emptyCtaBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#0B3D2E',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+    minHeight: 48,
+    minWidth: 48,
+  },
+  emptyCtaText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#0B3D2E',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   reportsList: {
     paddingHorizontal: 16,

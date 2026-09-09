@@ -17,8 +17,6 @@ const ThemeContext = createContext({
   palette: palettes.light,
   borderWidth: 1,
   isScreenReaderEnabled: false,
-  setIsScreenReaderEnabled: () => {},
-  toggleScreenReader: () => {},
   isReduceMotionEnabled: false,
   setIsReduceMotionEnabled: () => {},
   toggleReduceMotion: () => {},
@@ -105,13 +103,13 @@ export const ThemeProvider = ({ children }) => {
     });
   }, []);
 
-  const setIsScreenReaderEnabledCb = useCallback((value) => {
-    setIsScreenReaderEnabled(value);
-  }, []);
-
-  const toggleScreenReader = useCallback(() => {
-    setIsScreenReaderEnabled((prev) => !prev);
-  }, []);
+  // Auto-enable Audio Launcher when OS TalkBack/VoiceOver turns on — user can still turn it off manually afterwards, persists across restarts
+  useEffect(() => {
+    if (isScreenReaderEnabled) {
+      setIsAudioLauncherEnabled(true);
+      saveAudioLauncherEnabled(true);
+    }
+  }, [isScreenReaderEnabled]);
 
   const setIsReduceMotionEnabledCb = useCallback((value) => {
     setIsReduceMotionEnabled(value);
@@ -159,8 +157,6 @@ export const ThemeProvider = ({ children }) => {
       palette: getPalette(isHighContrast),
       borderWidth: getBorderWidth(isHighContrast),
       isScreenReaderEnabled,
-      setIsScreenReaderEnabled: setIsScreenReaderEnabledCb,
-      toggleScreenReader,
       isReduceMotionEnabled,
       setIsReduceMotionEnabled: setIsReduceMotionEnabledCb,
       toggleReduceMotion,
@@ -177,8 +173,6 @@ export const ThemeProvider = ({ children }) => {
       setHighContrast,
       toggleHighContrast,
       isScreenReaderEnabled,
-      setIsScreenReaderEnabledCb,
-      toggleScreenReader,
       isReduceMotionEnabled,
       setIsReduceMotionEnabledCb,
       toggleReduceMotion,

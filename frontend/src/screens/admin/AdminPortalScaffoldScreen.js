@@ -80,6 +80,8 @@ export const AdminPortalScaffoldScreen = () => {
   if (currentView === 'triage') {
     return (
       <TriageQueueScreen
+        selectedWardId={selectedWardId}
+        onWardChange={handleWardChange}
         onBack={() => setCurrentView('hub')}
         onSelectReport={(report) => {
           setSelectedReportForInspection(report);

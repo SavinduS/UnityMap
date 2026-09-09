@@ -5,13 +5,17 @@ const verificationLogEntrySchema = new mongoose.Schema(
     action: {
       type: String,
       required: true,
-      enum: ['created', 'verified', 'approved', 'rejected', 'info_requested', 'triaged', 'updated'],
+      enum: ['created', 'verified', 'approved', 'rejected', 'info_requested', 'triaged', 'updated', 'corroborated', 'uncorroborated'],
     },
     status: {
       type: String,
       trim: true,
     },
     verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
@@ -60,6 +64,17 @@ const barrierReportSchema = new mongoose.Schema(
       required: [true, 'Photo URL is required'],
       trim: true,
     },
+    // User-facing fields requested: name, locationName, condition (good/bad), timestamp (capturedAt) - rating kept
+    name: {
+      type: String,
+      trim: true,
+      maxlength: [100, 'Name must be at most 100 characters'],
+    },
+    locationName: {
+      type: String,
+      trim: true,
+      maxlength: [300, 'Location name must be at most 300 characters'],
+    },
     category: {
       type: String,
       required: [true, 'Category is required'],
@@ -78,6 +93,17 @@ const barrierReportSchema = new mongoose.Schema(
         validator: Number.isInteger,
         message: '{VALUE} is not an integer value',
       },
+    },
+    // issue(bad) or good — maps to UI toggle, also index for filtering
+    condition: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      enum: {
+        values: ['good', 'bad'],
+        message: '{VALUE} is not a valid condition (use good or bad)',
+      },
+      index: true,
     },
     triageStatus: {
       type: String,
@@ -111,12 +137,24 @@ const barrierReportSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
-    upvotedBy: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+    upvotedBy: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+      ],
+      // Keep corroborationCount in sync even for sync validation / direct assignment
+      set: function setUpvotedBy(v) {
+        if (Array.isArray(v) && this && typeof this === 'object') {
+          try {
+            // `this` is the document during casting; set count synchronously
+            this.corroborationCount = v.length;
+          } catch (_) {}
+        }
+        return v;
       },
-    ],
+    },
     corroborationCount: {
       type: Number,
       default: 0,
@@ -133,9 +171,19 @@ const barrierReportSchema = new mongoose.Schema(
 barrierReportSchema.index({ location: '2dsphere' });
 barrierReportSchema.index({ createdAt: -1 });
 barrierReportSchema.index({ category: 1, triageStatus: 1 });
+barrierReportSchema.index({ upvotedBy: 1 });
 
-// Keep GeoJSON location in sync with coordinates [lng, lat]
+// Keep GeoJSON location in sync with coordinates [lng, lat] and keep corroborationCount in sync with upvotedBy
+barrierReportSchema.pre('validate', function preValidate() {
+  if (Array.isArray(this.upvotedBy)) {
+    this.corroborationCount = this.upvotedBy.length;
+  }
+});
+
 barrierReportSchema.pre('save', function preSave(next) {
+  if (Array.isArray(this.upvotedBy)) {
+    this.corroborationCount = this.upvotedBy.length;
+  }
   if (this.isModified('coordinates') && this.coordinates && this.coordinates.latitude != null && this.coordinates.longitude != null) {
     this.location = {
       type: 'Point',

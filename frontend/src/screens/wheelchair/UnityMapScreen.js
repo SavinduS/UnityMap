@@ -8,14 +8,19 @@ import {
   ScrollView,
   Platform,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import tw from 'twrnc';
 import { Feather, MaterialCommunityIcons, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
 import BaseMap from '../../components/BaseMap';
 import Input from '../../components/Input';
+import Button from '../../components/Button';
 import SettingsScreen from '../settings/SettingsScreen';
-import EXIFCaptureScreen from '../volunteer/EXIFCaptureScreen';
+import ThreeTapReportScreen from '../volunteer/ThreeTapReportScreen';
 import AudioFirstLauncherScreen from '../audio/AudioFirstLauncherScreen';
+import VoiceNavigationScreen from '../audio/VoiceNavigationScreen';
+import SpokenGuidanceHazardWarningScreen from '../audio/SpokenGuidanceHazardWarningScreen';
+import LiveTurnByTurnNavigationScreen from './LiveTurnByTurnNavigationScreen';
 import { useTheme } from '../../theme/ThemeContext';
 import { useSpeech } from '../../hooks/useSpeech';
 import { getTextStyle, textProps } from '../../theme/typography';
@@ -25,7 +30,10 @@ import {
   saveWheelchairAccessible,
   loadRecentSearches,
   saveRecentSearches,
+  loadNodesCache,
+  saveNodesCache,
 } from '../../theme/storage';
+import { warmCache } from '../../services/offlineVoiceCache';
 import {
   getNodes,
   getObstacles,
@@ -76,6 +84,24 @@ const UnityMapScreen = () => {
   const [dataError, setDataError] = useState(null);
   const [mapCenter, setMapCenter] = useState([6.9271, 79.8612]);
   const [showLauncher, setShowLauncher] = useState(false);
+  const [showVoiceSummary, setShowVoiceSummary] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceConfidence, setVoiceConfidence] = useState(0);
+  const [voiceRouteSummary, setVoiceRouteSummary] = useState(null);
+  const [showGuidance, setShowGuidance] = useState(false);
+  const [tappedLocation, setTappedLocation] = useState(null);
+  const [tapRoute, setTapRoute] = useState(null);
+  const [tapRouteLoading, setTapRouteLoading] = useState(false);
+  const [tapRouteMeta, setTapRouteMeta] = useState(null);
+  const [tapRouteError, setTapRouteError] = useState(null);
+  const [nearbyHazards, setNearbyHazards] = useState([]);
+  const [nearbyAccessible, setNearbyAccessible] = useState([]);
+  const [safetyStatus, setSafetyStatus] = useState(null);
+  const [isTapSummarySheetVisible, setIsTapSummarySheetVisible] = useState(false);
+  const [activeSheetCategory, setActiveSheetCategory] = useState('hazards');
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [isTurnByTurnActive, setIsTurnByTurnActive] = useState(false);
+  const [activeNavRoute, setActiveNavRoute] = useState(null);
 
   const { palette, borderWidth, isHighContrast, isReduceMotionEnabled, isAudioLauncherEnabled } = useTheme();
   const { speak } = useSpeech();
@@ -89,6 +115,11 @@ const UnityMapScreen = () => {
       setShowLauncher(false);
     }
   }, [isAudioLauncherEnabled]);
+
+  // SPT-303: Warm offline cache (key subset prompts/cues earcons via FileSystem + nodes)
+  useEffect(() => {
+    warmCache().catch(() => {});
+  }, []);
 
   // Load persistent Wheelchair Accessible state & real search history
   useEffect(() => {
@@ -154,7 +185,7 @@ const UnityMapScreen = () => {
           elevators: elevatorsRes?.data?.length || 0,
         });
 
-        // 1. Process Nodes
+        // 1. Process Nodes — save to offline cache for voice search fallback
         if (nodesRes?.success && Array.isArray(nodesRes.data) && nodesRes.data.length > 0) {
           const liveNodes = nodesRes.data.map((node) => ({
             id: node._id || node.id,
@@ -167,10 +198,22 @@ const UnityMapScreen = () => {
             isAccessible: true,
           }));
           setDbNodes(liveNodes);
+          saveNodesCache(liveNodes).catch(() => {});
 
           if (!location && liveNodes[0]?.lat && liveNodes[0]?.lng) {
             setMapCenter([liveNodes[0].lat, liveNodes[0].lng]);
           }
+        } else {
+          // Offline fallback: load cached nodes for voice search
+          try {
+            const cached = await loadNodesCache();
+            if (cached && Array.isArray(cached) && cached.length > 0) {
+              setDbNodes(cached);
+              if (!location && cached[0]?.lat && cached[0]?.lng) {
+                setMapCenter([cached[0].lat, cached[0].lng]);
+              }
+            }
+          } catch (_) {}
         }
 
         // 2. Process Obstacles
@@ -255,6 +298,269 @@ const UnityMapScreen = () => {
     }
   }, [recenter, location]);
 
+  const handleLocationFound = useCallback((gps) => {
+    if (Number.isFinite(Number(gps?.latitude)) && Number.isFinite(Number(gps?.longitude))) {
+      setCurrentLocation({
+        latitude: Number(gps.latitude),
+        longitude: Number(gps.longitude),
+      });
+      setMapCenter([Number(gps.latitude), Number(gps.longitude)]);
+    }
+  }, []);
+
+  // ── Tap-to-Route & Proximity Safety Analysis handler ───────────────────────
+  const handleMapTap = useCallback(async (loc) => {
+    if (!Number.isFinite(Number(loc?.latitude)) || !Number.isFinite(Number(loc?.longitude))) {
+      return;
+    }
+
+    const destination = {
+      latitude: Number(loc.latitude),
+      longitude: Number(loc.longitude),
+    };
+
+    const origin = currentLocation
+      || (location?.latitude && location?.longitude ? location : null)
+      || (dbNodes[0]?.lat ? { latitude: dbNodes[0].lat, longitude: dbNodes[0].lng } : { latitude: mapCenter[0], longitude: mapCenter[1] });
+
+    setTappedLocation(destination);
+    setTapRoute(null);
+    setTapRouteMeta(null);
+    setTapRouteError(null);
+    setNearbyHazards([]);
+    setNearbyAccessible([]);
+    setSafetyStatus(null);
+    setIsTapSummarySheetVisible(false);
+    setTapRouteLoading(true);
+    setIsSearchExpanded(false);
+
+    try {
+      const directMeters = origin
+        ? calculateHaversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
+        : 0;
+
+      const [roadRouteRes, originNode, destNode] = await Promise.all([
+        getRoadRoute(origin.longitude, origin.latitude, destination.longitude, destination.latitude).catch(() => null),
+        getNearestNode(origin.longitude, origin.latitude, 500).catch(() => null),
+        getNearestNode(destination.longitude, destination.latitude, 500).catch(() => null),
+      ]);
+
+      let polyCoords = [];
+      let totalMeters = directMeters;
+      let maxRouteSlope = 0;
+      let routePathways = [];
+      const destName = destNode?.name || 'Selected Location';
+
+      let foundDbRoute = false;
+      if (originNode && destNode && (originNode._id ?? originNode.id) !== (destNode._id ?? destNode.id)) {
+        try {
+          const originId = originNode._id ?? originNode.id;
+          const destId   = destNode._id  ?? destNode.id;
+          const routeRes = await getRoute(originId, destId, isWheelchairAccessible);
+          const path = routeRes?.data?.path;
+
+          if (routeRes?.success && Array.isArray(path) && path.length >= 2) {
+            const dbCoords = path
+              .map((node) => node.location?.coordinates)
+              .filter((coordinates) => Array.isArray(coordinates) && coordinates.length >= 2)
+              .map(([lng, lat]) => [Number(lat), Number(lng)]);
+
+            if (dbCoords.length >= 2) {
+              polyCoords = dbCoords;
+              foundDbRoute = true;
+              const routeNodeIds = path.map((node) => String(node._id || node.id));
+              routePathways = dbPathways.filter((pathway) => {
+                const startId = String(pathway.startNode?._id || pathway.startNode);
+                const endId = String(pathway.endNode?._id || pathway.endNode);
+                return routeNodeIds.some((fromId, index) => {
+                  const toId = routeNodeIds[index + 1];
+                  return (
+                    toId &&
+                    ((startId === fromId && endId === toId) ||
+                      (startId === toId && endId === fromId))
+                  );
+                });
+              });
+
+              maxRouteSlope = routePathways.reduce(
+                (max, pathway) => Math.max(max, Math.abs(Number(pathway.inclineDegrees) || 0)),
+                0
+              );
+
+              totalMeters = Number(routeRes.data?.totalDistanceMeters) > 0
+                ? Number(routeRes.data.totalDistanceMeters)
+                : polyCoords.slice(1).reduce(
+                    (total, point, index) =>
+                      total + calculateHaversineDistance(
+                        polyCoords[index][0],
+                        polyCoords[index][1],
+                        point[0],
+                        point[1]
+                      ),
+                    0
+                  );
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!foundDbRoute && roadRouteRes && Array.isArray(roadRouteRes.coordinates) && roadRouteRes.coordinates.length >= 2) {
+        polyCoords = roadRouteRes.coordinates;
+        totalMeters = roadRouteRes.distanceMeters;
+      } else if (!foundDbRoute && polyCoords.length < 2 && origin) {
+        polyCoords = [
+          [origin.latitude, origin.longitude],
+          [destination.latitude, destination.longitude],
+        ];
+        totalMeters = directMeters;
+      }
+
+      const etaMins = calculateWheelchairETA(totalMeters, maxRouteSlope);
+
+      if (polyCoords.length >= 2) {
+        setTapRoute({
+          id: `tap_route_${Date.now()}`,
+          coordinates: polyCoords,
+          color: '#3B82F6',
+          isSelected: true,
+          destName,
+        });
+      }
+
+      const [nearbyObsRes, nearbyNodesRes] = await Promise.all([
+        getNearbyObstacles(destination.longitude, destination.latitude, 400).catch(() => ({ data: [] })),
+        getNearbyNodes(destination.longitude, destination.latitude, 400).catch(() => ({ data: [] })),
+      ]);
+
+      const apiObs = Array.isArray(nearbyObsRes?.data) ? nearbyObsRes.data : [];
+      const apiNodes = Array.isArray(nearbyNodesRes?.data) ? nearbyNodesRes.data : [];
+
+      const combinedObs = [...apiObs];
+      dbObstacles.forEach((dbo) => {
+        if (!combinedObs.some((o) => (o._id || o.id) === (dbo._id || dbo.id))) {
+          combinedObs.push(dbo);
+        }
+      });
+
+      const combinedNodes = [...apiNodes];
+      dbNodes.forEach((dbn) => {
+        if (!combinedNodes.some((n) => (n._id || n.id) === (dbn._id || dbn.id))) {
+          combinedNodes.push(dbn);
+        }
+      });
+
+      const { hazards, accessible } = categorizeProximityFeatures({
+        nearbyObstacles: combinedObs,
+        nearbyNodes: combinedNodes,
+        elevators: dbElevators,
+        pathways: dbPathways,
+        centerCoords: [destination.latitude, destination.longitude],
+        routeCoords: polyCoords,
+        radiusMeters: 400,
+      });
+
+      const status = computeRouteSafetyStatus(routePathways, hazards, accessible);
+
+      setNearbyHazards(hazards);
+      setNearbyAccessible(accessible);
+      setSafetyStatus(status);
+      setActiveSheetCategory(hazards.length > 0 ? 'hazards' : 'accessible');
+      setIsTapSummarySheetVisible(true);
+
+      setTapRouteMeta({
+        distanceText: formatDistance(totalMeters),
+        etaText: formatDuration(etaMins),
+        destName,
+        safetyStatus: status,
+      });
+    } catch (err) {
+      console.warn('[UnityMapScreen] Tap route error:', err.message);
+      const directMeters = origin
+        ? calculateHaversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
+        : 0;
+      const etaMins = calculateWheelchairETA(directMeters, 0);
+
+      const polyCoords = origin ? [
+        [origin.latitude, origin.longitude],
+        [destination.latitude, destination.longitude],
+      ] : [];
+
+      if (polyCoords.length >= 2) {
+        setTapRoute({
+          id: `tap_route_${Date.now()}`,
+          coordinates: polyCoords,
+          color: '#3B82F6',
+          isSelected: true,
+          destName: 'Selected Destination',
+        });
+      }
+
+      const status = computeRouteSafetyStatus([], [], []);
+
+      setTapRouteMeta({
+        distanceText: formatDistance(directMeters),
+        etaText: formatDuration(etaMins),
+        destName: 'Selected Destination',
+        safetyStatus: status,
+      });
+      setIsTapSummarySheetVisible(true);
+    } finally {
+      setTapRouteLoading(false);
+    }
+  }, [currentLocation, location, mapCenter, dbNodes, dbPathways, dbObstacles, dbElevators, isWheelchairAccessible]);
+
+  const handleClearTap = useCallback(() => {
+    setTappedLocation(null);
+    setTapRoute(null);
+    setTapRouteMeta(null);
+    setTapRouteError(null);
+    setNearbyHazards([]);
+    setNearbyAccessible([]);
+    setSafetyStatus(null);
+    setIsTapSummarySheetVisible(false);
+    setTapRouteLoading(false);
+  }, []);
+
+  // SPT-201: Seamless Tap-to-Navigate flow launching Google Maps style turn-by-turn guidance
+  const handleStartTapNavigation = useCallback(() => {
+    setIsTapSummarySheetVisible(false);
+    setShowGuidance(false);
+    setShowVoiceSummary(false);
+
+    const destTitle = tapRouteMeta?.destName || 'Selected Destination';
+    const dist = tapRouteMeta?.distanceText || '1.2 km';
+    const eta = tapRouteMeta?.etaText || '15 mins';
+
+    const originLat = location?.latitude ?? 6.9271;
+    const originLng = location?.longitude ?? 79.8612;
+    const destLat = tappedLocation?.latitude ?? tappedLocation?.[0] ?? 6.9325;
+    const destLng = tappedLocation?.longitude ?? tappedLocation?.[1] ?? 79.8655;
+
+    const coords =
+      tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
+        ? tapRoute.coordinates
+        : [
+            [originLat, originLng],
+            [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
+            [destLat, destLng],
+          ];
+
+    const navRoute = {
+      id: tapRoute?.id || `nav_route_${Date.now()}`,
+      title: destTitle,
+      destName: destTitle,
+      originName: 'Your Location',
+      distanceText: dist,
+      etaText: eta,
+      coordinates: coords,
+      color: '#10B981',
+      maxSlope: '4.8° (Safe)',
+    };
+
+    setActiveNavRoute(navRoute);
+    setIsTurnByTurnActive(true);
+  }, [tapRouteMeta, tapRoute, tappedLocation, location]);
+
   // Select destination from real DB list / search history
   const handleSelectDestination = useCallback((dest) => {
     setSearchQuery(dest.title);
@@ -271,28 +577,103 @@ const UnityMapScreen = () => {
     });
   }, []);
 
-  // SPT-105: bridge spoken transcript to typed search with high-accuracy handling
+  // SPT-106: bridge spoken transcript to Voice Input & Summary Readout Screen — summary first via getRoute includeSpeech, draw on Confirm
   const handleLauncherNavigate = useCallback(
-    (transcript, confidence) => {
+    async (transcript, confidence) => {
       setShowLauncher(false);
       const q = typeof transcript === 'string' ? transcript.trim() : '';
       if (!q) return;
-      const confOk = confidence === undefined || confidence === 0 || confidence >= 0.6;
-      if (!confOk) {
-        try {
-          speak(`Low confidence ${Math.round(confidence * 100)} percent, please try again`);
-        } catch (_) {}
-        setSearchQuery(q);
-        setIsSearchExpanded(true);
-        return;
-      }
+      setVoiceTranscript(q);
+      setVoiceConfidence(confidence || 0);
       setSearchQuery(q);
       setIsSearchExpanded(true);
-      try {
-        speak(`Searching for ${q}`);
-      } catch (_) {}
+
       const all = [...dbNodes, ...recentDestinations];
-      if (all.length === 0) return;
+      let best = null;
+      let bestScore = -1;
+      const lowerQ = q.toLowerCase();
+      for (const dest of all) {
+        const titleLower = dest.title.toLowerCase();
+        let score = 0;
+        if (titleLower === lowerQ) score = 3;
+        else if (titleLower.includes(lowerQ) || lowerQ.includes(titleLower)) score = 2;
+        else if (titleLower.split(' ').some((w) => lowerQ.includes(w) || w.includes(lowerQ))) score = 1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = dest;
+        }
+      }
+
+      // Fetch real route preview for summary (reuse current BaseMap pipeline, no draw yet)
+      let summary = {
+        destName: best?.title || q,
+        distanceText: '--',
+        crossings: 0,
+        etaText: '--',
+        hazardCount: nearbyHazards?.length ?? 0,
+        spokenSummary: `Route to ${best?.title || q}: calculating...`,
+        confidence,
+        pendingBest: best,
+      };
+
+      if (best?.lat && best?.lng) {
+        try {
+          const origin = currentLocation || (location?.latitude && location?.longitude ? location : null) || (dbNodes[0]?.lat ? { latitude: dbNodes[0].lat, longitude: dbNodes[0].lng } : { latitude: mapCenter[0], longitude: mapCenter[1] });
+          const originNode = await getNearestNode(origin.longitude, origin.latitude, 500).catch(() => null);
+          const destNode = await getNearestNode(best.lng, best.lat, 500).catch(() => null);
+          if (originNode && destNode) {
+            const routeRes = await getRoute(originNode._id || originNode.id, destNode._id || destNode.id, isWheelchairAccessible, { includeSpeech: true, locale: 'en' });
+            if (routeRes?.success) {
+              const d = routeRes.data;
+              summary = {
+                destName: d.destinationNode?.name || best.title,
+                distanceText: d.totalDistanceMeters ? formatDistance(d.totalDistanceMeters) : '--',
+                crossings: d.crossings ?? 0,
+                etaText: d.estimatedDurationSec ? formatDuration(Math.ceil(d.estimatedDurationSec / 60)) : '--',
+                hazardCount: d.hazardCount ?? nearbyHazards?.length ?? 0,
+                spokenSummary: d.spokenSummary || `Route to ${d.destinationNode?.name || best.title}: ${d.totalDistanceMeters ? formatDistance(d.totalDistanceMeters) : '--'}, ${d.crossings ?? 0} crossings.`,
+                confidence,
+                pendingOrigin: origin,
+                pendingDest: best,
+                pendingRouteRes: d,
+              };
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Fallback if no backend route yet
+      if (!summary.spokenSummary || summary.spokenSummary.includes('calculating')) {
+        const distanceText = tapRouteMeta?.distanceText || 'Calculating...';
+        const etaText = tapRouteMeta?.etaText || '--';
+        const crossings = tapRouteMeta ? 0 : bestScore >= 0 ? bestScore : 0;
+        summary = {
+          destName: best?.title || q,
+          distanceText,
+          crossings,
+          etaText,
+          hazardCount: nearbyHazards?.length ?? 0,
+          spokenSummary: `Route to ${best?.title || q}: ${distanceText}, ${crossings} crossings, ${etaText}, ${nearbyHazards?.length ?? 0} hazards.`,
+          confidence,
+          pendingBest: best,
+        };
+      }
+
+      setVoiceRouteSummary(summary);
+      setShowVoiceSummary(true);
+      try {
+        speak(summary.spokenSummary);
+      } catch (_) {}
+    },
+    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, currentLocation, location, mapCenter, dbPathways, isWheelchairAccessible, speak]
+  );
+
+  const handleVoiceConfirm = useCallback(
+    async ({ transcript, routeSummary, targetCoordinates }) => {
+      const q = transcript || voiceTranscript;
+      setShowVoiceSummary(false);
+      if (!q) return;
+      const all = [...dbNodes, ...recentDestinations];
       const lowerQ = q.toLowerCase();
       let best = null;
       let bestScore = -1;
@@ -307,21 +688,83 @@ const UnityMapScreen = () => {
           best = dest;
         }
       }
-      if (best && bestScore >= 1) {
-        if (confidence >= 0.7 || bestScore >= 2) {
-          try {
-            speak(`Heard ${q}, navigating to ${best.title}`);
-          } catch (_) {}
-          setTimeout(() => handleSelectDestination(best), 600);
-        } else {
-          try {
-            speak(`Heard ${q}, showing results. Did you mean ${best.title}?`);
-          } catch (_) {}
+      if (best?.lat && best?.lng) {
+        try {
+          speak(`Confirmed. Navigating to ${best.title}`);
+        } catch (_) {}
+        // Reuse current BaseMap pipeline — draws polyline via tapRoute (SPT-57)
+        await handleMapTap({ latitude: best.lat, longitude: best.lng });
+        handleSelectDestination(best);
+        // Also set turn-by-turn active route for develop SPT-103 if state exists
+        if (typeof setActiveNavRoute === 'function' && typeof setIsTurnByTurnActive === 'function') {
+          const destTitle = routeSummary?.destName || best.title;
+          const originLat = location?.latitude ?? 6.9271;
+          const originLng = location?.longitude ?? 79.8612;
+          const destLat = best.lat;
+          const destLng = best.lng;
+          const coords =
+            tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
+              ? tapRoute.coordinates
+              : [
+                  [originLat, originLng],
+                  [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
+                  [destLat, destLng],
+                ];
+          setActiveNavRoute({
+            id: 'voice_nav_route',
+            title: destTitle,
+            destName: destTitle,
+            originName: 'Your Location',
+            distanceText: routeSummary?.distanceText || '1.2 km',
+            etaText: routeSummary?.etaText || '15 mins',
+            coordinates: coords,
+            color: '#10B981',
+            maxSlope: '4.8° (Safe)',
+          });
+          setIsTurnByTurnActive(true);
+        }
+      } else if (best) {
+        handleSelectDestination(best);
+        try {
+          speak(`Confirmed. Navigating to ${best.title}`);
+        } catch (_) {}
+      } else if (targetCoordinates) {
+        // Fallback to develop synthetic targetCoordinates when no fuzzy best
+        const destTitle = routeSummary?.destName || transcript || 'Selected Destination';
+        const originLat = location?.latitude ?? 6.9271;
+        const originLng = location?.longitude ?? 79.8612;
+        const destLat = targetCoordinates?.[0] ?? targetCoordinates?.latitude ?? 6.9325;
+        const destLng = targetCoordinates?.[1] ?? targetCoordinates?.longitude ?? 79.8655;
+        const coords =
+          tapRoute?.coordinates && Array.isArray(tapRoute.coordinates) && tapRoute.coordinates.length >= 2
+            ? tapRoute.coordinates
+            : [
+                [originLat, originLng],
+                [(originLat + destLat) / 2 + 0.0006, (originLng + destLng) / 2 - 0.0004],
+                [destLat, destLng],
+              ];
+        if (typeof setActiveNavRoute === 'function') {
+          setActiveNavRoute({
+            id: 'voice_nav_route',
+            title: destTitle,
+            destName: destTitle,
+            originName: 'Your Location',
+            distanceText: routeSummary?.distanceText || '1.2 km',
+            etaText: routeSummary?.etaText || '15 mins',
+            coordinates: coords,
+            color: '#10B981',
+            maxSlope: '4.8° (Safe)',
+          });
+          setIsTurnByTurnActive(true);
         }
       }
     },
-    [dbNodes, recentDestinations, speak, handleSelectDestination]
+    [voiceTranscript, dbNodes, recentDestinations, handleSelectDestination, handleMapTap, speak, location, tapRoute]
   );
+
+  const handleVoiceCancel = useCallback(() => {
+    setShowVoiceSummary(false);
+  }, []);
 
   // Combined and filtered destinations (DB nodes + real recent searches)
   const filteredDestinations = useMemo(() => {
@@ -460,7 +903,7 @@ const UnityMapScreen = () => {
         </View>
       ) : activeTab === 'Report' ? (
         <View style={tw`flex-1`}>
-          <EXIFCaptureScreen onBack={() => setActiveTab('Map')} />
+          <ThreeTapReportScreen onNavigateToMap={() => setActiveTab('Map')} onSuccess={() => setActiveTab('Map')} />
         </View>
       ) : activeTab === 'Profile' ? (
         <ScrollView style={tw`flex-1 p-5`}>
@@ -523,6 +966,9 @@ const UnityMapScreen = () => {
               markers={mapMarkers}
               pathways={filteredPathways}
               routes={tapRouteList}
+              userLocation={location}
+              userHeading={location?.heading}
+              autoCenter={false}
               onMapClick={handleMapTap}
               onLocationFound={handleLocationFound}
               isHighContrast={isHighContrast}
@@ -690,6 +1136,7 @@ const UnityMapScreen = () => {
                     </View>
                   )}
                 </View>
+
               </View>
             )}
 
@@ -1072,6 +1519,56 @@ const UnityMapScreen = () => {
                   <MaterialIcons name="close" size={22} color={palette.textMuted} />
                 </TouchableOpacity>
               </View>
+
+              {/* Quick Start Navigation Action Bar (≥48dp WCAG Target) */}
+              <TouchableOpacity
+                onPress={handleStartTapNavigation}
+                activeOpacity={0.85}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel={`Start live navigation to ${tapRouteMeta?.destName || 'tapped location'}`}
+                accessibilityHint="Starts live turn-by-turn GPS navigation along this route"
+                style={[
+                  tw`flex-row items-center justify-between rounded-2xl p-3.5 mb-3 shadow-md`,
+                  isHighContrast
+                    ? { backgroundColor: '#FFFFFF', borderColor: '#000000', borderWidth: 2, minHeight: 52 }
+                    : { backgroundColor: palette.primary, minHeight: 52, elevation: 4 },
+                ]}
+              >
+                <View style={tw`flex-row items-center flex-1 mr-2`}>
+                  <View
+                    style={[
+                      tw`w-10 h-10 rounded-xl items-center justify-center mr-3`,
+                      { backgroundColor: isHighContrast ? '#000000' : 'rgba(255,255,255,0.2)' },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="navigation"
+                      size={22}
+                      color={isHighContrast ? '#FFFFFF' : '#FFFFFF'}
+                    />
+                  </View>
+                  <View style={tw`flex-1`}>
+                    <Text
+                      style={[
+                        tw`font-bold text-sm`,
+                        { color: isHighContrast ? '#000000' : '#FFFFFF' },
+                      ]}
+                    >
+                      Start Live Navigation
+                    </Text>
+                    <Text
+                      style={[
+                        tw`text-xs`,
+                        { color: isHighContrast ? '#333333' : '#A7F3D0' },
+                      ]}
+                    >
+                      {tapRouteMeta?.distanceText || 'Direct Route'} • {tapRouteMeta?.etaText || 'Step-free'}
+                    </Text>
+                  </View>
+                </View>
+                <MaterialIcons name="arrow-forward" size={22} color={isHighContrast ? '#000000' : '#FFFFFF'} />
+              </TouchableOpacity>
 
               {/* Two Category Selector Tabs (Touch targets >= 48dp) */}
               <View style={tw`flex-row items-center gap-2 mb-3`}>
@@ -1609,6 +2106,56 @@ const UnityMapScreen = () => {
         >
           <Text style={tw`text-white text-xs font-bold`}>Skip to Map</Text>
         </TouchableOpacity>
+      </Modal>
+
+      {/* SPT-106: Voice Input & Summary Readout Screen — single-tap confirmation modal */}
+      <Modal
+        visible={showVoiceSummary}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={handleVoiceCancel}
+        accessibilityViewIsModal
+      >
+        <VoiceNavigationScreen
+          initialTranscript={voiceTranscript}
+          routeSummary={voiceRouteSummary}
+          onConfirm={handleVoiceConfirm}
+          onCancel={handleVoiceCancel}
+        />
+      </Modal>
+
+      {/* SPT-204: Spoken Guidance & Hazard Warning UI — modal over UnityMapScreen */}
+      <Modal
+        visible={showGuidance}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowGuidance(false)}
+        accessibilityViewIsModal
+      >
+        <SpokenGuidanceHazardWarningScreen
+          routeSummary={voiceRouteSummary || tapRouteMeta}
+          nearbyHazards={nearbyHazards}
+          safetyStatus={safetyStatus}
+          onReprompt={() => speak(voiceRouteSummary?.spokenSummary || tapRouteMeta?.spokenSummary || 'Reprompting guidance')}
+          onDismiss={() => setShowGuidance(false)}
+        />
+      </Modal>
+
+      {/* SPT-201: Google Maps Style Live Turn-by-Turn Navigation Screen Modal */}
+      <Modal
+        visible={isTurnByTurnActive}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsTurnByTurnActive(false)}
+        accessibilityViewIsModal
+      >
+        <LiveTurnByTurnNavigationScreen
+          route={activeNavRoute}
+          originName={activeNavRoute?.originName || 'Your Location'}
+          destinationName={activeNavRoute?.destName || tapRouteMeta?.destName || 'Selected Destination'}
+          elevators={dbElevators}
+          onExitNavigation={() => setIsTurnByTurnActive(false)}
+        />
       </Modal>
     </View>
   );

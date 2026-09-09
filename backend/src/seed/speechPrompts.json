@@ -119,5 +119,16 @@
     "verbosity": "standard",
     "isActive": true,
     "version": 1
+  },
+  {
+    "promptCode": "SPROMPT_ROUTE_SUMMARY",
+    "triggerType": "route_summary",
+    "template": "Route to {{landmark}}: {{distance}}, {{crossings}} crossings, {{eta}}, {{hazardCount}} hazards.",
+    "locale": "en",
+    "priority": 1,
+    "ariaPoliteness": "polite",
+    "verbosity": "standard",
+    "isActive": true,
+    "version": 1
   }
 ]

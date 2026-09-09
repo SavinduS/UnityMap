@@ -245,6 +245,9 @@ const login = async (req, res) => {
       if (normalizedEmail === 'admin@unitymap.com') {
         staff.isSuperAdmin = true;
         staff.role = 'ADMIN';
+      } else if (normalizedEmail === 'user@unitymap.com') {
+        staff.isSuperAdmin = false;
+        staff.role = 'REGULAR_USER';
       }
       if (staff.save) {
         await staff.save().catch(() => {});
@@ -354,6 +357,13 @@ const promoteUser = async (req, res) => {
         });
       }
       return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.email === 'user@unitymap.com') {
+      return res.status(400).json({
+        success: false,
+        message: 'Baseline demo Regular User account (user@unitymap.com) is reserved as the permanent Regular User reference and cannot be promoted. Please promote another citizen account.',
+      });
     }
 
     user.role = 'ADMIN';

@@ -10,11 +10,13 @@ const triageRoutes = require('./triageRoutes');
 const wardComplianceRoutes = require('./wardComplianceRoutes');
 const speechRoutes = require('./speechRoutes');
 const audioRoutes = require('./audioRoutes');
+const reportRoutes = require('./reportRoutes');
 
 router.use('/nodes', nodeRoutes);
 router.use('/pathways', pathwayRoutes);
 router.use('/elevators', elevatorRoutes);
 router.use('/obstacles', obstacleRoutes);
+router.use('/reports', reportRoutes);
 router.use('/speech', speechRoutes);
 router.use('/audio', audioRoutes);
 router.use('/admin/auth', adminAuthRoutes);

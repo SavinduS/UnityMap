@@ -104,8 +104,54 @@ const getLauncherPrompt = async (locale = 'en') => {
   }
 };
 
+/**
+ * Build spoken route summary: Route to {{landmark}}: {{distance}}, {{crossings}} crossings, {{eta}}, {{hazardCount}} hazards.
+ * Uses route_summary prompt template with fallback.
+ */
+const getRouteSummary = async (params, locale = 'en') => {
+  const { landmark = 'destination', distance = '0 m', crossings = 0, eta = '0 mins', hazardCount = 0 } = params || {};
+  try {
+    let prompt = await SpeechPrompt.findOne({ triggerType: 'route_summary', locale, isActive: true }).lean();
+    if (!prompt) {
+      prompt = await SpeechPrompt.findOne({ triggerType: 'route_summary', locale: 'en', isActive: true }).lean();
+    }
+    const template = prompt?.template || 'Route to {{landmark}}: {{distance}}, {{crossings}} crossings, {{eta}}, {{hazardCount}} hazards.';
+    return interpolateTemplate(template, { landmark, distance, crossings, eta, hazardCount });
+  } catch (_) {
+    return `Route to ${landmark}: ${distance}, ${crossings} crossings, ${eta}, ${hazardCount} hazards.`;
+  }
+};
+
+/**
+ * Get contextual hazard cue with distance injection.
+ * Returns spokenText with {{distance}} resolved, earconUrl, ttsOverrides, severity.
+ */
+const getContextualHazardCue = async (obstacleType, distanceMeters, locale = 'en') => {
+  const distance = Math.round(distanceMeters);
+  try {
+    let cue = await HazardCue.findOne({ obstacleType, isActive: true }).sort({ severity: -1 }).lean();
+    if (!cue) cue = await HazardCue.findOne({ isActive: true }).sort({ severity: -1 }).lean();
+    if (!cue) return null;
+    const rawText = (cue.cueText && (cue.cueText[locale] || cue.cueText.en)) || cue.cueText?.en || 'Caution ahead';
+    const spokenText = interpolateTemplate(rawText, { distance, hazard: cue.cueText.en });
+    return {
+      spokenText,
+      earconUrl: cue.earconUrl,
+      ttsOverrides: cue.ttsOverrides,
+      severity: cue.severity,
+      cueCode: cue.cueCode,
+      obstacleType: cue.obstacleType,
+      cue,
+    };
+  } catch (_) {
+    return null;
+  }
+};
+
 module.exports = {
   interpolateTemplate,
   generateTurnSnippets,
   getLauncherPrompt,
+  getRouteSummary,
+  getContextualHazardCue,
 };

@@ -59,19 +59,26 @@ export const RootNavigator = () => {
     return <LoginScreen />;
   }
 
-  // 2. Admin & Super Admin: Render Municipal Admin Portal Hub
-  const role = (currentUser.role || '').toUpperCase();
+  // 2. Role-Based Navigation Routing
+  const role = (currentUser.role || '').toUpperCase().trim();
+  const isSuper = !!currentUser.isSuperAdmin || currentUser.email === 'admin@unitymap.com';
+
+  // Explicitly ensure REGULAR_USER always routes to UnityMapScreen
+  if (role === USER_ROLES.REGULAR_USER && !isSuper) {
+    return <UnityMapScreen />;
+  }
+
   const isAdmin =
+    isSuper ||
     role === USER_ROLES.ADMIN ||
     role === 'SUPER_ADMIN' ||
-    role === 'CHIEF_ENGINEER' ||
-    !!currentUser.isSuperAdmin;
+    role === 'CHIEF_ENGINEER';
 
   if (isAdmin) {
     return <AdminPortalScaffoldScreen />;
   }
 
-  // 3. Regular User: Render Accessible Map & Reporting Dashboard
+  // 3. Fallback: Default to Accessible Map & Reporting Dashboard
   return <UnityMapScreen />;
 };
 

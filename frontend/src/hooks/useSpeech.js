@@ -30,6 +30,7 @@ export const useSpeech = () => {
         language: Platform.select({ ios: 'en-US', android: 'en', default: 'en-US' }),
         pitch: options.pitch ?? 1.0,
         rate: options.rate ?? 1.0,
+        volume: options.volume ?? 1.0,
         ...options,
       };
 

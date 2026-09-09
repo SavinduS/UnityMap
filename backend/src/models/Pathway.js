@@ -39,6 +39,11 @@ const pathwaySchema = new mongoose.Schema(
       },
       index: true,
     },
+    crossings: {
+      type: Number,
+      default: 0,
+      min: [0, 'Crossings cannot be negative'],
+    },
   },
   {
     timestamps: true,

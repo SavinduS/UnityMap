@@ -15,7 +15,6 @@ import { Feather } from '@expo/vector-icons';
 import Card from '../../components/Card';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
-import { getAvailableLocales } from '../../utils/locale';
 import adminAuthService from '../../services/adminAuthService';
 import authService from '../../services/authService';
 import AdminPortalScaffoldScreen from '../admin/AdminPortalScaffoldScreen';
@@ -25,13 +24,10 @@ export const SettingsScreen = () => {
     isHighContrast,
     setHighContrast,
     isScreenReaderEnabled,
-    setIsScreenReaderEnabled,
     isReduceMotionEnabled,
     setIsReduceMotionEnabled,
     isAudioLauncherEnabled,
     setAudioLauncherEnabled,
-    preferredSTTLocale,
-    setPreferredSTTLocale,
     screenReaderName,
     palette,
     borderWidth,
@@ -275,6 +271,9 @@ export const SettingsScreen = () => {
             styles.row,
             { borderColor: palette.border, borderWidth, backgroundColor: palette.surface },
           ]}
+          accessible
+          accessibilityRole="text"
+          accessibilityLabel={`${screenReaderName} ${isScreenReaderEnabled ? 'enabled' : 'off'}`}
         >
           <View style={styles.rowText}>
             <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
@@ -284,19 +283,19 @@ export const SettingsScreen = () => {
               {isScreenReaderEnabled ? 'Enabled — announceForAccessibility active' : 'Off — standard speech'}
             </Text>
             <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted, fontStyle: 'italic', marginTop: 2 }]}>
-              {Platform.OS === 'android' ? 'TalkBack (Android)' : Platform.OS === 'ios' ? 'VoiceOver (iOS)' : 'Screen reader'} via AccessibilityInfo + Platform.select
+              {Platform.OS === 'android' ? 'TalkBack (Android)' : Platform.OS === 'ios' ? 'VoiceOver (iOS)' : 'Screen reader'} via AccessibilityInfo + Platform.select — OS-driven, not manual
             </Text>
           </View>
-          <Switch
-            value={isScreenReaderEnabled}
-            onValueChange={setIsScreenReaderEnabled}
-            trackColor={{ false: '#E5E7EB', true: palette.primary }}
-            thumbColor="#FFFFFF"
-            accessibilityRole="switch"
-            accessibilityLabel={`${screenReaderName} toggle`}
-            accessibilityState={{ checked: isScreenReaderEnabled }}
-            style={styles.switch}
-          />
+          <View
+            style={[
+              styles.badge,
+              { backgroundColor: isScreenReaderEnabled ? palette.primary : palette.surfaceAlt, borderColor: palette.border, borderWidth: isScreenReaderEnabled ? borderWidth : 1 },
+            ]}
+          >
+            <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: isScreenReaderEnabled ? palette.primaryText : palette.textMuted, fontWeight: '700' }]}>
+              {isScreenReaderEnabled ? 'ON' : 'OFF'}
+            </Text>
+          </View>
         </View>
 
         <View
@@ -351,53 +350,6 @@ export const SettingsScreen = () => {
           />
         </View>
 
-        <View
-          style={[
-            styles.localeRow,
-            { borderColor: palette.border, borderWidth, backgroundColor: palette.surface, marginTop: 12 },
-          ]}
-        >
-          <View style={styles.rowText}>
-            <Text {...textProps} style={[styles.rowLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
-              Speech Language
-            </Text>
-            <Text {...textProps} style={[styles.rowHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
-              High accuracy — confidence ≥0.6, 3 alternatives
-            </Text>
-          </View>
-          <View style={styles.localeChips}>
-            {getAvailableLocales().map((loc) => {
-              const isActive = preferredSTTLocale === loc.code;
-              return (
-                <TouchableOpacity
-                  key={loc.code}
-                  onPress={() => setPreferredSTTLocale(loc.code)}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: isActive }}
-                  accessibilityLabel={`Set language ${loc.label}`}
-                  style={[
-                    styles.localeChip,
-                    {
-                      backgroundColor: isActive ? palette.primary : palette.surfaceAlt,
-                      borderColor: palette.border,
-                      borderWidth: isActive ? 0 : 1,
-                    },
-                  ]}
-                >
-                  <Text
-                    {...textProps}
-                    style={[getTextStyle('xs', { isHighContrast }), { color: isActive ? palette.primaryText : palette.textPrimary, fontWeight: isActive ? '700' : '500' }]}
-                  >
-                    {loc.label}
-                  </Text>
-                  <Text style={[getTextStyle('xs', { isHighContrast }), { color: isActive ? palette.primaryText : palette.textMuted, fontSize: 10 }]}>
-                    {loc.bcp47}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
       </Card>
 
       <Card>
@@ -547,26 +499,14 @@ const styles = StyleSheet.create({
   rowLabel: {},
   rowHint: { marginTop: 2 },
   switch: { transform: [{ scaleX: 1.05 }, { scaleY: 1.05 }] },
-  localeRow: {
-    minHeight: 48,
-    flexDirection: 'column',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  localeChips: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  },
-  localeChip: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 10,
+  badge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    minWidth: 48,
+    minHeight: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 44,
   },
   preview: {
     marginTop: 16,

@@ -51,10 +51,26 @@ export const saveRecentSearches = async (searches) => {
   } catch {}
 };
 
+/**
+ * Volunteer draft shape for SPT-109 3-tap audit form:
+ * { imageUri, exifResult, category, rating, notes, updatedAt }
+ * Backward compatible with legacy drafts that only had { imageUri, exifResult, updatedAt }
+ */
 export const loadVolunteerDraft = async () => {
   try {
     const v = await AsyncStorage.getItem(VOLUNTEER_DRAFT_KEY);
-    return v ? JSON.parse(v) : null;
+    if (!v) return null;
+    const parsed = JSON.parse(v);
+    if (!parsed || typeof parsed !== 'object') return null;
+    // Normalize for backward compatibility – older drafts lack category/rating/notes
+    return {
+      imageUri: parsed.imageUri ?? null,
+      exifResult: parsed.exifResult ?? null,
+      category: parsed.category ?? null,
+      rating: parsed.rating ?? null,
+      notes: typeof parsed.notes === 'string' ? parsed.notes : '',
+      updatedAt: parsed.updatedAt ?? null,
+    };
   } catch {
     return null;
   }
@@ -62,7 +78,17 @@ export const loadVolunteerDraft = async () => {
 
 export const saveVolunteerDraft = async (draft) => {
   try {
-    await AsyncStorage.setItem(VOLUNTEER_DRAFT_KEY, JSON.stringify(draft));
+    if (!draft || typeof draft !== 'object') return;
+    const normalized = {
+      imageUri: draft.imageUri ?? null,
+      exifResult: draft.exifResult ?? null,
+      category: draft.category ?? null,
+      rating: draft.rating ?? null,
+      notes: typeof draft.notes === 'string' ? draft.notes : '',
+      updatedAt: draft.updatedAt || new Date().toISOString(),
+    };
+    // Preserve exifResult sub-shape if already stringified日期; keep as-is
+    await AsyncStorage.setItem(VOLUNTEER_DRAFT_KEY, JSON.stringify(normalized));
   } catch {}
 };
 
@@ -104,6 +130,84 @@ export const savePreferredSTTLocale = async (locale) => {
   } catch {}
 };
 
+// SPT-303: Key subset offline cache — English-only, 3 prompts + 3 cues + nodes
+const SPEECH_PROMPTS_KEY = '@unitymap/speechPrompts';
+const HAZARD_CUES_KEY = '@unitymap/hazardCues';
+const NODES_CACHE_KEY = '@unitymap/nodesCache';
+const CACHE_VERSION_KEY = '@unitymap/cacheVersion';
+const EARCON_MANIFEST_KEY = '@unitymap/earconManifest';
+
+export const loadSpeechPromptsCache = async () => {
+  try {
+    const v = await AsyncStorage.getItem(SPEECH_PROMPTS_KEY);
+    return v ? JSON.parse(v) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const saveSpeechPromptsCache = async (prompts, version = 1) => {
+  try {
+    await AsyncStorage.setItem(SPEECH_PROMPTS_KEY, JSON.stringify(prompts));
+    await AsyncStorage.setItem(CACHE_VERSION_KEY, String(version));
+  } catch {}
+};
+
+export const loadHazardCuesCache = async () => {
+  try {
+    const v = await AsyncStorage.getItem(HAZARD_CUES_KEY);
+    return v ? JSON.parse(v) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const saveHazardCuesCache = async (cues, version = 1) => {
+  try {
+    await AsyncStorage.setItem(HAZARD_CUES_KEY, JSON.stringify(cues));
+    await AsyncStorage.setItem(CACHE_VERSION_KEY, String(version));
+  } catch {}
+};
+
+export const loadNodesCache = async () => {
+  try {
+    const v = await AsyncStorage.getItem(NODES_CACHE_KEY);
+    return v ? JSON.parse(v) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const saveNodesCache = async (nodes) => {
+  try {
+    await AsyncStorage.setItem(NODES_CACHE_KEY, JSON.stringify(nodes));
+  } catch {}
+};
+
+export const loadEarconManifest = async () => {
+  try {
+    const v = await AsyncStorage.getItem(EARCON_MANIFEST_KEY);
+    return v ? JSON.parse(v) : {};
+  } catch {
+    return {};
+  }
+};
+
+export const saveEarconManifest = async (manifest) => {
+  try {
+    await AsyncStorage.setItem(EARCON_MANIFEST_KEY, JSON.stringify(manifest));
+  } catch {}
+};
+
+export const loadCacheVersion = async () => {
+  try {
+    const v = await AsyncStorage.getItem(CACHE_VERSION_KEY);
+    return v ? Number(v) : 0;
+  } catch {
+    return 0;
+  }
+};
+
 export default {
   loadHighContrast,
   saveHighContrast,
@@ -118,5 +222,14 @@ export default {
   saveAudioLauncherEnabled,
   loadPreferredSTTLocale,
   savePreferredSTTLocale,
+  loadSpeechPromptsCache,
+  saveSpeechPromptsCache,
+  loadHazardCuesCache,
+  saveHazardCuesCache,
+  loadNodesCache,
+  saveNodesCache,
+  loadEarconManifest,
+  saveEarconManifest,
+  loadCacheVersion,
 };
 
