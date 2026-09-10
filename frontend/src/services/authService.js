@@ -12,6 +12,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiRequest } from './api';
+import { validateEmail } from '../utils/validation';
 
 export const USER_ROLES = {
   ADMIN: 'ADMIN',
@@ -28,6 +29,13 @@ export const DEMO_CREDENTIALS = {
     name: 'Super Admin',
     role: USER_ROLES.ADMIN,
     isSuperAdmin: true,
+  },
+  NORMAL_ADMIN: {
+    email: 'staff.admin@unitymap.com',
+    password: '123456',
+    name: 'Municipal Admin Officer',
+    role: USER_ROLES.ADMIN,
+    isSuperAdmin: false,
   },
   REGULAR_USER: {
     email: 'user@unitymap.com',
@@ -118,6 +126,11 @@ class AuthService {
       throw new Error('Please enter both your email address and password.');
     }
 
+    const emailCheck = validateEmail(email, true);
+    if (!emailCheck.isValid) {
+      throw new Error(emailCheck.error);
+    }
+
     const cleanEmail = email.trim().toLowerCase();
 
     // 1. Attempt Node.js backend authentication
@@ -185,6 +198,12 @@ class AuthService {
     if (!firstName || !email || !password) {
       throw new Error('First name, email address, and password are required.');
     }
+
+    const emailCheck = validateEmail(email, true);
+    if (!emailCheck.isValid) {
+      throw new Error(emailCheck.error);
+    }
+
     if (password.length < 6) {
       throw new Error('Password must be at least 6 characters long.');
     }
@@ -236,6 +255,74 @@ class AuthService {
       assignedWardId: 'CMC-W01',
       department: 'Citizen & Accessibility Community',
       token: `jwt-registered-${Date.now()}`,
+      sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    };
+
+    this.currentUser = fallbackUser;
+    await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(fallbackUser)).catch(() => {});
+    this.notify();
+    return this.currentUser;
+  }
+
+  /**
+   * Sign In / Sign Up with Google
+   * Automatically creates a new account if the user does not exist in DB
+   */
+  async loginWithGoogle({ email, firstName, lastName, name, photoUrl, googleId, idToken }) {
+    if (!email) {
+      throw new Error('Google authentication did not provide a valid email address.');
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Attempt Node.js backend Google authentication & registration
+    try {
+      const res = await apiRequest('/admin/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: cleanEmail,
+          firstName: (firstName || '').trim(),
+          lastName: (lastName || '').trim(),
+          name: (name || '').trim(),
+          photoUrl: photoUrl || '',
+          googleId: googleId || '',
+          idToken: idToken || '',
+        }),
+      });
+
+      if (res?.success && res?.user) {
+        const userObj = {
+          ...res.user,
+          token: res.token,
+          sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        };
+
+        this.currentUser = userObj;
+        await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(userObj)).catch(() => {});
+        this.notify();
+        return this.currentUser;
+      }
+    } catch (networkErr) {
+      console.warn('[AuthService] Backend Google auth unreachable, using local fallback:', networkErr.message);
+    }
+
+    // 2. Offline fallback for presentation resilience
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const fullName = (name || `${firstName || ''} ${lastName || ''}`.trim() || cleanEmail.split('@')[0]).trim();
+    const fallbackUser = {
+      id: `UM-GOOGLE-${Date.now().toString().slice(-4)}`,
+      name: fullName,
+      firstName: firstName || fullName.split(' ')[0],
+      lastName: lastName || fullName.split(' ').slice(1).join(' '),
+      email: cleanEmail,
+      phone: '',
+      photoUrl: photoUrl || '',
+      badgeNumber: `CIT-${Math.floor(1000 + Math.random() * 9000)}`,
+      role: USER_ROLES.REGULAR_USER,
+      isSuperAdmin: false,
+      assignedWardId: 'CMC-W01',
+      department: 'Citizen & Accessibility Community',
+      token: `jwt-google-${Date.now()}`,
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
 

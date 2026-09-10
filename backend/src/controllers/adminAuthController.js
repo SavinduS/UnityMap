@@ -97,7 +97,23 @@ const register = async (req, res) => {
       });
     }
 
+    if (firstName.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'First name must be at least 2 characters long',
+      });
+    }
+
     const normalizedEmail = email.toLowerCase().trim();
+
+    // Strict email symbol and format validation: only alphanumeric, @, ., _, -, +
+    const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!EMAIL_REGEX.test(normalizedEmail) || /[^a-zA-Z0-9.@_+-]/.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address. Only letters, numbers, '@', and '.' are allowed.",
+      });
+    }
 
     // Check if user already exists in DB
     const existingUser = await MunicipalStaff.findOne({ email: normalizedEmail });
@@ -180,6 +196,17 @@ const login = async (req, res) => {
 
     const normalizedEmail = email.toLowerCase().trim();
 
+    // If logging in with email, ensure valid format and allowed characters
+    if (normalizedEmail.includes('@')) {
+      const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+      if (!EMAIL_REGEX.test(normalizedEmail) || /[^a-zA-Z0-9.@_+-]/.test(normalizedEmail)) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid email address. Only letters, numbers, '@', and '.' are allowed.",
+        });
+      }
+    }
+
     // Check seed accounts first (e.g. admin@unitymap.com, user@unitymap.com)
     const seedProfile = SEED_ACCOUNTS.find(
       (a) => a.email === normalizedEmail || a.badgeNumber === email.toUpperCase()
@@ -250,7 +277,7 @@ const login = async (req, res) => {
         staff.role = 'REGULAR_USER';
       }
       if (staff.save) {
-        await staff.save().catch(() => {});
+        await staff.save().catch(() => { });
       }
     }
 
@@ -432,9 +459,123 @@ const demoteUser = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/admin/auth/google
+ * Google Sign In & Account Creation handler
+ */
+const googleAuth = async (req, res) => {
+  try {
+    const { email, firstName, lastName, name, photoUrl, googleId } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email address is required for Google authentication',
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // 1. Check if user exists in database
+    let staff = await MunicipalStaff.findOne({ email: normalizedEmail });
+
+    // Also check seed profiles (e.g. admin@unitymap.com, user@unitymap.com)
+    const seedProfile = SEED_ACCOUNTS.find((a) => a.email === normalizedEmail);
+
+    let isNewUser = false;
+
+    if (!staff && seedProfile) {
+      try {
+        staff = await MunicipalStaff.create({
+          staffId: seedProfile.staffId,
+          name: seedProfile.name,
+          firstName: seedProfile.firstName,
+          lastName: seedProfile.lastName,
+          email: seedProfile.email,
+          phone: seedProfile.phone,
+          password: 'google-oauth-authenticated',
+          badgeNumber: seedProfile.badgeNumber,
+          role: seedProfile.role,
+          isSuperAdmin: seedProfile.isSuperAdmin,
+          assignedWardId: seedProfile.assignedWardId,
+          department: seedProfile.department,
+          lastLogin: new Date(),
+        });
+      } catch (_err) {
+        staff = seedProfile;
+      }
+    } else if (!staff) {
+      // 2. Create NEW user account via Google
+      isNewUser = true;
+      const inferredFirstName = (firstName || name?.split(' ')[0] || normalizedEmail.split('@')[0]).trim();
+      const inferredLastName = (lastName || name?.split(' ').slice(1).join(' ') || '').trim();
+      const fullName = (name || `${inferredFirstName} ${inferredLastName}`).trim();
+      const staffId = `UM-REG-${Date.now().toString().slice(-6)}`;
+      const badgeNumber = `CIT-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      try {
+        staff = await MunicipalStaff.create({
+          staffId,
+          name: fullName,
+          firstName: inferredFirstName,
+          lastName: inferredLastName,
+          email: normalizedEmail,
+          password: `google-oauth-${Date.now()}`,
+          phone: '',
+          badgeNumber,
+          role: 'REGULAR_USER',
+          isSuperAdmin: false,
+          assignedWardId: 'CMC-W01',
+          department: 'Citizen & Accessibility Community',
+          lastLogin: new Date(),
+        });
+      } catch (createErr) {
+        staff = {
+          staffId,
+          name: fullName,
+          firstName: inferredFirstName,
+          lastName: inferredLastName,
+          email: normalizedEmail,
+          badgeNumber,
+          role: 'REGULAR_USER',
+          isSuperAdmin: false,
+          assignedWardId: 'CMC-W01',
+          department: 'Citizen & Accessibility Community',
+        };
+      }
+    } else {
+      // Existing user: update last login timestamp
+      staff.lastLogin = new Date();
+      if (staff.save) {
+        await staff.save().catch(() => {});
+      }
+    }
+
+    const token = `jwt-session-${Buffer.from(`${normalizedEmail}:${Date.now()}`).toString('base64')}`;
+
+    return res.status(isNewUser ? 201 : 200).json({
+      success: true,
+      message: isNewUser
+        ? 'Account successfully created with Google! Welcome to UnityMap.'
+        : 'Welcome back! Signed in with Google.',
+      isNewUser,
+      token,
+      user: formatUserResponse(staff),
+    });
+  } catch (error) {
+    console.error('Google auth error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Google authentication failed due to an internal server error',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   register,
   login,
+  googleAuth,
   getMe,
   getUsers,
   promoteUser,
