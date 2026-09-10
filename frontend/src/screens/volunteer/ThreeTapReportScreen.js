@@ -310,11 +310,13 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       timestamp: barrierFields.capturedAt,
     };
 
-    const volunteerName = `${category} Barrier`;
-    const volunteerLocationName = deviceLocation ? `Volunteer Report ${finalLat.toFixed(3)}, ${finalLng.toFixed(3)}` : 'Volunteer Report Location';
+    // Build payload using ONLY real user inputs — no hardcoded Colombo Fort / Unsplash mocks
+    // name: from user input (category-derived label is real user selection, not hardcoded address)
+    // locationName: NOT hardcoded; leave empty so backend can compute from ward context or persist empty
+    // capturedAt: exact EXIF DateTimeOriginal / photoFile timestamp, fallback handled by backend/api layer
     const payload = {
-      name: volunteerName,
-      locationName: volunteerLocationName,
+      name: category ? `${category} Barrier` : '',
+      locationName: '',
       condition: 'bad',
       coordinates: { latitude: finalLat, longitude: finalLng },
       latitude: finalLat,
@@ -324,8 +326,8 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       rating,
       notes: notes?.trim() || undefined,
       exifMetadata,
-      capturedAt: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? new Date().toISOString(),
-      timestamp: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? new Date().toISOString(),
+      capturedAt: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ? String(barrierFields.capturedAt) : undefined,
+      timestamp: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ? String(barrierFields.capturedAt) : undefined,
     };
 
     setSubmitting(true);
@@ -379,7 +381,11 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
         } catch {}
       }
     } catch (e) {
-      const msg = e?.message || 'Failed to submit report. Please try again.';
+      let msg = e?.message || 'Failed to submit report. Please try again.';
+      // Normalize AbortError / timeout to user-friendly text
+      if (/aborted|abort|timed out|TimeoutError|signal is aborted/i.test(msg) || e?.name === 'AbortError' || e?.name === 'TimeoutError') {
+        msg = 'Submission timed out — please check your network and try again. If the problem persists, try a smaller photo.';
+      }
       setErrorMsg(msg);
       try { AccessibilityInfo.announceForAccessibility(`Error: ${msg}`); } catch {}
     } finally {

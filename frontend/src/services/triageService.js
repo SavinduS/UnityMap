@@ -226,6 +226,8 @@ export const addMockTriageReport = (reportData = {}) => {
   const wardId = reportData.wardId || 'CMC-W01';
   const nowIso = new Date().toISOString();
   const id = reportData._id || `RPT-MOCK-${Date.now().toString(36).toUpperCase()}`;
+  // Persist ONLY real user inputs — no hardcoded Unsplash mock photoUrl fallback for report creation
+  // If no photo provided, leave photoUrl empty (backend requires real photoUrl or file upload)
   const base = {
     _id: id,
     category: reportData.category || 'Other',
@@ -236,7 +238,7 @@ export const addMockTriageReport = (reportData = {}) => {
       : Array.from({ length: Number(reportData.corroborationCount) || 0 }, (_, i) => `mock-upvoter-${id}-${i + 1}`),
     triageStatus: 'pending',
     notes: reportData.notes || reportData.note || '',
-    photoUrl: reportData.photoUrl || reportData.imageUri || 'https://images.unsplash.com/photo-1584467735815-f778f274e296?w=600&auto=format&fit=crop',
+    photoUrl: reportData.photoUrl || reportData.imageUri || '',
     coordinates: reportData.coordinates || { latitude: 6.9271, longitude: 79.8612 },
     createdAt: reportData.createdAt || nowIso,
     wardId,

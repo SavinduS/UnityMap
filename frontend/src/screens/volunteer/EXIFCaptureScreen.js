@@ -186,7 +186,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
         const result = await ImagePicker.launchCameraAsync({
           mediaTypes: ImagePicker.MediaTypeOptions.Images,
           allowsEditing: false,
-          quality: 1,
+          quality: 0.6,
           exif: true,
         });
         if (!isMountedRef.current) return;
@@ -212,8 +212,15 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           const exif = await extractExifData({ uri: asset.uri });
           if (!isMountedRef.current) return;
           setExifResult(exif);
-          const assetFile = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' };
-          await persistDraft(asset.uri, exif, assetFile);
+          // Convert camera photo format to JPEG with explicit MIME guard (fix Unsupported FormDataPart where mimeType is "image")
+          // No extra dep: normalize extension + force image/jpeg + ImagePicker quality 0.6 already compresses (avoids 403 on expo-image-manipulator)
+          let finalUri = asset.uri;
+          let finalName = asset.fileName || `photo_${Date.now()}.jpg`;
+          if (!finalName.toLowerCase().endsWith('.jpg') && !finalName.toLowerCase().endsWith('.jpeg')) {
+            finalName = finalName.replace(/\.[^/.]+$/, '') + '.jpg';
+          }
+          const assetFile = { uri: String(finalUri), name: String(finalName), type: 'image/jpeg' };
+          await persistDraft(String(finalUri), exif, assetFile);
         } catch (exifErr) {
           if (!isMountedRef.current) return;
           const fallback = {
@@ -225,8 +232,13 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
             hasTimestamp: false,
           };
           setExifResult(fallback);
-          const assetFileFallback = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' };
-          await persistDraft(asset.uri, fallback, assetFileFallback);
+          let finalUriFb = asset.uri;
+          let finalNameFb = asset.fileName || `photo_${Date.now()}.jpg`;
+          if (!finalNameFb.toLowerCase().endsWith('.jpg') && !finalNameFb.toLowerCase().endsWith('.jpeg')) {
+            finalNameFb = finalNameFb.replace(/\.[^/.]+$/, '') + '.jpg';
+          }
+          const assetFileFallback = { uri: String(finalUriFb), name: String(finalNameFb), type: 'image/jpeg' };
+          await persistDraft(String(finalUriFb), fallback, assetFileFallback);
         } finally {
           if (isMountedRef.current) {
             setExifLoading(false);

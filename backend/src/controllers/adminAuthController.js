@@ -62,7 +62,9 @@ const SEED_ACCOUNTS = [
  * Format user object for client response
  */
 const formatUserResponse = (user) => ({
+  _id: user._id ? user._id.toString() : undefined,
   id: user.staffId || (user._id ? user._id.toString() : `STAFF-${Date.now()}`),
+  staffId: user.staffId,
   name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email.split('@')[0],
   firstName: user.firstName || user.name?.split(' ')[0] || '',
   lastName: user.lastName || user.name?.split(' ').slice(1).join(' ') || '',

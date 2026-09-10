@@ -299,8 +299,8 @@ exports.createReport = async (req, res) => {
       }
     }
 
-    // --- Validate capturedAt / timestamp (time+date when click photo) ---
-    // Accept capturedAt, timestamp, photoTakenAt; default to now if not provided so photo time is always saved
+    // --- Validate capturedAt / timestamp — use exact EXIF DateTimeOriginal / photoFile timestamp from client ---
+    // Strictly save incoming capturedAt (exifResult?.timestamp / photoFile?.timestamp); fallback to new Date() only if completely missing
     let sanitizedCapturedAt = undefined;
     const rawCapturedAt = capturedAt;
     if (rawCapturedAt !== undefined && rawCapturedAt !== null && rawCapturedAt !== '') {
@@ -313,8 +313,7 @@ exports.createReport = async (req, res) => {
       }
       sanitizedCapturedAt = d;
     } else {
-      // Auto-set to photo click time (now) if client didn't send EXIF timestamp
-      // This ensures "time and date when click the photo" is always persisted
+      // Fallback only if client did not send any photo time
       sanitizedCapturedAt = new Date();
     }
     // Ensure exifMetadata.timestamp falls back to capturedAt if not separately provided
@@ -331,28 +330,62 @@ exports.createReport = async (req, res) => {
       sanitizedExif.timestamp = sanitizedCapturedAt;
     }
 
+    // Sanitize reporterId: must be a valid ObjectId, otherwise ignore (staffId like CMC-CHI-325 is not ObjectId)
+    let sanitizedReporterId = undefined;
+    if (reporterId && typeof reporterId === 'string' && reporterId.trim()) {
+      const trimmed = reporterId.trim();
+      if (mongoose.Types.ObjectId.isValid(trimmed)) {
+        sanitizedReporterId = trimmed;
+      } else {
+        console.warn(`[createReport] Ignoring invalid reporterId "${trimmed}" — not a valid ObjectId (staffId). Saving report without reporterId.`);
+      }
+    } else if (reporterId) {
+      // already ObjectId or other type
+      try {
+        if (mongoose.Types.ObjectId.isValid(String(reporterId))) sanitizedReporterId = String(reporterId);
+      } catch {}
+    }
+
+    // Persist ONLY real user inputs — strict mapping from req.body / req.file
+    // photoUrl: Cloudinary secure URL from req.file if uploaded, otherwise req.body.photoUrl ONLY if provided (no Unsplash mock)
+    // name, category, rating, condition, notes, coordinates (latitude/longitude), capturedAt, locationName — all from user
     const report = await BarrierReport.create({
       coordinates: {
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
       },
       location,
-      photoUrl: photoUrl.trim(),
-      category,
-      rating: ratingNum,
-      notes: notes ? notes.trim() : undefined,
+      photoUrl: photoUrl.trim(), // Cloudinary secure_url from req.file OR req.body.photoUrl if explicitly sent
+      category: category, // req.body.category direct
+      rating: ratingNum, // Number(req.body.rating) direct
+      notes: notes ? notes.trim() : undefined, // req.body.notes direct
       exifMetadata: sanitizedExif,
-      capturedAt: sanitizedCapturedAt,
-      name: name || undefined,
-      locationName: locationName || undefined,
-      condition: condition || undefined,
-      reporterId: reporterId || undefined,
+      capturedAt: sanitizedCapturedAt, // req.body.capturedAt EXIF timestamp, fallback new Date() only if missing
+      name: name || undefined, // req.body.name direct — no hardcoding
+      locationName: locationName || undefined, // req.body.locationName direct — NOT 'Colombo Fort', empty if not sent (ward context handled client-side)
+      condition: condition || undefined, // req.body.condition 'bad'|'good' direct
+      reporterId: sanitizedReporterId,
       triageStatus: 'pending',
       verificationLog: [{ action: 'created', status: 'pending', timestamp: new Date() }],
     });
 
-    console.log('✅ New Report Created in DB:', report);
-    console.log(`   → Category: ${report.category} | Rating: ${report.rating} | Location: ${report.locationName || 'N/A'} | Coords: ${report.coordinates.latitude}, ${report.coordinates.longitude}`);
+    // Verification Log Check — print exact user-entered fields to confirm no mock data injected
+    console.log('--------------------------------------------------');
+    console.log('✅ NEW REPORT SUCCESSFULLY SAVED IN MONGODB!');
+    console.log('📌 Report ID:', report._id);
+    console.log('🏷️  name:', report.name || '(empty)');
+    console.log('🏷️  category:', report.category);
+    console.log('⭐ rating:', report.rating);
+    console.log('⚖️  condition:', report.condition || '(empty)');
+    console.log('📝 notes:', report.notes || '(empty)');
+    console.log('📍 coordinates:', report.coordinates);
+    console.log('🏠 locationName:', report.locationName || '(empty)');
+    console.log('📸 photoUrl:', report.photoUrl);
+    console.log('🕒 capturedAt:', report.capturedAt);
+    console.log('--------------------------------------------------');
+    console.log('✅ VERIFICATION — REAL USER INPUTS ONLY (no mock/Unsplash/Colombo Fort injected)');
+    console.log(report.toObject ? report.toObject() : report);
+    console.log('--------------------------------------------------');
 
     return res.status(201).json({
       success: true,

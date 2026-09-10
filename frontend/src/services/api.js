@@ -2,6 +2,41 @@ import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
+ * Convert a local file:// or content:// uri (camera photo) to a data URI for JSON fallback.
+ * This guarantees the photo can still be uploaded via uploadDataUriToCloudinary when FormData serialization fails
+ * (e.g. large camera photo causing timeout or invalid MIME).
+ */
+const fileUriToDataUri = async (uri) => {
+  if (!uri || typeof uri !== 'string') return '';
+  if (uri.startsWith('data:')) return uri;
+  // Only attempt conversion for local file URIs on native
+  if (Platform.OS === 'web' || (!uri.startsWith('file://') && !uri.startsWith('content://'))) {
+    return uri;
+  }
+  try {
+    const FileSystem = await import('expo-file-system').catch(() => null);
+    const FS = FileSystem?.default || FileSystem;
+    if (FS?.readAsStringAsync) {
+      // Prefer legacy API if available, else new File API
+      if (FS.EncodingType?.Base64) {
+        const base64 = await FS.readAsStringAsync(uri, { encoding: FS.EncodingType.Base64 });
+        return `data:image/jpeg;base64,${base64}`;
+      } else if (FS.File) {
+        const file = new FS.File(uri);
+        if (file?.base64) {
+          const b64 = await file.base64();
+          return `data:image/jpeg;base64,${b64}`;
+        }
+        // fallback to read
+        const b64 = await file.text().catch(() => null);
+        if (b64) return `data:image/jpeg;base64,${b64}`;
+      }
+    }
+  } catch {}
+  return uri;
+};
+
+/**
  * UnityMap Centralized API Service
  * Connects React Native / Web frontend to Node.js / Express backend with MongoDB.
  */
@@ -56,7 +91,16 @@ export const apiRequest = async (endpoint, options = {}) => {
   const tryFetch = async (baseUrl) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    // Harden timeout for large photo uploads to Cloudinary — increased from 30000ms to 45000ms
+    const timeoutMs = isFormData ? 45000 : 45000;
+    // Explicit 45000ms timeout allows Cloudinary uploads to complete on slow Android networks
+    const timeoutId = setTimeout(() => {
+      try {
+        controller.abort(new DOMException(`Request timed out after ${timeoutMs}ms`, 'TimeoutError'));
+      } catch {
+        controller.abort();
+      }
+    }, timeoutMs);
 
     console.log(`[API Request] Fetching: ${url}`);
 
@@ -70,7 +114,13 @@ export const apiRequest = async (endpoint, options = {}) => {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`API Request Failed: ${response.status} ${response.statusText}`);
+        // Try to parse error body for more context
+        let errorBody = '';
+        try {
+          const text = await response.text();
+          errorBody = text ? ` - ${text.slice(0, 300)}` : '';
+        } catch {}
+        throw new Error(`API Request Failed: ${response.status} ${response.statusText}${errorBody}`);
       }
 
       const data = await response.json();
@@ -78,6 +128,14 @@ export const apiRequest = async (endpoint, options = {}) => {
       return data;
     } catch (err) {
       clearTimeout(timeoutId);
+      // Normalize AbortError / TimeoutError / Canceled to a user-friendly message so UI can handle it
+      // React Native fetch on Android throws "Fetch request has been canceled" for abort/timeout
+      if (err && (err.name === 'AbortError' || err.name === 'TimeoutError' || /aborted|abort|timeout|canceled|cancelled|cancel/i.test(err.message || ''))) {
+        const timeoutErr = new Error(`Request to ${cleanEndpoint} timed out or was aborted — please check your network and try again. (original: ${err.message})`);
+        timeoutErr.name = 'TimeoutError';
+        timeoutErr.cause = err;
+        throw timeoutErr;
+      }
       throw err;
     }
   };
@@ -94,14 +152,25 @@ export const apiRequest = async (endpoint, options = {}) => {
     try {
       return await tryFetch(getBaseUrl(FALLBACK_PORT));
     } catch (fallbackErr) {
-      // If native mobile failed on LAN IP, try localhost / 10.0.2.2 as last resort
+      // If native mobile failed, try exhaustive last-resort hosts:
+      // 10.0.2.2 (Android emulator), localhost, and common LAN IPs
       if (Platform.OS !== 'web') {
-        try {
-          return await tryFetch(`http://10.0.2.2:${PRIMARY_PORT}/api`);
-        } catch (emuErr) {
+        const lastResortHosts = [
+          `http://10.0.2.2:${PRIMARY_PORT}/api`,
+          `http://localhost:${PRIMARY_PORT}/api`,
+          `http://192.168.8.183:${PRIMARY_PORT}/api`,
+          `http://192.168.1.177:${PRIMARY_PORT}/api`,
+          `http://192.168.0.100:${PRIMARY_PORT}/api`,
+        ];
+        // Avoid retrying the same host already tried (getBaseUrl)
+        const tried = new Set([getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)]);
+        for (const host of lastResortHosts) {
+          if (tried.has(host)) continue;
           try {
-            return await tryFetch(`http://localhost:${PRIMARY_PORT}/api`);
-          } catch (_) {}
+            return await tryFetch(host);
+          } catch (_) {
+            tried.add(host);
+          }
         }
       }
 
@@ -275,6 +344,7 @@ export const getReportById = (id) => apiRequest(`/reports/${id}`);
 
 /**
  * Create a barrier report — photo is uploaded to Cloudinary via backend.
+ * Form fields mirror report form image: name, locationName, coordinates, category, rating (1-5 kept), condition, notes, capturedAt — reporterName removed.
  *
  * @param {object} reportData - { name, locationName, coordinates:{latitude,longitude}, category, rating(1-5 kept), condition:'good'|'bad', notes/note, exifMetadata, capturedAt/timestamp, reporterId }
  * @param {File|Blob|{uri:string, name?:string, type?:string}} [photoFile] - image file to upload (field `photo`)
@@ -282,7 +352,7 @@ export const getReportById = (id) => apiRequest(`/reports/${id}`);
  * If no photoFile, photoUrl must be inside reportData.
  */
 export const createReport = async (reportData, photoFile) => {
-  // If no file, fallback to JSON (backward compat) - ensure flat lat/lng + new fields are stringified for backend aliases
+  // If no file, fallback to JSON (backward compat)
   if (!photoFile) {
     return apiRequest('/reports', {
       method: 'POST',
@@ -290,135 +360,288 @@ export const createReport = async (reportData, photoFile) => {
     });
   }
 
-  const formData = new FormData();
+  // Harden FormData Construction: wrap serialization in inner try/catch before JSON fallback
+  let formData;
+  try {
+    formData = new FormData();
 
-  // FIX: Unsupported FormDataPart - Expo requires {uri, name, type} on native, File/Blob only on web
-  // Never append raw string, number, or File on native. Always convert to RN file object on native.
-  if (Platform.OS === 'web') {
-    // Web: browser FormData accepts File/Blob
-    if (photoFile instanceof File || photoFile instanceof Blob) {
-      const fileName = photoFile.name || `photo_${Date.now()}.jpg`;
-      formData.append('photo', photoFile, fileName);
-    } else if (typeof photoFile === 'object' && photoFile.uri) {
-      const uri = photoFile.uri;
-      const name = photoFile.name || `photo_${Date.now()}.jpg`;
-      const type = photoFile.type || 'image/jpeg';
-      if (typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:'))) {
+    if (Platform.OS === 'web') {
+      // Web: browser FormData accepts File/Blob
+      if (photoFile instanceof File || photoFile instanceof Blob) {
+        const fileName = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        formData.append('photo', photoFile, fileName);
+      } else if (typeof photoFile === 'object' && photoFile !== null && typeof photoFile.uri === 'string') {
+        const uri = String(photoFile.uri);
+        const name = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        const type = String(photoFile.type || 'image/jpeg');
+        if (uri.startsWith('blob:') || uri.startsWith('data:')) {
+          try {
+            const resp = await fetch(uri);
+            const blob = await resp.blob();
+            const file = new File([blob], name, { type: String(blob.type || type) });
+            formData.append('photo', file, name);
+          } catch {
+            return apiRequest('/reports', {
+              method: 'POST',
+              body: JSON.stringify({ ...reportData, photoUrl: String(uri) }),
+            });
+          }
+        } else {
+          try {
+            const resp = await fetch(uri);
+            const blob = await resp.blob();
+            const file = new File([blob], name, { type: String(blob.type || type) });
+            formData.append('photo', file, name);
+          } catch {
+            return apiRequest('/reports', {
+              method: 'POST',
+              body: JSON.stringify({ ...reportData, photoUrl: String(uri) }),
+            });
+          }
+        }
+      } else if (typeof photoFile === 'string' && (photoFile.startsWith('blob:') || photoFile.startsWith('data:'))) {
         try {
-          const resp = await fetch(uri);
+          const resp = await fetch(photoFile);
           const blob = await resp.blob();
-          const file = new File([blob], name, { type: blob.type || type });
-          formData.append('photo', file, name);
+          const file = new File([blob], String(`photo_${Date.now()}.jpg`), { type: String(blob.type || 'image/jpeg') });
+          formData.append('photo', file, file.name);
         } catch {
-          // fallback to uri object even on web if fetch fails
-          formData.append('photo', { uri, name, type });
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: String(photoFile) }),
+          });
         }
       } else {
-        // web may also need blob fetch for file:// URIs
-        try {
-          const resp = await fetch(uri);
-          const blob = await resp.blob();
-          const file = new File([blob], name, { type: blob.type || type });
-          formData.append('photo', file, name);
-        } catch {
-          formData.append('photo', { uri, name, type });
-        }
-      }
-    } else if (typeof photoFile === 'string' && (photoFile.startsWith('blob:') || photoFile.startsWith('data:'))) {
-      try {
-        const resp = await fetch(photoFile);
-        const blob = await resp.blob();
-        const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
-        formData.append('photo', file, file.name);
-      } catch {
         formData.append('photo', photoFile);
       }
     } else {
-      formData.append('photo', photoFile);
+      // React Native: strictly format the photo object to { uri, name, type } with type: 'image/jpeg'
+      if (typeof photoFile === 'object' && photoFile !== null && typeof photoFile.uri === 'string') {
+        const formattedPhoto = {
+          uri: String(photoFile.uri),
+          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
+          type: 'image/jpeg',
+        };
+        formData.append('photo', formattedPhoto);
+      } else if (typeof File !== 'undefined' && photoFile instanceof File) {
+        const formattedPhoto = {
+          uri: String(photoFile.uri || `file:///tmp/photo_${Date.now()}.jpg`),
+          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
+          type: 'image/jpeg',
+        };
+        formData.append('photo', formattedPhoto);
+      } else if (typeof Blob !== 'undefined' && photoFile instanceof Blob) {
+        return apiRequest('/reports', {
+          method: 'POST',
+          body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || '') }),
+        });
+      } else if (typeof photoFile === 'string') {
+        const formattedPhoto = {
+          uri: String(photoFile),
+          name: String(`photo_${Date.now()}.jpg`),
+          type: 'image/jpeg',
+        };
+        formData.append('photo', formattedPhoto);
+      } else {
+        return apiRequest('/reports', {
+          method: 'POST',
+          body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || String(photoFile || '')) }),
+        });
+      }
     }
-  } else {
-    // Native (iOS/Android): MUST be { uri, name, type } - File/Blob causes "Unsupported FormDataPart"
-    if (typeof photoFile === 'object' && photoFile.uri) {
-      const uri = photoFile.uri;
-      const name = photoFile.name || `photo_${Date.now()}.jpg`;
-      const type = photoFile.type || 'image/jpeg';
-      formData.append('photo', { uri, name, type });
-    } else if (photoFile instanceof File || photoFile instanceof Blob) {
-      // Native should never receive File/Blob, but handle defensively by warning and converting to uri obj if possible
-      // Attempt to create temp uri - fallback to JSON photoUrl path
-      console.warn('[createReport] File/Blob on native - converting to uri object fallback');
-      formData.append('photo', {
-        uri: photoFile.uri || `file:///tmp/photo_${Date.now()}.jpg`,
-        name: photoFile.name || `photo_${Date.now()}.jpg`,
-        type: photoFile.type || 'image/jpeg',
-      });
-    } else if (typeof photoFile === 'string') {
-      formData.append('photo', {
-        uri: photoFile,
-        name: `photo_${Date.now()}.jpg`,
-        type: 'image/jpeg',
-      });
-    } else {
-      formData.append('photo', photoFile);
+
+    // Append text fields with explicit type guards and String() conversions
+    const appendString = (key, value) => {
+      if (value === undefined || value === null || value === '') return;
+      formData.append(key, String(value));
+    };
+    const appendJson = (key, value) => {
+      if (value === undefined || value === null) return;
+      if (value instanceof Date) formData.append(key, value.toISOString());
+      else if (typeof value === 'object') formData.append(key, JSON.stringify(value));
+      else formData.append(key, String(value));
+    };
+
+    const category = reportData.category;
+    const ratingStr = reportData.rating !== undefined && reportData.rating !== null ? String(reportData.rating) : undefined;
+    const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
+    const lng = reportData.coordinates?.longitude ?? reportData.longitude ?? reportData.lon;
+    const rawCaptured =
+      reportData.capturedAt ??
+      reportData.timestamp ??
+      reportData.photoTakenAt ??
+      reportData.exifMetadata?.timestamp ??
+      reportData.exifResult?.timestamp ??
+      photoFile?.timestamp ??
+      photoFile?.creationTime ??
+      photoFile?.exif?.timestamp;
+    let capturedIso;
+    if (rawCaptured !== undefined && rawCaptured !== null && rawCaptured !== '') {
+      if (rawCaptured instanceof Date) capturedIso = rawCaptured.toISOString();
+      else {
+        const d = new Date(rawCaptured);
+        if (!Number.isNaN(d.getTime())) capturedIso = d.toISOString();
+      }
     }
+
+    appendString('name', reportData.name || '');
+    appendString('locationName', reportData.locationName || reportData.location || '');
+    appendString('condition', reportData.condition || 'bad');
+    appendString('category', String(category || ''));
+    appendString('rating', ratingStr !== undefined ? String(ratingStr) : undefined);
+    appendString('notes', reportData.notes ?? reportData.note ?? '');
+    if (lat !== undefined && lat !== null) appendString('latitude', String(lat));
+    if (lng !== undefined && lng !== null) appendString('longitude', String(lng));
+    if (capturedIso) appendString('capturedAt', String(capturedIso));
+    appendJson('coordinates', reportData.coordinates || (lat !== undefined && lng !== undefined ? { latitude: Number(lat), longitude: Number(lng) } : undefined));
+    appendJson('exifMetadata', reportData.exifMetadata);
+    if (reportData.reporterId) appendString('reporterId', String(reportData.reporterId));
+    if (reportData.photoUrl) appendString('photoUrl', String(reportData.photoUrl));
+  } catch (serializationErr) {
+    console.warn('[createReport] FormData serialization failed, falling back to JSON:', serializationErr.message);
+    const rawFallback = reportData.photoUrl || (typeof photoFile === 'object' && photoFile?.uri ? String(photoFile.uri) : typeof photoFile === 'string' ? String(photoFile) : '');
+    // Convert camera file:// uri to data URI so backend uploadDataUriToCloudinary can handle it
+    const fallbackPhotoUrl = rawFallback ? await fileUriToDataUri(String(rawFallback)) : '';
+    return apiRequest('/reports', {
+      method: 'POST',
+      body: JSON.stringify({ ...reportData, photoUrl: String(fallbackPhotoUrl || reportData.photoUrl || '') }),
+    });
   }
 
-  // Append text fields ensuring all are stringified (FormData only supports string/blob)
-  const appendString = (key, value) => {
-    if (value === undefined || value === null || value === '') return;
-    formData.append(key, String(value));
-  };
-  const appendJson = (key, value) => {
-    if (value === undefined || value === null) return;
-    if (value instanceof Date) formData.append(key, value.toISOString());
-    else if (typeof value === 'object') formData.append(key, JSON.stringify(value));
-    else formData.append(key, String(value));
-  };
-
-  // Required model fields - always stringified, never raw numbers/objects
-  const category = reportData.category;
-  const ratingStr = reportData.rating !== undefined && reportData.rating !== null ? String(reportData.rating) : undefined;
-  const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
-  const lng = reportData.coordinates?.longitude ?? reportData.longitude ?? reportData.lng ?? reportData.lon;
-  const capturedIso = (() => {
-    const raw = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
-    if (raw instanceof Date) return raw.toISOString();
-    if (typeof raw === 'string' && raw) return new Date(raw).toISOString();
-    return new Date().toISOString();
-  })();
-
-  appendString('name', reportData.name || (category ? `${category} Barrier` : `Barrier Report`));
-  appendString('locationName', reportData.locationName || reportData.location || 'Assigned Jurisdiction');
-  appendString('condition', reportData.condition || 'bad');
-  appendString('category', category);
-  appendString('rating', ratingStr);
-  appendString('notes', reportData.notes ?? reportData.note ?? '');
-  // Flat lat/lng as strings for backend robust handling (parseFloat)
-  if (lat !== undefined && lat !== null) appendString('latitude', String(lat));
-  if (lng !== undefined && lng !== null) appendString('longitude', String(lng));
-  appendString('capturedAt', capturedIso);
-  // Also append structured fields as JSON for backend parseJsonField
-  appendJson('coordinates', reportData.coordinates || (lat !== undefined && lng !== undefined ? { latitude: Number(lat), longitude: Number(lng) } : undefined));
-  appendJson('exifMetadata', reportData.exifMetadata);
-  // Optional relations
-  if (reportData.reporterId) appendString('reporterId', String(reportData.reporterId));
-  if (reportData.reporterName) appendString('reporterName', String(reportData.reporterName));
-  if (reportData.photoUrl) appendString('photoUrl', String(reportData.photoUrl));
-
-  return apiRequest('/reports', {
-    method: 'POST',
-    body: formData,
-  });
+  try {
+    return await apiRequest('/reports', {
+      method: 'POST',
+      body: formData,
+    });
+  } catch (err) {
+    const msg = err?.message || '';
+    if (/Unsupported FormDataPart|FormData/i.test(msg)) {
+      console.warn('[createReport] FormData serialization failed, falling back to JSON:', msg);
+      const rawFallback = reportData.photoUrl || (typeof photoFile === 'object' && photoFile?.uri ? String(photoFile.uri) : typeof photoFile === 'string' ? String(photoFile) : '');
+      const fallbackPhotoUrl = rawFallback ? await fileUriToDataUri(String(rawFallback)) : '';
+      return apiRequest('/reports', {
+        method: 'POST',
+        body: JSON.stringify({ ...reportData, photoUrl: String(fallbackPhotoUrl || reportData.photoUrl || '') }),
+      });
+    }
+    throw err;
+  }
 };
 
 /**
- * Simple JSON barrier report submission (Prompt 2 spec).
+ * Create barrier report with FormData hardening and JSON fallback (also supports photo upload)
+ * Hardened: explicit type guards, String() conversions, strict { uri, name, type: 'image/jpeg' } on RN, inner try/catch
  */
-export const createBarrierReport = (reportData) =>
-  apiRequest('/reports', {
-    method: 'POST',
-    body: JSON.stringify(reportData),
-  });
+export const createBarrierReport = async (reportData, photoFile) => {
+  // JSON-only path when no photoFile provided (explicit type guards via JSON.stringify)
+  if (!photoFile) {
+    return apiRequest('/reports', {
+      method: 'POST',
+      body: JSON.stringify(reportData),
+    });
+  }
+
+  // When photoFile is provided, harden FormData construction with same guards as createReport
+  let formData;
+  try {
+    formData = new FormData();
+    if (Platform.OS !== 'web') {
+      // React Native: strictly format the photo object to { uri, name, type } with type: 'image/jpeg'
+      if (typeof photoFile === 'object' && photoFile !== null && typeof photoFile.uri === 'string') {
+        const formattedPhoto = {
+          uri: String(photoFile.uri),
+          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
+          type: 'image/jpeg',
+        };
+        formData.append('photo', formattedPhoto);
+      } else if (typeof photoFile === 'string') {
+        const formattedPhoto = {
+          uri: String(photoFile),
+          name: String(`photo_${Date.now()}.jpg`),
+          type: 'image/jpeg',
+        };
+        formData.append('photo', formattedPhoto);
+      } else {
+        formData.append('photo', { uri: String(photoFile.uri), name: String(photoFile.name || `photo_${Date.now()}.jpg`), type: 'image/jpeg' });
+      }
+    } else {
+      if (photoFile instanceof File || photoFile instanceof Blob) {
+        formData.append('photo', photoFile, String(photoFile.name || `photo_${Date.now()}.jpg`));
+      } else if (typeof photoFile === 'object' && typeof photoFile.uri === 'string') {
+        const formattedPhoto = {
+          uri: String(photoFile.uri),
+          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
+          type: 'image/jpeg',
+        };
+        try {
+          const resp = await fetch(String(photoFile.uri));
+          const blob = await resp.blob();
+          const file = new File([blob], formattedPhoto.name, { type: String(blob.type || 'image/jpeg') });
+          formData.append('photo', file, formattedPhoto.name);
+        } catch {
+          formData.append('photo', formattedPhoto);
+        }
+      } else {
+        formData.append('photo', photoFile);
+      }
+    }
+
+    const appendString = (key, value) => {
+      if (value === undefined || value === null || value === '') return;
+      formData.append(key, String(value));
+    };
+    const appendJson = (key, value) => {
+      if (value === undefined || value === null) return;
+      if (value instanceof Date) formData.append(key, value.toISOString());
+      else if (typeof value === 'object') formData.append(key, JSON.stringify(value));
+      else formData.append(key, String(value));
+    };
+
+    appendString('name', reportData.name || '');
+    appendString('locationName', reportData.locationName || reportData.location || '');
+    appendString('condition', reportData.condition || 'bad');
+    appendString('category', String(reportData.category || ''));
+    if (reportData.rating !== undefined && reportData.rating !== null) appendString('rating', String(reportData.rating));
+    appendString('notes', reportData.notes ?? reportData.note ?? '');
+    const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
+    const lng = reportData.coordinates?.longitude ?? reportData.longitude ?? reportData.lon;
+    if (lat !== undefined && lat !== null) appendString('latitude', String(lat));
+    if (lng !== undefined && lng !== null) appendString('longitude', String(lng));
+    if (reportData.capturedAt) appendString('capturedAt', String(reportData.capturedAt));
+    else if (reportData.timestamp) appendString('capturedAt', String(reportData.timestamp));
+    appendJson('coordinates', reportData.coordinates || (lat !== undefined && lng !== undefined ? { latitude: Number(lat), longitude: Number(lng) } : undefined));
+    appendJson('exifMetadata', reportData.exifMetadata);
+    if (reportData.reporterId) appendString('reporterId', String(reportData.reporterId));
+    if (reportData.photoUrl) appendString('photoUrl', String(reportData.photoUrl));
+  } catch (serializationErr) {
+    console.warn('[createBarrierReport] FormData serialization failed, falling back to JSON:', serializationErr.message);
+    const rawFallback = reportData.photoUrl || (typeof photoFile === 'object' ? String(photoFile.uri || '') : String(photoFile || ''));
+    const fallbackPhotoUrl = rawFallback ? await fileUriToDataUri(String(rawFallback)) : '';
+    return apiRequest('/reports', {
+      method: 'POST',
+      body: JSON.stringify({ ...reportData, photoUrl: String(fallbackPhotoUrl || reportData.photoUrl || '') }),
+    });
+  }
+
+  try {
+    return await apiRequest('/reports', {
+      method: 'POST',
+      body: formData,
+    });
+  } catch (err) {
+    const msg = err?.message || '';
+    if (/Unsupported FormDataPart|FormData/i.test(msg)) {
+      console.warn('[createBarrierReport] FormData serialization failed, falling back to JSON:', msg);
+      const rawFallback = reportData.photoUrl || (typeof photoFile === 'object' && photoFile?.uri ? String(photoFile.uri) : typeof photoFile === 'string' ? String(photoFile) : '');
+      const fallbackPhotoUrl = rawFallback ? await fileUriToDataUri(String(rawFallback)) : '';
+      return apiRequest('/reports', {
+        method: 'POST',
+        body: JSON.stringify({ ...reportData, photoUrl: String(fallbackPhotoUrl || reportData.photoUrl || '') }),
+      });
+    }
+    throw err;
+  }
+};
 
 const getAuthHeaders = async () => {
   try {

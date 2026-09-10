@@ -66,10 +66,11 @@ app.use((err, req, res, next) => {
 const initialPort = parseInt(process.env.PORT, 10) || 5001;
 
 const startServer = (port) => {
-  const server = app.listen(port, () => {
-    console.log(`🚀 UnityMap Backend Server listening on port ${port}`);
+  const server = app.listen(port, '0.0.0.0', () => {
+    console.log(`🚀 UnityMap Backend Server listening on port ${port} (0.0.0.0)`);
     console.log(`📡 Health Check URL: http://localhost:${port}/api/health`);
     console.log(`📦 API Base URL:     http://localhost:${port}/api`);
+    console.log(`🌐 LAN access:       http://<your-LAN-IP>:${port}/api  (for emulator/device)`);
   });
 
   server.on('error', (err) => {
