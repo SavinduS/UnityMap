@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   register,
   login,
+  googleAuth,
   getMe,
   getUsers,
   promoteUser,
@@ -11,6 +12,7 @@ const {
 
 router.post('/register', register);
 router.post('/login', login);
+router.post('/google', googleAuth);
 router.get('/me', getMe);
 router.get('/users', getUsers);
 router.patch('/users/:id/promote', promoteUser);

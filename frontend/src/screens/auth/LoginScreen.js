@@ -1,14 +1,15 @@
 /**
  * LoginScreen.js
  * Unified Authentication Screen (Sign In & Sign Up)
- * 
+ *
  * Features:
- * - Clean, professional mobile design matching UnityMap emerald aesthetic
+ * - Premium mobile-first design with white & green theme
  * - Segmented tabs: [ Sign In ] & [ Create Account ]
- * - Sign Up captures: First Name, Last Name, Email, Phone, and Password
- * - 1-Tap Quick-Fill Demo Chips for Super Admin and Regular User testing
- * - Show / hide password visibility toggle
- * - Full WCAG 2.1 touch-target & contrast compliance
+ * - Professional validation for Email, Name, Phone, and Password
+ * - Real-time inline field errors and visual success indicators
+ * - Dynamic Password Strength Meter (Weak / Fair / Strong)
+ * - Confirm Password field with real-time match verification
+ * - Show / hide password visibility toggles
  */
 
 import React, { useState } from 'react';
@@ -25,64 +26,117 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { Feather, FontAwesome5 } from '@expo/vector-icons';
-import authService, { DEMO_CREDENTIALS } from '../../services/authService';
+import { Feather, AntDesign } from '@expo/vector-icons';
+import authService from '../../services/authService';
+import googleAuthService from '../../services/googleAuthService';
+import GoogleLogo from '../../components/GoogleLogo';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
+import {
+  validateEmail,
+  validateName,
+  validatePhone,
+  validatePassword,
+  calculatePasswordStrength,
+  validateConfirmPassword,
+} from '../../utils/validation';
+
+// ─── Brand Colors ────────────────────────────────────────────────────────────
+const BRAND_GREEN   = '#059669';  // emerald-600
+const BRAND_DARK    = '#064E3B';  // emerald-900
+const BRAND_MEDIUM  = '#065F46';  // emerald-800
+const BRAND_LIGHT   = '#D1FAE5';  // emerald-100
+const BRAND_XLIGHT  = '#ECFDF5';  // emerald-50
+const ERROR_RED     = '#DC2626';
 
 export const LoginScreen = () => {
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [authMode, setAuthMode] = useState('login');
   const { palette, borderWidth, isHighContrast } = useTheme();
 
   // Login Form State
-  const [loginEmail, setLoginEmail] = useState('');
+  const [loginEmail, setLoginEmail]       = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginTouched, setLoginTouched]   = useState({ email: false, password: false });
 
   // Register Form State
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [registerEmail, setRegisterEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [firstName, setFirstName]               = useState('');
+  const [lastName, setLastName]                 = useState('');
+  const [registerEmail, setRegisterEmail]       = useState('');
+  const [phone, setPhone]                       = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
+  const [confirmPassword, setConfirmPassword]   = useState('');
+  const [registerTouched, setRegisterTouched]   = useState({
+    firstName: false, lastName: false, email: false,
+    phone: false, password: false, confirmPassword: false,
+  });
 
   // UI State
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [activeChip, setActiveChip] = useState(null);
+  const [showPassword, setShowPassword]             = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isLoading, setIsLoading]                   = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading]       = useState(false);
+  const [errorMessage, setErrorMessage]             = useState('');
 
-  // Quick fill handler for examiners & quick testing
-  const handleQuickFill = (type) => {
-    setActiveChip(type);
+  // ── Google Authentication Handler ─────────────────────────────────────────
+  const handleGoogleAuth = async () => {
     setErrorMessage('');
-    if (type === 'admin') {
-      setLoginEmail(DEMO_CREDENTIALS.SUPER_ADMIN.email);
-      setLoginPassword(DEMO_CREDENTIALS.SUPER_ADMIN.password);
-    } else {
-      setLoginEmail(DEMO_CREDENTIALS.REGULAR_USER.email);
-      setLoginPassword(DEMO_CREDENTIALS.REGULAR_USER.password);
+    setIsGoogleLoading(true);
+    try {
+      const googleUser = await googleAuthService.signIn();
+      if (googleUser) {
+        await authService.loginWithGoogle(googleUser);
+      }
+    } catch (err) {
+      if (!err.message?.includes('cancelled')) {
+        setErrorMessage(err.message || 'Google authentication could not be completed.');
+      }
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
-  const handleLogin = async () => {
+  // ── Validation calculations ──────────────────────────────────────────────
+  const loginEmailValidation    = validateEmail(loginEmail, true);
+  const loginPasswordValidation = validatePassword(loginPassword, true);
+  const loginEmailError    = loginTouched.email    ? loginEmailValidation.error    : null;
+  const loginPasswordError = loginTouched.password ? loginPasswordValidation.error : null;
+
+  const fnValidation              = validateName(firstName, 'First name', true);
+  const lnValidation              = validateName(lastName, 'Last name', false);
+  const regEmailValidation        = validateEmail(registerEmail, true);
+  const phoneValidation           = validatePhone(phone, false);
+  const regPasswordValidation     = validatePassword(registerPassword, true);
+  const confirmPasswordValidation = validateConfirmPassword(registerPassword, confirmPassword);
+  const passwordStrength          = calculatePasswordStrength(registerPassword);
+
+  const fnError              = registerTouched.firstName       ? fnValidation.error              : null;
+  const lnError              = registerTouched.lastName        ? lnValidation.error              : null;
+  const regEmailError        = registerTouched.email           ? regEmailValidation.error        : null;
+  const phoneError           = registerTouched.phone           ? phoneValidation.error           : null;
+  const regPasswordError     = registerTouched.password        ? regPasswordValidation.error     : null;
+  const confirmPasswordError = registerTouched.confirmPassword ? confirmPasswordValidation.error : null;
+
+  const handleSwitchMode = (mode) => {
+    setAuthMode(mode);
     setErrorMessage('');
+    setLoginTouched({ email: false, password: false });
+    setRegisterTouched({
+      firstName: false, lastName: false, email: false,
+      phone: false, password: false, confirmPassword: false,
+    });
+  };
 
-    if (!loginEmail.trim()) {
-      setErrorMessage('Please enter your email address.');
+  // ── Submit Handlers ──────────────────────────────────────────────────────
+  const handleLogin = async () => {
+    setLoginTouched({ email: true, password: true });
+    setErrorMessage('');
+    if (!loginEmailValidation.isValid || !loginPasswordValidation.isValid) {
+      setErrorMessage('Please correct the highlighted errors before signing in.');
       return;
     }
-    if (!loginPassword) {
-      setErrorMessage('Please enter your password.');
-      return;
-    }
-
     setIsLoading(true);
     try {
-      await authService.login({
-        email: loginEmail.trim(),
-        password: loginPassword,
-      });
-      // Navigation will automatically update via authService listener
+      await authService.login({ email: loginEmail.trim(), password: loginPassword });
     } catch (err) {
       setErrorMessage(err.message || 'Authentication failed. Please check your credentials.');
     } finally {
@@ -91,31 +145,24 @@ export const LoginScreen = () => {
   };
 
   const handleRegister = async () => {
+    setRegisterTouched({
+      firstName: true, lastName: true, email: true,
+      phone: true, password: true, confirmPassword: true,
+    });
     setErrorMessage('');
-
-    if (!firstName.trim()) {
-      setErrorMessage('Please enter your first name.');
+    const isFormValid =
+      fnValidation.isValid && lnValidation.isValid && regEmailValidation.isValid &&
+      phoneValidation.isValid && regPasswordValidation.isValid && confirmPasswordValidation.isValid;
+    if (!isFormValid) {
+      setErrorMessage('Please correct the highlighted errors before creating your account.');
       return;
     }
-    if (!registerEmail.trim()) {
-      setErrorMessage('Please enter your email address.');
-      return;
-    }
-    if (!registerPassword || registerPassword.length < 6) {
-      setErrorMessage('Password must be at least 6 characters long.');
-      return;
-    }
-
     setIsLoading(true);
     try {
       await authService.register({
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        email: registerEmail.trim(),
-        phone: phone.trim(),
-        password: registerPassword,
+        firstName: firstName.trim(), lastName: lastName.trim(),
+        email: registerEmail.trim(), phone: phone.trim(), password: registerPassword,
       });
-      // Auto-logged in upon successful registration!
     } catch (err) {
       setErrorMessage(err.message || 'Registration failed. Please try again.');
     } finally {
@@ -123,734 +170,610 @@ export const LoginScreen = () => {
     }
   };
 
+  // Helper for border color
+  const getBorderColor = (hasError, touched, isValid) => {
+    if (hasError) return isHighContrast ? '#000000' : ERROR_RED;
+    if (touched && isValid) return isHighContrast ? '#000000' : BRAND_GREEN;
+    return '#E2E8F0';
+  };
+
+  // ── Field Component ──────────────────────────────────────────────────────
+  const Field = ({
+    label, icon, placeholder, value, onChangeText, onBlur,
+    keyboardType, autoCapitalize, secureTextEntry, showToggle,
+    onToggleSecure, showIcon, isValid, isTouched, hasValue, error, hint,
+    multiline,
+  }) => (
+    <View style={styles.fieldGroup}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={[
+        styles.inputBox,
+        { borderColor: getBorderColor(!!error, isTouched && hasValue, isValid) },
+        error && styles.inputBoxError,
+      ]}>
+        {icon && <Feather name={icon} size={17} color={error ? ERROR_RED : '#64748B'} style={styles.inputIcon} />}
+        <TextInput
+          style={[styles.textInput, multiline && { height: 80, textAlignVertical: 'top' }]}
+          placeholder={placeholder}
+          placeholderTextColor="#94A3B8"
+          value={value}
+          onChangeText={onChangeText}
+          onBlur={onBlur}
+          keyboardType={keyboardType || 'default'}
+          autoCapitalize={autoCapitalize || 'none'}
+          secureTextEntry={secureTextEntry}
+          autoCorrect={false}
+          multiline={multiline}
+        />
+        {showToggle && (
+          <TouchableOpacity onPress={onToggleSecure} style={styles.eyeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Feather name={secureTextEntry ? 'eye' : 'eye-off'} size={17} color="#64748B" />
+          </TouchableOpacity>
+        )}
+        {showIcon && isTouched && hasValue && !showToggle && (
+          isValid
+            ? <Feather name="check-circle" size={16} color={BRAND_GREEN} />
+            : <Feather name="x-circle" size={16} color={ERROR_RED} />
+        )}
+      </View>
+      {error ? (
+        <View style={styles.inlineErr}>
+          <Feather name="alert-circle" size={11} color={ERROR_RED} style={{ marginRight: 4 }} />
+          <Text style={styles.inlineErrText}>{error}</Text>
+        </View>
+      ) : hint ? (
+        <Text style={styles.fieldHint}>{hint}</Text>
+      ) : null}
+    </View>
+  );
+
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: palette.background }]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardAvoid}
-      >
-        <ScrollView
-          style={styles.container}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Brand Header */}
-          <View style={[styles.headerBanner, { backgroundColor: '#0B3D2E' }]}>
-            <View style={styles.logoRow}>
-              <View style={styles.logoCircle}>
-                <Feather name="map-pin" size={26} color="#FFFFFF" />
-              </View>
-              <View>
-                <Text style={styles.brandTitle}>UnityMap</Text>
-                <Text style={styles.brandSubtitle}>Accessible Navigation & City Reporting</Text>
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor={BRAND_DARK} />
+
+      {/* ── Top Green Header ──────────────────────────────────────────── */}
+      <SafeAreaView style={styles.headerSafe}>
+        <View style={styles.header}>
+          {/* Decorative circles */}
+          <View style={styles.decCircle1} />
+          <View style={styles.decCircle2} />
+
+          <View style={styles.headerContent}>
+            {/* Logo */}
+            <View style={styles.logoWrap}>
+              <View style={styles.logoBg}>
+                <Feather name="map-pin" size={28} color="#FFFFFF" />
               </View>
             </View>
+            <Text style={styles.brandName}>UnityMap</Text>
+            <Text style={styles.brandTagline}>Accessible Navigation & City Reporting</Text>
 
-            <View style={styles.badgeRow}>
-              <View style={styles.pillBadge}>
-                <FontAwesome5 name="wheelchair" size={11} color="#E2E8F0" style={{ marginRight: 5 }} />
-                <Text style={styles.pillBadgeText}>Wheelchair Friendly</Text>
-              </View>
-              <View style={styles.pillBadge}>
-                <Feather name="shield" size={11} color="#E2E8F0" style={{ marginRight: 5 }} />
-                <Text style={styles.pillBadgeText}>Admin Verified</Text>
-              </View>
+            {/* Tab Switcher inside header */}
+            <View style={styles.tabBar}>
+              <TouchableOpacity
+                style={[styles.tabBtn, authMode === 'login' && styles.tabBtnActive]}
+                onPress={() => handleSwitchMode('login')}
+                activeOpacity={0.8}
+                accessibilityRole="tab"
+              >
+                <Feather name="log-in" size={14} color={authMode === 'login' ? BRAND_DARK : 'rgba(255,255,255,0.7)'} style={{ marginRight: 5 }} />
+                <Text style={[styles.tabBtnText, authMode === 'login' && styles.tabBtnTextActive]}>Sign In</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tabBtn, authMode === 'register' && styles.tabBtnActive]}
+                onPress={() => handleSwitchMode('register')}
+                activeOpacity={0.8}
+                accessibilityRole="tab"
+              >
+                <Feather name="user-plus" size={14} color={authMode === 'register' ? BRAND_DARK : 'rgba(255,255,255,0.7)'} style={{ marginRight: 5 }} />
+                <Text style={[styles.tabBtnText, authMode === 'register' && styles.tabBtnTextActive]}>Create Account</Text>
+              </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </SafeAreaView>
 
-          {/* Form Container Card */}
-          <View
-            style={[
-              styles.formCard,
-              {
-                backgroundColor: palette.surface,
-                borderColor: palette.cardBorder,
-                borderWidth,
-              },
-            ]}
-          >
-            {/* Segmented Auth Mode Switcher */}
-            <View
-              style={[
-                styles.segmentedContainer,
-                { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth: isHighContrast ? borderWidth : 0 },
-              ]}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.segmentButton,
-                  authMode === 'login' && [styles.segmentActive, { backgroundColor: palette.primary }],
-                ]}
-                onPress={() => {
-                  setAuthMode('login');
-                  setErrorMessage('');
-                }}
-                activeOpacity={0.8}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: authMode === 'login' }}
-                accessibilityLabel="Switch to Sign In"
-              >
-                <Feather
-                  name="log-in"
-                  size={16}
-                  color={authMode === 'login' ? '#FFFFFF' : palette.textMuted}
-                  style={{ marginRight: 6 }}
-                />
-                <Text
-                  {...textProps}
-                  style={[
-                    styles.segmentText,
-                    getTextStyle('sm', { isHighContrast }),
-                    { color: authMode === 'login' ? '#FFFFFF' : palette.textMuted, fontWeight: '700' },
-                  ]}
-                >
-                  Sign In
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.segmentButton,
-                  authMode === 'register' && [styles.segmentActive, { backgroundColor: palette.primary }],
-                ]}
-                onPress={() => {
-                  setAuthMode('register');
-                  setErrorMessage('');
-                }}
-                activeOpacity={0.8}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: authMode === 'register' }}
-                accessibilityLabel="Switch to Create Account"
-              >
-                <Feather
-                  name="user-plus"
-                  size={16}
-                  color={authMode === 'register' ? '#FFFFFF' : palette.textMuted}
-                  style={{ marginRight: 6 }}
-                />
-                <Text
-                  {...textProps}
-                  style={[
-                    styles.segmentText,
-                    getTextStyle('sm', { isHighContrast }),
-                    { color: authMode === 'register' ? '#FFFFFF' : palette.textMuted, fontWeight: '700' },
-                  ]}
-                >
-                  Create Account
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Error Message Banner */}
-            {errorMessage ? (
-              <View
-                style={[
-                  styles.errorBanner,
-                  { backgroundColor: isHighContrast ? '#000000' : palette.errorBg, borderColor: palette.error },
-                ]}
-              >
-                <Feather name="alert-circle" size={18} color={isHighContrast ? '#FFFFFF' : '#DC2626'} style={{ marginRight: 8 }} />
-                <Text
-                  {...textProps}
-                  style={[
-                    styles.errorText,
-                    getTextStyle('sm', { isHighContrast }),
-                    { color: isHighContrast ? '#FFFFFF' : '#DC2626' },
-                  ]}
-                >
-                  {errorMessage}
-                </Text>
-              </View>
-            ) : null}
-
-            {/* ══════════════ SIGN IN TAB ══════════════ */}
-            {authMode === 'login' ? (
+      {/* ── White Form Area ───────────────────────────────────────────── */}
+      <View style={styles.formSheet}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={0}
+        >
+          {/* ── Sign In: centered non-scroll layout ── */}
+          {authMode === 'login' && (
+            <View style={styles.loginBody}>
+              {!!errorMessage && (
+                <View style={styles.errBanner}>
+                  <Feather name="alert-triangle" size={15} color={ERROR_RED} style={{ marginRight: 8 }} />
+                  <Text style={styles.errBannerText}>{errorMessage}</Text>
+                </View>
+              )}
               <View>
-                {/* 1-Tap Quick Demo Shortcuts */}
-                <View style={styles.demoSection}>
-                  <Text
-                    {...textProps}
-                    style={[
-                      styles.demoSectionTitle,
-                      getTextStyle('xs', { isHighContrast }),
-                      { color: palette.textMuted },
-                    ]}
-                  >
-                    ⚡ 1-TAP DEMO ACCOUNTS (PASSWORD: 123456)
-                  </Text>
-                  <View style={styles.chipRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.demoChip,
-                        {
-                          backgroundColor: activeChip === 'admin' ? '#0B3D2E' : palette.surfaceAlt,
-                          borderColor: activeChip === 'admin' ? palette.primary : palette.border,
-                          borderWidth,
-                        },
-                      ]}
-                      onPress={() => handleQuickFill('admin')}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Quick fill Super Admin credentials"
-                    >
-                      <Text style={styles.chipIcon}>🛡️</Text>
-                      <View>
-                        <Text
-                          style={[
-                            styles.chipTitle,
-                            { color: activeChip === 'admin' ? '#FFFFFF' : palette.textPrimary },
-                          ]}
-                        >
-                          Super Admin
-                        </Text>
-                        <Text
-                          style={[
-                            styles.chipSubtitle,
-                            { color: activeChip === 'admin' ? '#A7F3D0' : palette.textMuted },
-                          ]}
-                        >
-                          admin@unitymap.com
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
+                <Text style={styles.formHeading}>Welcome back</Text>
+                <Text style={styles.formSubheading}>Sign in to your UnityMap account</Text>
 
-                    <TouchableOpacity
-                      style={[
-                        styles.demoChip,
-                        {
-                          backgroundColor: activeChip === 'user' ? '#0B3D2E' : palette.surfaceAlt,
-                          borderColor: activeChip === 'user' ? palette.primary : palette.border,
-                          borderWidth,
-                        },
-                      ]}
-                      onPress={() => handleQuickFill('user')}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
-                      accessibilityLabel="Quick fill Regular User credentials"
-                    >
-                      <Text style={styles.chipIcon}>👤</Text>
-                      <View>
-                        <Text
-                          style={[
-                            styles.chipTitle,
-                            { color: activeChip === 'user' ? '#FFFFFF' : palette.textPrimary },
-                          ]}
-                        >
-                          Regular User
-                        </Text>
-                        <Text
-                          style={[
-                            styles.chipSubtitle,
-                            { color: activeChip === 'user' ? '#A7F3D0' : palette.textMuted },
-                          ]}
-                        >
-                          user@unitymap.com
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                <Field
+                  label="EMAIL ADDRESS *"
+                  icon="mail"
+                  placeholder="e.g. admin@unitymap.com"
+                  value={loginEmail}
+                  onChangeText={(v) => { setLoginEmail(v); if (errorMessage) setErrorMessage(''); }}
+                  onBlur={() => setLoginTouched((p) => ({ ...p, email: true }))}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  showIcon
+                  isValid={loginEmailValidation.isValid}
+                  isTouched={loginTouched.email}
+                  hasValue={!!loginEmail}
+                  error={loginEmailError}
+                />
 
-                {/* Email Field */}
-                <View style={styles.inputGroup}>
-                  <Text
-                    {...textProps}
-                    style={[styles.inputLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textSecondary }]}
-                  >
-                    EMAIL ADDRESS
-                  </Text>
-                  <View
-                    style={[
-                      styles.inputWrapper,
-                      { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth },
-                    ]}
-                  >
-                    <Feather name="mail" size={18} color={palette.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={[styles.textInput, { color: palette.textPrimary }]}
-                      placeholder="Enter your email"
-                      placeholderTextColor={palette.placeholder}
-                      value={loginEmail}
-                      onChangeText={(val) => {
-                        setLoginEmail(val);
-                        setActiveChip(null);
-                        if (errorMessage) setErrorMessage('');
-                      }}
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                      autoCorrect={false}
-                      accessibilityLabel="Email address input"
-                    />
-                  </View>
-                </View>
+                <Field
+                  label="PASSWORD *"
+                  icon="lock"
+                  placeholder="Enter your password"
+                  value={loginPassword}
+                  onChangeText={(v) => { setLoginPassword(v); if (errorMessage) setErrorMessage(''); }}
+                  onBlur={() => setLoginTouched((p) => ({ ...p, password: true }))}
+                  secureTextEntry={!showPassword}
+                  showToggle
+                  onToggleSecure={() => setShowPassword((p) => !p)}
+                  isValid={loginPasswordValidation.isValid}
+                  isTouched={loginTouched.password}
+                  hasValue={!!loginPassword}
+                  error={loginPasswordError}
+                />
 
-                {/* Password Field */}
-                <View style={styles.inputGroup}>
-                  <Text
-                    {...textProps}
-                    style={[styles.inputLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textSecondary }]}
-                  >
-                    PASSWORD
-                  </Text>
-                  <View
-                    style={[
-                      styles.inputWrapper,
-                      { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth },
-                    ]}
-                  >
-                    <Feather name="lock" size={18} color={palette.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={[styles.textInput, { color: palette.textPrimary, flex: 1 }]}
-                      placeholder="Enter your password"
-                      placeholderTextColor={palette.placeholder}
-                      value={loginPassword}
-                      onChangeText={(val) => {
-                        setLoginPassword(val);
-                        if (errorMessage) setErrorMessage('');
-                      }}
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      accessibilityLabel="Password input"
-                    />
-                    <TouchableOpacity
-                      onPress={() => setShowPassword((prev) => !prev)}
-                      style={styles.eyeButton}
-                      accessibilityRole="button"
-                      accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color={palette.textMuted} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Sign In Action Button */}
+                {/* Sign In Button */}
                 <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    {
-                      backgroundColor: palette.primary,
-                      borderColor: isHighContrast ? '#000000' : palette.primary,
-                      borderWidth: isHighContrast ? borderWidth : 0,
-                    },
-                    isLoading && styles.buttonDisabled,
-                  ]}
+                  style={[styles.cta, isLoading && styles.ctaDisabled]}
                   onPress={handleLogin}
                   disabled={isLoading}
-                  activeOpacity={0.85}
+                  activeOpacity={0.88}
                   accessibilityRole="button"
-                  accessibilityLabel="Sign in button"
                 >
                   {isLoading ? (
-                    <View style={styles.loadingRow}>
-                      <ActivityIndicator color="#FFFFFF" size="small" />
-                      <Text style={styles.buttonText}>Signing In...</Text>
-                    </View>
+                    <ActivityIndicator color="#FFF" size="small" />
                   ) : (
-                    <View style={styles.buttonContentRow}>
-                      <Text style={styles.buttonText}>Sign In</Text>
-                      <Feather name="arrow-right" size={18} color="#FFFFFF" style={{ marginLeft: 8 }} />
-                    </View>
+                    <>
+                      <Text style={styles.ctaText}>Sign In</Text>
+                      <Feather name="arrow-right" size={18} color="#FFF" style={{ marginLeft: 8 }} />
+                    </>
                   )}
                 </TouchableOpacity>
 
-                {/* Bottom Switch Link */}
-                <View style={styles.switchModeRow}>
-                  <Text {...textProps} style={[getTextStyle('sm', { isHighContrast }), { color: palette.textMuted }]}>
-                    Don't have an account?{' '}
-                  </Text>
-                  <TouchableOpacity onPress={() => setAuthMode('register')}>
-                    <Text
-                      {...textProps}
-                      style={[getTextStyle('sm', { isHighContrast }), { color: palette.primary, fontWeight: '700' }]}
-                    >
-                      Create an account
-                    </Text>
+                {/* OR Divider */}
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                {/* Google Sign In Button */}
+                <TouchableOpacity
+                  style={[styles.googleBtn, (isLoading || isGoogleLoading) && styles.ctaDisabled]}
+                  onPress={handleGoogleAuth}
+                  disabled={isLoading || isGoogleLoading}
+                  activeOpacity={0.88}
+                  accessibilityRole="button"
+                >
+                  {isGoogleLoading ? (
+                    <ActivityIndicator color="#0F172A" size="small" />
+                  ) : (
+                    <>
+                      <GoogleLogo size={20} style={{ marginRight: 10 }} />
+                      <Text style={styles.googleBtnText}>Sign in with Google</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                {/* Switch to Register */}
+                <View style={styles.switchRow}>
+                  <Text style={styles.switchText}>Don't have an account? </Text>
+                  <TouchableOpacity onPress={() => handleSwitchMode('register')} activeOpacity={0.7}>
+                    <Text style={styles.switchLink}>Create one</Text>
                   </TouchableOpacity>
                 </View>
               </View>
-            ) : (
-              /* ══════════════ CREATE ACCOUNT (SIGN UP) TAB ══════════════ */
+            </View>
+          )}
+
+          {/* ── Sign Up: scrollable layout ── */}
+          {authMode === 'register' && (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.scrollBody}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {!!errorMessage && (
+                <View style={styles.errBanner}>
+                  <Feather name="alert-triangle" size={15} color={ERROR_RED} style={{ marginRight: 8 }} />
+                  <Text style={styles.errBannerText}>{errorMessage}</Text>
+                </View>
+              )}
               <View>
-                <Text
-                  {...textProps}
-                  style={[
-                    getTextStyle('sm', { isHighContrast }),
-                    { color: palette.textMuted, marginBottom: 16, lineHeight: 20 },
-                  ]}
-                >
-                  Sign up for UnityMap to report urban accessibility obstacles and receive tailored step-free routes.
-                </Text>
+                <Text style={styles.formHeading}>Create your account</Text>
+                <Text style={styles.formSubheading}>Join UnityMap for accessible city navigation</Text>
 
-                {/* First Name & Last Name */}
+                {/* First & Last Name row */}
                 <View style={styles.nameRow}>
-                  <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-                    <Text
-                      {...textProps}
-                      style={[styles.inputLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textSecondary }]}
-                    >
-                      FIRST NAME *
-                    </Text>
-                    <View
-                      style={[
-                        styles.inputWrapper,
-                        { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth },
-                      ]}
-                    >
-                      <TextInput
-                        style={[styles.textInput, { color: palette.textPrimary }]}
-                        placeholder="e.g. Kasun"
-                        placeholderTextColor={palette.placeholder}
-                        value={firstName}
-                        onChangeText={setFirstName}
-                        autoCapitalize="words"
-                        accessibilityLabel="First name input"
-                      />
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Field
+                      label="FIRST NAME *"
+                      placeholder="e.g. Kasun"
+                      value={firstName}
+                      onChangeText={(v) => { setFirstName(v); if (errorMessage) setErrorMessage(''); }}
+                      onBlur={() => setRegisterTouched((p) => ({ ...p, firstName: true }))}
+                      autoCapitalize="words"
+                      showIcon
+                      isValid={fnValidation.isValid}
+                      isTouched={registerTouched.firstName}
+                      hasValue={!!firstName}
+                      error={fnError}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Field
+                      label="LAST NAME"
+                      placeholder="e.g. Silva"
+                      value={lastName}
+                      onChangeText={(v) => { setLastName(v); if (errorMessage) setErrorMessage(''); }}
+                      onBlur={() => setRegisterTouched((p) => ({ ...p, lastName: true }))}
+                      autoCapitalize="words"
+                      showIcon
+                      isValid={lnValidation.isValid}
+                      isTouched={registerTouched.lastName}
+                      hasValue={!!lastName}
+                      error={lnError}
+                    />
+                  </View>
+                </View>
+
+                <Field
+                  label="EMAIL ADDRESS *"
+                  icon="mail"
+                  placeholder="e.g. kasun@example.com"
+                  value={registerEmail}
+                  onChangeText={(v) => { setRegisterEmail(v); if (errorMessage) setErrorMessage(''); }}
+                  onBlur={() => setRegisterTouched((p) => ({ ...p, email: true }))}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  showIcon
+                  isValid={regEmailValidation.isValid}
+                  isTouched={registerTouched.email}
+                  hasValue={!!registerEmail}
+                  error={regEmailError}
+                  hint="Only letters, numbers, '@' and '.' are accepted."
+                />
+
+                <Field
+                  label="PHONE NUMBER (OPTIONAL)"
+                  icon="phone"
+                  placeholder="e.g. 077 123 4567"
+                  value={phone}
+                  onChangeText={(v) => { setPhone(v); if (errorMessage) setErrorMessage(''); }}
+                  onBlur={() => setRegisterTouched((p) => ({ ...p, phone: true }))}
+                  keyboardType="phone-pad"
+                  showIcon
+                  isValid={phoneValidation.isValid}
+                  isTouched={registerTouched.phone}
+                  hasValue={!!phone}
+                  error={phoneError}
+                />
+
+                {/* Password with Strength Meter */}
+                <Field
+                  label="CREATE PASSWORD (MIN 6 CHARACTERS) *"
+                  icon="lock"
+                  placeholder="Enter secure password"
+                  value={registerPassword}
+                  onChangeText={(v) => { setRegisterPassword(v); if (errorMessage) setErrorMessage(''); }}
+                  onBlur={() => setRegisterTouched((p) => ({ ...p, password: true }))}
+                  secureTextEntry={!showPassword}
+                  showToggle
+                  onToggleSecure={() => setShowPassword((p) => !p)}
+                  isValid={regPasswordValidation.isValid}
+                  isTouched={registerTouched.password}
+                  hasValue={!!registerPassword}
+                  error={regPasswordError}
+                />
+
+                {/* Password Strength Meter */}
+                {!!registerPassword && (
+                  <View style={styles.strengthWrap}>
+                    <View style={styles.strengthBarRow}>
+                      {[25, 65, 100].map((threshold, i) => (
+                        <View
+                          key={i}
+                          style={[
+                            styles.strengthSeg,
+                            { backgroundColor: passwordStrength.percent >= threshold ? passwordStrength.color : '#E2E8F0' },
+                          ]}
+                        />
+                      ))}
+                    </View>
+                    <View style={styles.strengthInfoRow}>
+                      <Text style={[styles.strengthLabel, { color: passwordStrength.color }]}>
+                        {passwordStrength.label}
+                      </Text>
+                      {passwordStrength.hints.length > 0 && (
+                        <Text style={styles.strengthHint}>{passwordStrength.hints[0]}</Text>
+                      )}
                     </View>
                   </View>
+                )}
 
-                  <View style={[styles.inputGroup, { flex: 1 }]}>
-                    <Text
-                      {...textProps}
-                      style={[styles.inputLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textSecondary }]}
-                    >
-                      LAST NAME
-                    </Text>
-                    <View
-                      style={[
-                        styles.inputWrapper,
-                        { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth },
-                      ]}
-                    >
-                      <TextInput
-                        style={[styles.textInput, { color: palette.textPrimary }]}
-                        placeholder="e.g. Silva"
-                        placeholderTextColor={palette.placeholder}
-                        value={lastName}
-                        onChangeText={setLastName}
-                        autoCapitalize="words"
-                        accessibilityLabel="Last name input"
-                      />
-                    </View>
+                <Field
+                  label="CONFIRM PASSWORD *"
+                  icon="check-square"
+                  placeholder="Re-enter your password"
+                  value={confirmPassword}
+                  onChangeText={(v) => { setConfirmPassword(v); if (errorMessage) setErrorMessage(''); }}
+                  onBlur={() => setRegisterTouched((p) => ({ ...p, confirmPassword: true }))}
+                  secureTextEntry={!showConfirmPassword}
+                  showToggle
+                  onToggleSecure={() => setShowConfirmPassword((p) => !p)}
+                  isValid={confirmPasswordValidation.isValid}
+                  isTouched={registerTouched.confirmPassword}
+                  hasValue={!!confirmPassword}
+                  error={confirmPasswordError}
+                />
+
+                {/* Passwords match indicator */}
+                {!confirmPasswordError && registerTouched.confirmPassword && confirmPassword && confirmPassword === registerPassword && (
+                  <View style={styles.matchRow}>
+                    <Feather name="check-circle" size={12} color={BRAND_GREEN} style={{ marginRight: 4 }} />
+                    <Text style={styles.matchText}>Passwords match</Text>
                   </View>
-                </View>
+                )}
 
-                {/* Email Address */}
-                <View style={styles.inputGroup}>
-                  <Text
-                    {...textProps}
-                    style={[styles.inputLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textSecondary }]}
-                  >
-                    EMAIL ADDRESS *
-                  </Text>
-                  <View
-                    style={[
-                      styles.inputWrapper,
-                      { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth },
-                    ]}
-                  >
-                    <Feather name="mail" size={18} color={palette.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={[styles.textInput, { color: palette.textPrimary }]}
-                      placeholder="e.g. kasun@example.com"
-                      placeholderTextColor={palette.placeholder}
-                      value={registerEmail}
-                      onChangeText={setRegisterEmail}
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                      autoCorrect={false}
-                      accessibilityLabel="Email input for registration"
-                    />
-                  </View>
-                </View>
-
-                {/* Phone Number */}
-                <View style={styles.inputGroup}>
-                  <Text
-                    {...textProps}
-                    style={[styles.inputLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textSecondary }]}
-                  >
-                    PHONE NUMBER
-                  </Text>
-                  <View
-                    style={[
-                      styles.inputWrapper,
-                      { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth },
-                    ]}
-                  >
-                    <Feather name="phone" size={18} color={palette.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={[styles.textInput, { color: palette.textPrimary }]}
-                      placeholder="e.g. 077 123 4567"
-                      placeholderTextColor={palette.placeholder}
-                      value={phone}
-                      onChangeText={setPhone}
-                      keyboardType="phone-pad"
-                      accessibilityLabel="Phone number input"
-                    />
-                  </View>
-                </View>
-
-                {/* Password Field */}
-                <View style={styles.inputGroup}>
-                  <Text
-                    {...textProps}
-                    style={[styles.inputLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textSecondary }]}
-                  >
-                    CREATE PASSWORD (MIN 6 CHARACTERS) *
-                  </Text>
-                  <View
-                    style={[
-                      styles.inputWrapper,
-                      { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth },
-                    ]}
-                  >
-                    <Feather name="lock" size={18} color={palette.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={[styles.textInput, { color: palette.textPrimary, flex: 1 }]}
-                      placeholder="Enter secure password"
-                      placeholderTextColor={palette.placeholder}
-                      value={registerPassword}
-                      onChangeText={setRegisterPassword}
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      accessibilityLabel="Password creation input"
-                    />
-                    <TouchableOpacity
-                      onPress={() => setShowPassword((prev) => !prev)}
-                      style={styles.eyeButton}
-                      accessibilityRole="button"
-                      accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color={palette.textMuted} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Register Action Button */}
+                {/* Create Account Button */}
                 <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    {
-                      backgroundColor: palette.primary,
-                      borderColor: isHighContrast ? '#000000' : palette.primary,
-                      borderWidth: isHighContrast ? borderWidth : 0,
-                    },
-                    isLoading && styles.buttonDisabled,
-                  ]}
+                  style={[styles.cta, isLoading && styles.ctaDisabled]}
                   onPress={handleRegister}
                   disabled={isLoading}
-                  activeOpacity={0.85}
+                  activeOpacity={0.88}
                   accessibilityRole="button"
-                  accessibilityLabel="Create account button"
                 >
                   {isLoading ? (
-                    <View style={styles.loadingRow}>
-                      <ActivityIndicator color="#FFFFFF" size="small" />
-                      <Text style={styles.buttonText}>Creating Account...</Text>
-                    </View>
+                    <ActivityIndicator color="#FFF" size="small" />
                   ) : (
-                    <View style={styles.buttonContentRow}>
-                      <Text style={styles.buttonText}>Create Account & Enter Map</Text>
-                      <Feather name="check" size={18} color="#FFFFFF" style={{ marginLeft: 8 }} />
-                    </View>
+                    <>
+                      <Text style={styles.ctaText}>Create Account</Text>
+                      <Feather name="check" size={18} color="#FFF" style={{ marginLeft: 8 }} />
+                    </>
                   )}
                 </TouchableOpacity>
 
-                {/* Bottom Switch Link */}
-                <View style={styles.switchModeRow}>
-                  <Text {...textProps} style={[getTextStyle('sm', { isHighContrast }), { color: palette.textMuted }]}>
-                    Already have an account?{' '}
-                  </Text>
-                  <TouchableOpacity onPress={() => setAuthMode('login')}>
-                    <Text
-                      {...textProps}
-                      style={[getTextStyle('sm', { isHighContrast }), { color: palette.primary, fontWeight: '700' }]}
-                    >
-                      Sign In
-                    </Text>
+                {/* OR Divider */}
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                {/* Google Sign Up Button */}
+                <TouchableOpacity
+                  style={[styles.googleBtn, (isLoading || isGoogleLoading) && styles.ctaDisabled]}
+                  onPress={handleGoogleAuth}
+                  disabled={isLoading || isGoogleLoading}
+                  activeOpacity={0.88}
+                  accessibilityRole="button"
+                >
+                  {isGoogleLoading ? (
+                    <ActivityIndicator color="#0F172A" size="small" />
+                  ) : (
+                    <>
+                      <GoogleLogo size={20} style={{ marginRight: 10 }} />
+                      <Text style={styles.googleBtnText}>Sign up with Google</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                {/* Switch to Login */}
+                <View style={styles.switchRow}>
+                  <Text style={styles.switchText}>Already have an account? </Text>
+                  <TouchableOpacity onPress={() => handleSwitchMode('login')} activeOpacity={0.7}>
+                    <Text style={styles.switchLink}>Sign In</Text>
                   </TouchableOpacity>
                 </View>
               </View>
-            )}
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+            </ScrollView>
+          )}
+        </KeyboardAvoidingView>
+      </View>
+    </View>
   );
 };
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  safeArea: {
+  root: {
     flex: 1,
+    backgroundColor: BRAND_DARK,
   },
-  keyboardAvoid: {
-    flex: 1,
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  headerSafe: {
+    backgroundColor: BRAND_DARK,
   },
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 32,
-  },
-  headerBanner: {
+  header: {
+    backgroundColor: BRAND_DARK,
     paddingHorizontal: 24,
-    paddingTop: 36,
+    paddingTop: 10,
     paddingBottom: 28,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 5,
+    overflow: 'hidden',
   },
-  logoRow: {
-    flexDirection: 'row',
+  // decorative accent circles
+  decCircle1: {
+    position: 'absolute',
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    top: -60,
+    right: -40,
+  },
+  decCircle2: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    bottom: 10,
+    left: -30,
+  },
+  headerContent: {
     alignItems: 'center',
-    marginBottom: 16,
   },
-  logoCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  logoWrap: {
+    marginBottom: 10,
+  },
+  logoBg: {
+    width: 60,
+    height: 60,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.2)',
   },
-  brandTitle: {
+  brandName: {
     fontSize: 26,
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: 0.5,
+    marginBottom: 2,
   },
-  brandSubtitle: {
-    fontSize: 13,
+  brandTagline: {
+    fontSize: 12,
     color: '#A7F3D0',
-    marginTop: 2,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  pillBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  pillBadgeText: {
-    fontSize: 11,
-    color: '#E2E8F0',
-    fontWeight: '600',
-  },
-  formCard: {
-    marginHorizontal: 18,
-    marginTop: -12,
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  segmentedContainer: {
-    flexDirection: 'row',
-    borderRadius: 12,
-    padding: 4,
     marginBottom: 20,
+    textAlign: 'center',
   },
-  segmentButton: {
+
+  // ── Tab Bar ───────────────────────────────────────────────────────────────
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 14,
+    padding: 4,
+    width: '100%',
+  },
+  tabBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
-    borderRadius: 10,
-    minHeight: 44,
+    borderRadius: 11,
   },
-  segmentActive: {
+  tabBtnActive: {
+    backgroundColor: '#FFFFFF',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  segmentText: {
-    fontSize: 14,
-  },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    marginBottom: 16,
-  },
-  errorText: {
-    flex: 1,
+  tabBtnText: {
     fontSize: 13,
-    lineHeight: 18,
-  },
-  demoSection: {
-    marginBottom: 18,
-  },
-  demoSectionTitle: {
     fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 8,
+    color: 'rgba(255,255,255,0.75)',
   },
-  chipRow: {
-    flexDirection: 'row',
-    gap: 10,
+  tabBtnTextActive: {
+    color: BRAND_DARK,
   },
-  demoChip: {
+
+  // ── White Form Sheet ──────────────────────────────────────────────────────
+  formSheet: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
+  },
+  loginBody: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 28,
+    paddingBottom: 24,
+  },
+  scrollBody: {
+    flexGrow: 1,
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 32,
+  },
+  loginCenterWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+
+  // ── Form Heading ──────────────────────────────────────────────────────────
+  formHeading: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 4,
+  },
+  formSubheading: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 20,
+  },
+
+  // ── Error Banner ──────────────────────────────────────────────────────────
+  errBanner: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 12,
-    minHeight: 52,
-  },
-  chipIcon: {
-    fontSize: 20,
-    marginRight: 8,
-  },
-  chipTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  chipSubtitle: {
-    fontSize: 10,
-    marginTop: 1,
-  },
-  inputGroup: {
     marginBottom: 16,
   },
+  errBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: ERROR_RED,
+    lineHeight: 18,
+  },
+
+  // ── Name Row ──────────────────────────────────────────────────────────────
   nameRow: {
     flexDirection: 'row',
   },
-  inputLabel: {
+
+  // ── Field ─────────────────────────────────────────────────────────────────
+  fieldGroup: {
+    marginBottom: 14,
+  },
+  fieldLabel: {
+    fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 0.5,
+    color: '#475569',
+    letterSpacing: 0.8,
     marginBottom: 6,
   },
-  inputWrapper: {
+  inputBox: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     paddingHorizontal: 12,
     minHeight: 48,
+  },
+  inputBoxError: {
+    borderColor: ERROR_RED,
+    backgroundColor: '#FFF5F5',
   },
   inputIcon: {
     marginRight: 10,
@@ -858,47 +781,155 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     fontSize: 14,
+    color: '#0F172A',
     paddingVertical: 10,
   },
-  eyeButton: {
+  eyeBtn: {
     padding: 6,
   },
-  primaryButton: {
+  inlineErr: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 5,
+    marginLeft: 2,
+  },
+  inlineErrText: {
+    fontSize: 11,
+    color: ERROR_RED,
+    fontWeight: '500',
+    flex: 1,
+  },
+  fieldHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
+    marginLeft: 2,
+  },
+
+  // ── Password Strength ──────────────────────────────────────────────────────
+  strengthWrap: {
+    marginTop: -6,
+    marginBottom: 14,
+  },
+  strengthBarRow: {
+    flexDirection: 'row',
+    gap: 4,
+    height: 4,
+  },
+  strengthSeg: {
+    flex: 1,
+    borderRadius: 2,
+  },
+  strengthInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  strengthLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  strengthHint: {
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+
+  // ── Passwords Match ────────────────────────────────────────────────────────
+  matchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: -8,
+    marginBottom: 14,
+    marginLeft: 2,
+  },
+  matchText: {
+    fontSize: 11,
+    color: BRAND_GREEN,
+    fontWeight: '600',
+  },
+
+  // ── CTA Button ────────────────────────────────────────────────────────────
+  cta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: BRAND_GREEN,
     borderRadius: 14,
-    minHeight: 50,
+    minHeight: 52,
     marginTop: 8,
-    shadowColor: '#0B3D2E',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 3,
+    shadowColor: BRAND_GREEN,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  buttonDisabled: {
+  ctaDisabled: {
     opacity: 0.65,
   },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  buttonContentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  buttonText: {
-    fontSize: 15,
+  ctaText: {
+    fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.3,
   },
-  switchModeRow: {
+
+  // ── Divider ───────────────────────────────────────────────────────────────
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E2E8F0',
+  },
+  dividerText: {
+    paddingHorizontal: 10,
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#94A3B8',
+    letterSpacing: 0.8,
+  },
+
+  // ── Google Button ─────────────────────────────────────────────────────────
+  googleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 20,
-    paddingVertical: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    minHeight: 50,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  googleBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E293B',
+    letterSpacing: 0.2,
+  },
+
+  // ── Switch Mode ───────────────────────────────────────────────────────────
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 18,
+  },
+  switchText: {
+    fontSize: 13,
+    color: '#94A3B8',
+  },
+  switchLink: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: BRAND_GREEN,
   },
 });
 

@@ -2,6 +2,7 @@
   "expo": {
     "name": "frontend",
     "slug": "frontend",
+    "scheme": "unitymap",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,7 +27,8 @@
       }
     },
     "plugins": [
-      "expo-speech-recognition"
+      "expo-speech-recognition",
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {
