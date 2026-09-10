@@ -209,9 +209,9 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
             <Text style={[styles.metricValue, { color: '#047857' }]}>{stats.admins}</Text>
             <Text style={[styles.metricLabel, { color: '#065F46' }]}>Admins</Text>
           </View>
-          <View style={[styles.metricCard, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-            <Text style={[styles.metricValue, { color: '#1D4ED8' }]}>{stats.regular}</Text>
-            <Text style={[styles.metricLabel, { color: '#1E40AF' }]}>Citizens</Text>
+          <View style={[styles.metricCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
+            <Text style={[styles.metricValue, { color: '#0B3D2E' }]}>{stats.regular}</Text>
+            <Text style={[styles.metricLabel, { color: '#166534' }]}>Citizens</Text>
           </View>
         </View>
 

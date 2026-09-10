@@ -20,6 +20,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  Platform,
   RefreshControl,
 } from 'react-native';
 import { fetchReportDetails, dispatchDecision } from '../../services/triageService';
@@ -103,7 +104,7 @@ export const ReportInspectionScreen = ({
       case 'HIGH':
         return { bg: '#FEF3C7', border: '#D97706', text: '#92400E' };
       case 'MEDIUM':
-        return { bg: '#DBEAFE', border: '#2563EB', text: '#1E40AF' };
+        return { bg: '#ECFDF5', border: '#10B981', text: '#047857' };
       default:
         return { bg: '#F1F5F9', border: '#94A3B8', text: '#475569' };
     }
@@ -242,9 +243,9 @@ export const ReportInspectionScreen = ({
   if (isLoading || !report) {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+        <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#38BDF8" />
+          <ActivityIndicator size="large" color="#0B3D2E" />
           <Text style={styles.loadingText}>Loading inspection workspace evidence...</Text>
         </View>
       </SafeAreaView>
@@ -253,26 +254,37 @@ export const ReportInspectionScreen = ({
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
+      <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
 
       {/* Top Navigation Header */}
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
-          <Text style={styles.backBtnText}>← Triage Queue</Text>
-        </TouchableOpacity>
-        <View style={styles.topBarCenter}>
-          <Text style={styles.topBarTitle}>Report Inspection</Text>
-          <Text style={styles.topBarSub}>{report._id || 'RPT-CMC'}</Text>
+        <View style={styles.topBarNavRow}>
+          <TouchableOpacity
+            onPress={onBack}
+            style={styles.backBtn}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Triage Queue"
+          >
+            <Text style={styles.backBtnText}>← Triage Queue</Text>
+          </TouchableOpacity>
+          <View
+            style={[
+              styles.statusPill,
+              { backgroundColor: statusBadge.bg, borderColor: statusBadge.border },
+            ]}
+          >
+            <Text style={[styles.statusPillText, { color: statusBadge.text }]} numberOfLines={1}>
+              {statusBadge.label}
+            </Text>
+          </View>
         </View>
-        <View
-          style={[
-            styles.statusPill,
-            { backgroundColor: statusBadge.bg, borderColor: statusBadge.border },
-          ]}
-        >
-          <Text style={[styles.statusPillText, { color: statusBadge.text }]}>
-            {statusBadge.label}
-          </Text>
+        <View style={styles.topBarTitleRow}>
+          <Text style={styles.topBarTitle} numberOfLines={1}>Report Inspection</Text>
+          <View style={styles.idBadge}>
+            <Text style={styles.topBarSub}>{report._id || 'RPT-CMC'}</Text>
+          </View>
         </View>
       </View>
 
@@ -622,6 +634,7 @@ export const ReportInspectionScreen = ({
                         styles.timelineChipText,
                         targetPriority === item.days && styles.timelineChipTextSelected,
                       ]}
+                      numberOfLines={1}
                     >
                       {item.label}
                     </Text>
@@ -772,7 +785,7 @@ export const ReportInspectionScreen = ({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
   },
   container: {
     flex: 1,
@@ -782,47 +795,61 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   topBar: {
+    backgroundColor: '#0B3D2E',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? 28 : 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  topBarNavRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#0F172A',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
+    marginBottom: 8,
+  },
+  topBarTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   backBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
     borderRadius: 8,
   },
   backBtnText: {
-    color: '#38BDF8',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
   },
-  topBarCenter: {
-    alignItems: 'center',
-  },
   topBarTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: 0.3,
+    flex: 1,
+    marginRight: 8,
+  },
+  idBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
   topBarSub: {
     fontSize: 10,
-    color: '#94A3B8',
-    marginTop: 2,
-    fontFamily: 'monospace',
+    color: '#A7F3D0',
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   statusPill: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
+    maxWidth: 160,
   },
   statusPillText: {
     fontSize: 9,
@@ -833,10 +860,10 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#F8FAFC',
   },
   loadingText: {
-    color: '#94A3B8',
+    color: '#64748B',
     marginTop: 12,
     fontSize: 13,
     fontWeight: '600',
@@ -945,7 +972,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#CBD5E1',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
     position: 'relative',
   },
   fullPhoto: {
@@ -1015,7 +1042,7 @@ const styles = StyleSheet.create({
   notesCorrob: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#2563EB',
+    color: '#047857',
   },
   exifCard: {
     backgroundColor: '#FFFFFF',
@@ -1036,20 +1063,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+    gap: 8,
   },
   exifKey: {
     fontSize: 11,
     color: '#64748B',
     fontWeight: '600',
+    flexShrink: 0,
   },
   exifVal: {
     fontSize: 11,
     color: '#0F172A',
     fontWeight: '700',
     fontFamily: 'monospace',
+    textAlign: 'right',
+    flex: 1,
   },
   assetCard: {
     backgroundColor: '#FFFFFF',
@@ -1072,7 +1103,7 @@ const styles = StyleSheet.create({
   assetCode: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#2563EB',
+    color: '#0B3D2E',
     letterSpacing: 0.5,
   },
   assetName: {
@@ -1082,17 +1113,17 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   assetDistancePill: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: '#A7F3D0',
   },
   assetDistanceText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#1E40AF',
+    color: '#047857',
   },
   varianceTable: {
     backgroundColor: '#F8FAFC',
@@ -1225,7 +1256,7 @@ const styles = StyleSheet.create({
     top: 50,
     right: 20,
     zIndex: 10,
-    backgroundColor: '#1E293B',
+    backgroundColor: '#0B3D2E',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
@@ -1263,7 +1294,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#059669',
+    color: '#0B3D2E',
   },
   modalCloseIcon: {
     fontSize: 18,
@@ -1308,20 +1339,23 @@ const styles = StyleSheet.create({
   timelineChip: {
     flex: 1,
     paddingVertical: 8,
+    paddingHorizontal: 2,
     borderRadius: 8,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
   timelineChipSelected: {
-    backgroundColor: '#0F172A',
-    borderColor: '#0F172A',
+    backgroundColor: '#0B3D2E',
+    borderColor: '#0B3D2E',
   },
   timelineChipText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '600',
     color: '#475569',
+    textAlign: 'center',
   },
   timelineChipTextSelected: {
     color: '#FFFFFF',
@@ -1362,7 +1396,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   modalSubmitBtn: {
-    backgroundColor: '#059669',
+    backgroundColor: '#0B3D2E',
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
