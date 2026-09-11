@@ -354,36 +354,11 @@ class AuthService {
       if (res?.success && Array.isArray(res.users)) {
         return res.users;
       }
-    } catch (_err) {
-      // Offline mock user list
+    } catch (err) {
+      console.warn('[authService] Error loading user directory:', err.message);
     }
 
-    return [
-      {
-        id: 'UM-ADMIN-001',
-        name: 'UnityMap Super Admin',
-        email: 'admin@unitymap.com',
-        role: USER_ROLES.ADMIN,
-        isSuperAdmin: true,
-        phone: '+94 77 000 0001',
-      },
-      {
-        id: 'UM-USER-001',
-        name: 'Alex Morgan',
-        email: 'user@unitymap.com',
-        role: USER_ROLES.REGULAR_USER,
-        isSuperAdmin: false,
-        phone: '+94 77 123 4567',
-      },
-      {
-        id: 'UM-USER-002',
-        name: 'Kasun Bandara',
-        email: 'alex@unitymap.com',
-        role: USER_ROLES.REGULAR_USER,
-        isSuperAdmin: false,
-        phone: '+94 77 765 4321',
-      },
-    ];
+    return [];
   }
 
   /**

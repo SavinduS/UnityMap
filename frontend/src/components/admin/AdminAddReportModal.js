@@ -26,7 +26,6 @@ import { getWardById } from '../../utils/wardJurisdictions';
 import { useLocation } from '../../hooks/useLocation';
 import { extractExifData, toBarrierReportFields } from '../../utils/exifHelper';
 import { createReport, createBarrierReport } from '../../services/api';
-import { addMockTriageReport } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
 
 import BaseMap from '../BaseMap';
@@ -491,37 +490,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       if (onReportCreated) onReportCreated(newReport);
       onClose && onClose();
     } catch (e) {
-      // Offline / backend unreachable -> seamless mock injection so queue updates
-      const isOffline =
-        e?.message?.includes('Failed to fetch') ||
-        e?.message?.includes('Network request failed') ||
-        e?.message?.includes('unreachable') ||
-        e?.message?.includes('API Request Failed');
-      if (isOffline) {
-        try {
-          const mockReport = addMockTriageReport({
-            category,
-            rating,
-            notes: notes?.trim(),
-            name: (name && name.trim()) || (category ? `${category} Barrier` : 'Barrier Report'),
-            locationName: (locationName && locationName.trim()) || ward.name,
-            condition: condition || 'bad',
-            capturedAt: capturedAt || new Date().toISOString(),
-            coordinates: { latitude: finalLat, longitude: finalLng },
-            photoUrl: imageUri,
-            wardId: ward?.id || wardId,
-          });
-          try {
-            AccessibilityInfo.announceForAccessibility('Barrier report successfully added to queue');
-          } catch {}
-          if (onReportCreated) onReportCreated(mockReport);
-          onClose && onClose();
-          return;
-        } catch (mockErr) {
-          // fall through to error display
-        }
-      }
-      setErrorMsg(e?.message || 'Failed to submit report. Please try again.');
+      setErrorMsg(e?.message || 'Failed to submit barrier report to server. Please try again.');
     } finally {
       setSubmitting(false);
       setFallbackLoading(false);

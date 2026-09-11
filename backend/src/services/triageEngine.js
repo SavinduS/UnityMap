@@ -41,12 +41,13 @@ const VITAL_CORRIDORS = [
 ];
 
 // Baseline category impact weights
+// Higher weight = more urgency boost for that barrier type
 const CATEGORY_WEIGHTS = {
-  Lift: 1.2, // Lift failures trap wheelchair users between multi-level pathways
-  Ramp: 1.15, // Broken ramps force mobility users into vehicle roadway
-  'Tactile Paving': 1.1, // Missing tactile surfaces pose safety hazard for blind users
-  Restroom: 0.95,
-  Other: 0.9,
+  Lift: 1.20,           // Lift failures physically trap wheelchair users between floors / pathways
+  Ramp: 1.15,           // Broken ramps force mobility-aid users into active vehicle roadway
+  'Tactile Paving': 1.10, // Missing tactile guidance strips are a direct safety hazard for blind users
+  Restroom: 0.95,       // Accessibility restroom defects affect dignity but rarely create physical danger
+  Other: 1.00,          // Neutral — do NOT penalise valid barriers that don't fit predefined categories
 };
 
 /**
@@ -80,51 +81,99 @@ function getVitalCorridorMultiplier(lat, lng, wardId) {
 }
 
 /**
- * Core Algorithm: Calculate 0 - 100 Urgency Index
- * 
- * Formula:
- * Raw Urgency = (Severity * 0.40) + (Corroborations * 0.35) + (TimeDecay * 0.25)
- * Final Urgency = clamp(0, 100, round(Raw Urgency * CategoryWeight * VitalMultiplier))
+ * Core Algorithm: Calculate 0–100 Urgency Index
+ *
+ * Revised Formula (v2):
+ * ──────────────────────────────────────────────────────────────────────────────
+ * 1. SEVERITY SCORE   (40% weight) — normalised rating 1–5 → 0–100
+ *    severityScore = (rating / 5) × 100
+ *    → Contribution range: 8–40 pts (minimum rating is 1)
+ *
+ * 2. CORROBORATION SCORE  (35% weight) — logarithmic curve, cap at 20 confirms
+ *    corroborationScore = log(1 + count) / log(1 + 20) × 100
+ *    → Logarithmic: first few confirms matter most; 20+ confirms don't keep
+ *      inflating score. This prevents viral-but-minor reports from hijacking
+ *      the CRITICAL tier over genuinely dangerous low-traffic barriers.
+ *
+ * 3. TIME DECAY SCORE  (25% weight) — linear ramp over 30-day CMC SLA window
+ *    ageScore = min(100, ageDays × (100 / 30))
+ *    → 30 days = 100%. Reports stay differentiable across the full municipal
+ *      repair cycle (previously 10 days = 100% caused all backlog to plateau).
+ *
+ * MULTIPLIERS (applied to base score):
+ *    × CategoryWeight   — Lift (1.20) > Ramp (1.15) > Tactile (1.10) > Restroom (0.95) > Other (1.0)
+ *    × CorridorMultiplier — Hospital belt (1.25), Railway hub (1.20), etc.
+ *
+ * OUTPUT:
+ *    urgencyIndex  = clamp(1, 100, round(base × categoryWeight × corridorMultiplier))
+ *    rawScore      = unclamped value — used as a secondary sort key within CRITICAL tier
+ * ──────────────────────────────────────────────────────────────────────────────
  */
 function calculateUrgencyIndex(report, wardId = 'CMC-W01') {
-  const severityRating = Number(report.rating) || 3; // 1 to 5
-  const corroborations = Number(report.corroborationCount) || 0;
+  const severityRating = Math.min(5, Math.max(1, Number(report.rating) || 3)); // clamp 1–5
+  const corroborations = Math.max(0, Number(report.corroborationCount) || 0);
   const createdAt = report.createdAt ? new Date(report.createdAt) : new Date();
   const now = new Date();
   const ageInDays = Math.max(0, (now - createdAt) / (1000 * 60 * 60 * 24));
 
-  // 1. Severity Score: 1-5 normalized to 0-100 (40% weight)
+  // ─────────────────────────────────────────────────────────────
+  // 1. Severity Score (40% weight) — rating 1–5 → 20–100
+  // ─────────────────────────────────────────────────────────────
   const severityScore = (severityRating / 5) * 100;
 
-  // 2. Corroboration Score: 8 confirmations = 100% (35% weight)
-  const corroborationScore = Math.min(100, corroborations * 12.5);
+  // ─────────────────────────────────────────────────────────────
+  // 2. Corroboration Score (35% weight) — logarithmic, cap at 20 confirms
+  //    log1p(20) ≈ 3.045, so score = log1p(count) / 3.045 × 100
+  //    Examples: 1 confirm → 21pts | 5 → 58pts | 10 → 76pts | 20 → 100pts
+  // ─────────────────────────────────────────────────────────────
+  const LOG_CORROBORATION_CAP = 20;
+  const corroborationScore = Math.min(
+    100,
+    (Math.log1p(corroborations) / Math.log1p(LOG_CORROBORATION_CAP)) * 100
+  );
 
-  // 3. Time Decay Score: 10 days = 100% (25% weight)
-  const ageScore = Math.min(100, ageInDays * 10);
+  // ─────────────────────────────────────────────────────────────
+  // 3. Time Decay Score (25% weight) — linear over 30-day CMC SLA window
+  //    30 days = 100%; keeps backlog reports differentiable across full cycle
+  // ─────────────────────────────────────────────────────────────
+  const CMC_SLA_WINDOW_DAYS = 30;
+  const ageScore = Math.min(100, ageInDays * (100 / CMC_SLA_WINDOW_DAYS));
 
-  // Category and Corridor Multipliers
+  // ─────────────────────────────────────────────────────────────
+  // Multipliers: Category type + Vital Corridor boost
+  // ─────────────────────────────────────────────────────────────
   const categoryWeight = CATEGORY_WEIGHTS[report.category] || 1.0;
   const lat = report.coordinates?.latitude || 6.9271;
   const lng = report.coordinates?.longitude || 79.8612;
-  const { multiplier: corridorMultiplier, corridorName } = getVitalCorridorMultiplier(lat, lng, wardId);
+  const { multiplier: corridorMultiplier, corridorName } =
+    getVitalCorridorMultiplier(lat, lng, wardId);
 
+  // ─────────────────────────────────────────────────────────────
   // Combined weighted score
+  // ─────────────────────────────────────────────────────────────
   const baseScore = severityScore * 0.4 + corroborationScore * 0.35 + ageScore * 0.25;
-  const rawCalculated = baseScore * categoryWeight * corridorMultiplier;
-  const finalUrgencyIndex = Math.min(100, Math.max(1, Math.round(rawCalculated)));
+  const rawScore = Math.round(baseScore * categoryWeight * corridorMultiplier * 10) / 10;
+  const finalUrgencyIndex = Math.min(100, Math.max(1, Math.round(rawScore)));
 
+  // ─────────────────────────────────────────────────────────────
   // Priority Badge Classification
+  // CRITICAL  ≥ 80  (life-safety or high-impact barrier requiring immediate dispatch)
+  // HIGH      ≥ 60  (significant mobility impact, schedule within the week)
+  // MEDIUM    ≥ 35  (real barrier but manageable within the repair cycle)
+  // LOW       < 35  (low severity, low corroboration, recently submitted)
+  // ─────────────────────────────────────────────────────────────
   let priorityBadge = 'LOW';
   if (finalUrgencyIndex >= 80) {
     priorityBadge = 'CRITICAL';
   } else if (finalUrgencyIndex >= 60) {
     priorityBadge = 'HIGH';
-  } else if (finalUrgencyIndex >= 40) {
+  } else if (finalUrgencyIndex >= 35) {
     priorityBadge = 'MEDIUM';
   }
 
   return {
     urgencyIndex: finalUrgencyIndex,
+    rawScore,               // Unclamped score — use as secondary sort key within same badge tier
     priorityBadge,
     formulaFactors: {
       barrierSeverityWeight: severityRating,
@@ -132,6 +181,15 @@ function calculateUrgencyIndex(report, wardId = 'CMC-W01') {
       reportAgeDays: Math.round(ageInDays * 10) / 10,
       vitalCorridorMultiplier: corridorMultiplier,
       corridorName,
+      // Debug breakdown (useful for admin inspection panel)
+      _breakdown: {
+        severityScore: Math.round(severityScore),
+        corroborationScore: Math.round(corroborationScore),
+        ageScore: Math.round(ageScore),
+        baseScore: Math.round(baseScore),
+        categoryWeight,
+        corridorMultiplier,
+      },
     },
   };
 }
@@ -225,8 +283,13 @@ async function getTriagedQueue({
       return new Date(b.createdAt) - new Date(a.createdAt);
     }
     // Default & Core requirement: Sort by urgencyIndex descending
-    return b.triage.urgencyIndex - a.triage.urgencyIndex;
+    // Use rawScore as tiebreaker so CRITICAL reports (all at 100) are still
+    // differentiated by their unclamped score (e.g., 142 vs 118)
+    const urgencyDiff = b.triage.urgencyIndex - a.triage.urgencyIndex;
+    if (urgencyDiff !== 0) return urgencyDiff;
+    return (b.triage.rawScore || 0) - (a.triage.rawScore || 0);
   });
+
 
   const startIndex = (page - 1) * limit;
   const paginated = filtered.slice(startIndex, startIndex + limit);

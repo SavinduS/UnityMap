@@ -1,7 +1,7 @@
 /**
  * TriageQueueScreen.js
  * Page 2: Severity-Sorted Triage Queue Dashboard
- * 
+ *
  * Assigned Member: Savindu
  * Ticket: SPT-112
  */
@@ -29,16 +29,16 @@ import AdminAddReportModal from '../../components/admin/AdminAddReportModal';
 
 const CATEGORIES = [
   { id: 'all', label: 'All Categories' },
-  { id: 'Lift', label: '🛗 Lift' },
-  { id: 'Ramp', label: '♿ Ramp' },
-  { id: 'Tactile Paving', label: '🦯 Tactile Paving' },
-  { id: 'Restroom', label: '🚻 Restroom' },
+  { id: 'Lift', label: 'Lift' },
+  { id: 'Ramp', label: 'Ramp' },
+  { id: 'Tactile Paving', label: 'Tactile Paving' },
+  { id: 'Restroom', label: 'Restroom' },
 ];
 
 const SORT_OPTIONS = [
-  { id: 'urgency', label: '⚡ Urgency' },
-  { id: 'corroboration', label: '👥 Corroborated' },
-  { id: 'date', label: '📅 Newest' },
+  { id: 'urgency', label: 'Urgency', icon: 'zap' },
+  { id: 'corroboration', label: 'Corroborated', icon: 'users' },
+  { id: 'date', label: 'Newest', icon: 'clock' },
 ];
 
 export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: propWardId, onWardChange }) => {
@@ -67,7 +67,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
 
   const loadTriageData = useCallback(async () => {
     try {
-      console.log(`🔄 Fetching Triage Queue: ward=${selectedWardId} category=${selectedCategory} status=pending sortBy=${selectedSort}`);
+      console.log(`Fetching Triage Queue: ward=${selectedWardId} category=${selectedCategory} status=pending sortBy=${selectedSort}`);
       const [queueData, metricsData] = await Promise.all([
         fetchTriageQueue({
           wardId: selectedWardId,
@@ -79,7 +79,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
         fetchTriageMetrics(selectedWardId),
       ]);
 
-      console.log(`✅ Queue loaded: ${queueData?.reports?.length || 0} reports (total: ${queueData?.totalReports}) | category filter: ${selectedCategory}`);
+      console.log(`Queue loaded: ${queueData?.reports?.length || 0} reports`);
       if (queueData?.reports) {
         setReports(queueData.reports);
       }
@@ -95,7 +95,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
     }
   }, [selectedWardId, selectedCategory, selectedSort, minUrgency]);
 
-  // Sync controlled prop from scaffold (Prompt 3)
+  // Sync controlled prop from scaffold
   useEffect(() => {
     if (propWardId && propWardId !== selectedWardId) {
       setSelectedWardId(propWardId);
@@ -120,10 +120,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
   const handleReportCreated = useCallback(
     (newReport) => {
       setIsAddReportOpen(false);
-      // Reset category filter to "All Categories" so new report is visible regardless of previous filter
-      // and force refresh with updated filter. Without this, a report of a different category would stay hidden.
       setSelectedCategory('all');
-      // Defer load to next tick so state update propagates (selectedCategory='all' will also trigger load via dependency)
       setTimeout(() => loadTriageData(), 50);
       const ref = newReport?._id || newReport?.id || '';
       try {
@@ -132,12 +129,11 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
       try {
         Alert.alert('Report Added', `Barrier report ${ref ? ref + ' ' : ''}added to Triage Queue.`);
       } catch {}
-      console.log('✅ Report created, queue will refresh with All Categories filter', newReport);
     },
     [loadTriageData]
   );
 
-  // SPT-301: confirmation count pill dynamically reflects updated corroborationCount after refresh via loadTriageData
+  // SPT-301: confirmation count pill dynamically reflects updated corroborationCount
   const handleCorroborationSuccess = useCallback(
     (updatedReport) => {
       if (!updatedReport?._id) return;
@@ -155,7 +151,6 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
             : r
         )
       );
-      // Also refresh metrics so KPI reflects new corroboration
       fetchTriageMetrics(selectedWardId).then(setMetrics).catch(() => {});
       try {
         AccessibilityInfo.announceForAccessibility(`Confirmations updated to ${updatedReport.corroborationCount}`);
@@ -185,8 +180,10 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
       <View style={styles.topBar}>
         <View style={styles.topBarNavRow}>
           {onBack ? (
-            <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
-              <Text style={styles.backBtnText}>← Dashboard</Text>
+            <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}
+              accessibilityRole="button" accessibilityLabel="Back to Dashboard">
+              <Feather name="arrow-left" size={16} color="#FFFFFF" style={{ marginRight: 5 }} />
+              <Text style={styles.backBtnText}>Dashboard</Text>
             </TouchableOpacity>
           ) : (
             <View style={{ width: 40 }} />
@@ -199,10 +196,9 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Add barrier report"
-                accessibilityHint="Opens admin barrier report creation modal"
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Feather name="plus" size={14} color="#FFFFFF" />
+                <Feather name="plus" size={13} color="#FFFFFF" />
                 <Text style={styles.addReportBtnText}>Add Report</Text>
               </TouchableOpacity>
             )}
@@ -217,7 +213,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
               {isRecalculating ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Text style={styles.recalculateText}>↻ Recalc</Text>
+                <Feather name="refresh-cw" size={14} color="#FFFFFF" />
               )}
             </TouchableOpacity>
           </View>
@@ -225,7 +221,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
         <View style={styles.topBarTitleContainer}>
           <Text style={styles.topBarTitle}>Severity Triage Queue</Text>
           <Text style={styles.topBarSubtitle}>
-            {activeWard.name} • Ward {activeWard.wardNumber}
+            {activeWard.name} — Ward {activeWard.wardNumber}
           </Text>
         </View>
       </View>
@@ -239,36 +235,36 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
         {/* Urgency Metrics KPI Row */}
         {metrics && (
           <View style={styles.kpiRow}>
-            <View style={[styles.kpiCard, { borderColor: '#DC2626' }]}>
+            <View style={[styles.kpiCard, { borderTopColor: '#DC2626' }]}>
               <Text style={[styles.kpiCount, { color: '#DC2626' }]}>
                 {metrics.criticalPriorityCount}
               </Text>
               <Text style={styles.kpiLabel}>CRITICAL</Text>
-              <Text style={styles.kpiSub}>Score ≥ 80</Text>
+              <Text style={styles.kpiSub}>Score 80+</Text>
             </View>
 
-            <View style={[styles.kpiCard, { borderColor: '#D97706' }]}>
+            <View style={[styles.kpiCard, { borderTopColor: '#D97706' }]}>
               <Text style={[styles.kpiCount, { color: '#D97706' }]}>
                 {metrics.highPriorityCount}
               </Text>
               <Text style={styles.kpiLabel}>HIGH</Text>
-              <Text style={styles.kpiSub}>Score 60-79</Text>
+              <Text style={styles.kpiSub}>Score 60–79</Text>
             </View>
 
-            <View style={[styles.kpiCard, { borderColor: '#10B981' }]}>
+            <View style={[styles.kpiCard, { borderTopColor: '#10B981' }]}>
               <Text style={[styles.kpiCount, { color: '#047857' }]}>
                 {metrics.mediumPriorityCount}
               </Text>
               <Text style={styles.kpiLabel}>MEDIUM</Text>
-              <Text style={styles.kpiSub}>Score 40-59</Text>
+              <Text style={styles.kpiSub}>Score 40–59</Text>
             </View>
 
-            <View style={[styles.kpiCard, { borderColor: '#0B3D2E' }]}>
+            <View style={[styles.kpiCard, { borderTopColor: '#0B3D2E' }]}>
               <Text style={[styles.kpiCount, { color: '#0B3D2E' }]}>
                 {metrics.averageUrgencyIndex}
               </Text>
               <Text style={styles.kpiLabel}>AVG INDEX</Text>
-              <Text style={styles.kpiSub}>0 - 100 Scale</Text>
+              <Text style={styles.kpiSub}>0–100 Scale</Text>
             </View>
           </View>
         )}
@@ -298,8 +294,10 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
         {/* Sort & Urgency Threshold Controls */}
         <View style={styles.sortSection}>
           <View style={styles.sortHeaderRow}>
-            <Text style={styles.filterSectionHeader}>AUTO-TRIAGE SORT CRITERIA</Text>
-            <Text style={styles.resultCountBadge}>{reports.length} pending</Text>
+            <Text style={styles.filterSectionHeader}>SORT CRITERIA</Text>
+            <View style={styles.resultCountBadge}>
+              <Text style={styles.resultCountText}>{reports.length} pending</Text>
+            </View>
           </View>
           <View style={styles.sortTabsRow}>
             {SORT_OPTIONS.map((opt) => {
@@ -311,6 +309,12 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                   onPress={() => setSelectedSort(opt.id)}
                   activeOpacity={0.7}
                 >
+                  <Feather
+                    name={opt.icon}
+                    size={12}
+                    color={isSelected ? '#0B3D2E' : '#94A3B8'}
+                    style={{ marginRight: 4 }}
+                  />
                   <Text
                     style={[styles.sortTabText, isSelected && styles.sortTabTextSelected]}
                     numberOfLines={1}
@@ -331,8 +335,10 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
           </View>
         ) : reports.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>🎉</Text>
-            <Text style={styles.emptyTitle}>Queue Clear!</Text>
+            <View style={styles.emptyIconBox}>
+              <Feather name="check-circle" size={36} color="#10B981" />
+            </View>
+            <Text style={styles.emptyTitle}>Queue Clear</Text>
             <Text style={styles.emptyText}>
               No pending accessibility barriers match the selected category or urgency filter.
             </Text>
@@ -343,11 +349,10 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Add barrier report"
-                accessibilityHint="Opens admin barrier report creation modal"
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Feather name="plus" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.emptyCtaText}>⊕ Add First Barrier Report</Text>
+                <Feather name="plus" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.emptyCtaText}>Add Barrier Report</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -360,7 +365,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
 
               return (
                 <View key={report._id || idx} style={styles.reportCard}>
-                  {/* Card Header with Urgency Index Badge */}
+                  {/* Card Header */}
                   <View style={styles.cardHeaderRow}>
                     <View style={styles.cardCategoryBadge}>
                       <Text style={styles.cardCategoryText}>{report.category}</Text>
@@ -373,7 +378,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                       ]}
                     >
                       <Text style={[styles.urgencyBadgeText, { color: badgeStyle.text }]}>
-                        {triage.priorityBadge} • {triage.urgencyIndex}/100
+                        {triage.priorityBadge} — {triage.urgencyIndex}/100
                       </Text>
                     </View>
                   </View>
@@ -388,12 +393,25 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                       />
                     ) : (
                       <View style={styles.cardThumbnailPlaceholder}>
-                        <Text style={{ fontSize: 24 }}>📸</Text>
+                        <Feather name="camera" size={22} color="#94A3B8" />
                       </View>
                     )}
 
                     <View style={styles.cardMainInfo}>
-                      <Text style={styles.cardNotes} numberOfLines={3}>
+                      {report.name ? (
+                        <Text style={styles.cardReportName} numberOfLines={1}>
+                          {report.name}
+                        </Text>
+                      ) : null}
+                      {report.locationName ? (
+                        <View style={styles.locationRow}>
+                          <Feather name="map-pin" size={11} color="#059669" style={{ marginRight: 3 }} />
+                          <Text style={styles.cardLocationName} numberOfLines={1}>
+                            {report.locationName}
+                          </Text>
+                        </View>
+                      ) : null}
+                      <Text style={styles.cardNotes} numberOfLines={report.name ? 2 : 3}>
                         {report.notes || 'No description provided.'}
                       </Text>
 
@@ -403,8 +421,9 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                           {'☆'.repeat(5 - (report.rating || 3))}
                         </Text>
                         <View style={styles.corroborationPill}>
+                          <Feather name="users" size={10} color="#047857" style={{ marginRight: 4 }} />
                           <Text style={styles.corroborationText}>
-                            👥 {report.corroborationCount || 0} confirmations
+                            {report.corroborationCount || 0}
                           </Text>
                         </View>
                       </View>
@@ -414,10 +433,9 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                   {/* Vital Corridor Alert Banner */}
                   {factors.corridorName && (
                     <View style={styles.corridorTag}>
-                      <Text style={styles.corridorIcon}>🚨</Text>
+                      <Feather name="alert-triangle" size={12} color="#92400E" style={{ marginRight: 6 }} />
                       <Text style={styles.corridorText}>
-                        Vital Corridor Multiplier applied ({factors.vitalCorridorMultiplier}x) —{' '}
-                        {factors.corridorName}
+                        Vital Corridor ({factors.vitalCorridorMultiplier}x) — {factors.corridorName}
                       </Text>
                     </View>
                   )}
@@ -425,10 +443,9 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                   {/* Municipal Asset Match Indicator */}
                   {triage.crossReferencedAsset && (
                     <View style={styles.assetMatchBox}>
-                      <Text style={styles.assetMatchIcon}>📍</Text>
+                      <Feather name="tag" size={11} color="#64748B" style={{ marginRight: 6 }} />
                       <Text style={styles.assetMatchText} numberOfLines={1}>
-                        Matched Asset: {triage.crossReferencedAsset.name} (
-                        {triage.distanceToAssetMeters}m away)
+                        Matched Asset: {triage.crossReferencedAsset.name} ({triage.distanceToAssetMeters}m)
                       </Text>
                     </View>
                   )}
@@ -436,14 +453,15 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                   {/* Card Action Footer */}
                   <View style={styles.cardFooter}>
                     <Text style={styles.cardDate}>
-                      Submitted {factors.reportAgeDays ? `${factors.reportAgeDays}d ago` : 'recently'}
+                      {factors.reportAgeDays ? `${factors.reportAgeDays}d ago` : 'Recently submitted'}
                     </Text>
                     <TouchableOpacity
                       style={styles.inspectButton}
                       onPress={() => onSelectReport && onSelectReport(report)}
                       activeOpacity={0.7}
                     >
-                      <Text style={styles.inspectButtonText}>Inspect Evidence →</Text>
+                      <Text style={styles.inspectButtonText}>Inspect Evidence</Text>
+                      <Feather name="arrow-right" size={12} color="#FFFFFF" style={{ marginLeft: 4 }} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -461,7 +479,6 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel="Add barrier report"
-          accessibilityHint="Opens admin barrier report creation modal"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Feather name="plus" size={24} color="#FFFFFF" />
@@ -486,16 +503,16 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0F4F0',
   },
   content: {
-    paddingBottom: 80,
+    paddingBottom: 100,
   },
   topBar: {
     backgroundColor: '#0B3D2E',
     paddingHorizontal: 16,
     paddingTop: 10,
-    paddingBottom: 14,
+    paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
@@ -503,13 +520,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   backBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 10,
+    minHeight: 36,
   },
   backBtnText: {
     color: '#FFFFFF',
@@ -540,13 +560,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#059669',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#047857',
-    gap: 6,
+    gap: 5,
     justifyContent: 'center',
+    minHeight: 36,
   },
   addReportBtnText: {
     color: '#FFFFFF',
@@ -554,17 +575,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   recalculateBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  recalculateText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
   },
   kpiRow: {
     flexDirection: 'row',
@@ -579,14 +597,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 2,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
+    borderTopWidth: 3,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
   },
   kpiCount: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '800',
     textAlign: 'center',
   },
@@ -594,7 +615,7 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
     color: '#475569',
-    marginTop: 2,
+    marginTop: 3,
     letterSpacing: 0.3,
     textAlign: 'center',
   },
@@ -608,25 +629,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 6,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
   },
   filterSectionHeader: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     color: '#64748B',
     letterSpacing: 0.8,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   chipScroll: {
     flexDirection: 'row',
   },
   filterChip: {
     paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F1F5F9',
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
     marginRight: 8,
+    minHeight: 36,
+    justifyContent: 'center',
   },
   filterChipSelected: {
     backgroundColor: '#0B3D2E',
@@ -643,44 +669,53 @@ const styles = StyleSheet.create({
   },
   sortSection: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   sortHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   resultCountBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  resultCountText: {
     fontSize: 11,
     fontWeight: '700',
     color: '#047857',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
   },
   sortTabsRow: {
     flexDirection: 'row',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
     borderRadius: 10,
     padding: 3,
     gap: 4,
   },
   sortTab: {
     flex: 1,
-    paddingVertical: 7,
-    paddingHorizontal: 2,
+    flexDirection: 'row',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
+    minHeight: 36,
   },
   sortTabSelected: {
     backgroundColor: '#FFFFFF',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
     elevation: 2,
   },
   sortTabText: {
@@ -709,9 +744,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingVertical: 60,
   },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: 12,
+  emptyIconBox: {
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
   },
   emptyTitle: {
     fontSize: 17,
@@ -728,14 +768,13 @@ const styles = StyleSheet.create({
   emptyCtaBtn: {
     flexDirection: 'row',
     backgroundColor: '#0B3D2E',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 16,
     minHeight: 48,
-    minWidth: 48,
   },
   emptyCtaText: {
     color: '#FFFFFF',
@@ -744,34 +783,34 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 24,
+    bottom: 28,
     right: 16,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: '#0B3D2E',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowColor: '#0B3D2E',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
   },
   reportsList: {
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 12,
   },
   reportCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
     marginBottom: 12,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#E2E8F0',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.04,
     shadowRadius: 6,
     elevation: 2,
   },
@@ -783,9 +822,11 @@ const styles = StyleSheet.create({
   },
   cardCategoryBadge: {
     backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   cardCategoryText: {
     fontSize: 11,
@@ -801,36 +842,55 @@ const styles = StyleSheet.create({
   urgencyBadgeText: {
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   cardBody: {
     flexDirection: 'row',
     marginBottom: 10,
+    gap: 12,
   },
   cardThumbnail: {
-    width: 72,
-    height: 72,
-    borderRadius: 10,
-    marginRight: 12,
+    width: 80,
+    height: 80,
+    borderRadius: 12,
+    flexShrink: 0,
   },
   cardThumbnailPlaceholder: {
-    width: 72,
-    height: 72,
-    borderRadius: 10,
+    width: 80,
+    height: 80,
+    borderRadius: 12,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    flexShrink: 0,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   cardMainInfo: {
     flex: 1,
     justifyContent: 'space-between',
   },
-  cardNotes: {
-    fontSize: 13,
+  cardReportName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  cardLocationName: {
+    fontSize: 11,
     fontWeight: '600',
-    color: '#1E293B',
-    lineHeight: 18,
+    color: '#059669',
+    flexShrink: 1,
+  },
+  cardNotes: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 17,
   },
   cardMetaRow: {
     flexDirection: 'row',
@@ -839,14 +899,16 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   cardRating: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#F59E0B',
     letterSpacing: 1,
   },
   corroborationPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: 12,
   },
   corroborationText: {
@@ -858,14 +920,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 8,
     marginBottom: 8,
-  },
-  corridorIcon: {
-    fontSize: 12,
-    marginRight: 6,
   },
   corridorText: {
     fontSize: 10,
@@ -880,13 +940,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
     borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     marginBottom: 10,
-  },
-  assetMatchIcon: {
-    fontSize: 12,
-    marginRight: 6,
   },
   assetMatchText: {
     fontSize: 10,
@@ -905,15 +961,19 @@ const styles = StyleSheet.create({
   cardDate: {
     fontSize: 11,
     color: '#94A3B8',
+    fontWeight: '500',
   },
   inspectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#0B3D2E',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    minHeight: 36,
   },
   inspectButtonText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
   },
