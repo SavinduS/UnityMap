@@ -136,12 +136,7 @@ const SAMPLE_BARRIER_REPORTS = [
 
 async function seedTriageDataIfEmpty() {
   try {
-    const reportCount = await BarrierReport.countDocuments();
-    if (reportCount === 0) {
-      console.log('🌱 Seeding initial CMC Barrier Reports for Triage Engine...');
-      await BarrierReport.create(SAMPLE_BARRIER_REPORTS);
-      console.log(`✅ Seeded ${SAMPLE_BARRIER_REPORTS.length} barrier reports.`);
-    }
+    // Note: Do not auto-seed dummy barrier reports. Only real reports from users/volunteers should populate the queue.
 
     const assetCount = await MunicipalAsset.countDocuments();
     if (assetCount === 0) {

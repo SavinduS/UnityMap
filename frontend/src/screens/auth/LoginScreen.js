@@ -49,6 +49,93 @@ const BRAND_LIGHT   = '#D1FAE5';  // emerald-100
 const BRAND_XLIGHT  = '#ECFDF5';  // emerald-50
 const ERROR_RED     = '#DC2626';
 
+// ── Helper for border color ──────────────────────────────────────────────────
+const getBorderColor = (hasError, isFocused, touched, isValid, isHighContrast) => {
+  if (hasError) return isHighContrast ? '#000000' : ERROR_RED;
+  if (isFocused) return isHighContrast ? '#000000' : BRAND_GREEN;
+  if (touched && isValid) return isHighContrast ? '#000000' : BRAND_GREEN;
+  return '#E2E8F0';
+};
+
+// ── Standalone Field Component (Outside LoginScreen to preserve input focus across keystrokes) ──
+const Field = React.memo(({
+  label, icon, placeholder, value, onChangeText, onBlur,
+  keyboardType, autoCapitalize, secureTextEntry, showToggle,
+  onToggleSecure, showIcon, isValid, isTouched, hasValue, error, hint,
+  multiline,
+}) => {
+  const { isHighContrast } = useTheme();
+  const [isFocused, setIsFocused] = useState(false);
+
+  const activeBorderColor = getBorderColor(!!error, isFocused, isTouched && hasValue, isValid, isHighContrast);
+
+  return (
+    <View style={styles.fieldGroup}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={[
+        styles.inputBox,
+        { borderColor: activeBorderColor },
+        error && styles.inputBoxError,
+        isFocused && !error && styles.inputBoxFocused,
+      ]}>
+        {icon && (
+          <Feather
+            name={icon}
+            size={17}
+            color={error ? ERROR_RED : isFocused ? BRAND_GREEN : '#64748B'}
+            style={styles.inputIcon}
+          />
+        )}
+        <TextInput
+          style={[
+            styles.textInput,
+            multiline && { height: 80, textAlignVertical: 'top' },
+            Platform.OS === 'web' && { outlineStyle: 'none', outlineWidth: 0, outline: 'none', boxShadow: 'none' },
+          ]}
+          placeholder={placeholder}
+          placeholderTextColor="#94A3B8"
+          value={value}
+          onChangeText={onChangeText}
+          onFocus={() => setIsFocused(true)}
+          onBlur={(e) => {
+            setIsFocused(false);
+            if (onBlur) onBlur(e);
+          }}
+          keyboardType={keyboardType || 'default'}
+          autoCapitalize={autoCapitalize || 'none'}
+          secureTextEntry={secureTextEntry}
+          autoCorrect={false}
+          multiline={multiline}
+        />
+        {showToggle && (
+          <TouchableOpacity
+            onPress={onToggleSecure}
+            style={styles.eyeBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel={secureTextEntry ? 'Show password' : 'Hide password'}
+          >
+            <Feather name={secureTextEntry ? 'eye' : 'eye-off'} size={17} color="#64748B" />
+          </TouchableOpacity>
+        )}
+        {showIcon && isTouched && hasValue && !showToggle && (
+          isValid
+            ? <Feather name="check-circle" size={16} color={BRAND_GREEN} />
+            : <Feather name="x-circle" size={16} color={ERROR_RED} />
+        )}
+      </View>
+      {error ? (
+        <View style={styles.inlineErr}>
+          <Feather name="alert-circle" size={11} color={ERROR_RED} style={{ marginRight: 4 }} />
+          <Text style={styles.inlineErrText}>{error}</Text>
+        </View>
+      ) : hint ? (
+        <Text style={styles.fieldHint}>{hint}</Text>
+      ) : null}
+    </View>
+  );
+});
+
 export const LoginScreen = () => {
   const [authMode, setAuthMode] = useState('login');
   const { palette, borderWidth, isHighContrast } = useTheme();
@@ -169,63 +256,6 @@ export const LoginScreen = () => {
       setIsLoading(false);
     }
   };
-
-  // Helper for border color
-  const getBorderColor = (hasError, touched, isValid) => {
-    if (hasError) return isHighContrast ? '#000000' : ERROR_RED;
-    if (touched && isValid) return isHighContrast ? '#000000' : BRAND_GREEN;
-    return '#E2E8F0';
-  };
-
-  // ── Field Component ──────────────────────────────────────────────────────
-  const Field = ({
-    label, icon, placeholder, value, onChangeText, onBlur,
-    keyboardType, autoCapitalize, secureTextEntry, showToggle,
-    onToggleSecure, showIcon, isValid, isTouched, hasValue, error, hint,
-    multiline,
-  }) => (
-    <View style={styles.fieldGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <View style={[
-        styles.inputBox,
-        { borderColor: getBorderColor(!!error, isTouched && hasValue, isValid) },
-        error && styles.inputBoxError,
-      ]}>
-        {icon && <Feather name={icon} size={17} color={error ? ERROR_RED : '#64748B'} style={styles.inputIcon} />}
-        <TextInput
-          style={[styles.textInput, multiline && { height: 80, textAlignVertical: 'top' }]}
-          placeholder={placeholder}
-          placeholderTextColor="#94A3B8"
-          value={value}
-          onChangeText={onChangeText}
-          onBlur={onBlur}
-          keyboardType={keyboardType || 'default'}
-          autoCapitalize={autoCapitalize || 'none'}
-          secureTextEntry={secureTextEntry}
-          autoCorrect={false}
-          multiline={multiline}
-        />
-        {showToggle && (
-          <TouchableOpacity onPress={onToggleSecure} style={styles.eyeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-            <Feather name={secureTextEntry ? 'eye' : 'eye-off'} size={17} color="#64748B" />
-          </TouchableOpacity>
-        )}
-        {showIcon && isTouched && hasValue && !showToggle && (
-          isValid
-            ? <Feather name="check-circle" size={16} color={BRAND_GREEN} />
-            : <Feather name="x-circle" size={16} color={ERROR_RED} />
-        )}
-      </View>
-      {error ? (
-        <View style={styles.inlineErr}>
-          <Feather name="alert-circle" size={11} color={ERROR_RED} style={{ marginRight: 4 }} />
-          <Text style={styles.inlineErrText}>{error}</Text>
-        </View>
-      ) : hint ? (
-        <Text style={styles.fieldHint}>{hint}</Text>
-      ) : null}
-    </View>
-  );
 
   return (
     <View style={styles.root}>
@@ -770,6 +800,18 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     paddingHorizontal: 12,
     minHeight: 48,
+    ...(Platform.OS === 'web'
+      ? {
+          outlineStyle: 'none',
+          outlineWidth: 0,
+          outline: 'none',
+          boxShadow: 'none',
+        }
+      : {}),
+  },
+  inputBoxFocused: {
+    borderColor: BRAND_GREEN,
+    backgroundColor: '#FFFFFF',
   },
   inputBoxError: {
     borderColor: ERROR_RED,
@@ -783,6 +825,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0F172A',
     paddingVertical: 10,
+    ...(Platform.OS === 'web'
+      ? {
+          outlineStyle: 'none',
+          outlineWidth: 0,
+          outline: 'none',
+          boxShadow: 'none',
+        }
+      : {}),
   },
   eyeBtn: {
     padding: 6,

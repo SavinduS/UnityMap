@@ -82,6 +82,9 @@ UnityMap/
 
 ## 🏛️ Component 4: Municipal Admin Portal (Flow 4)
 
+> 📖 **Comprehensive Team Operations Manual & Algorithm Specification:**  
+> See [ADMIN_DASHBOARD_GUIDE.md](file:///Users/savindu/Documents/GitHub/UnityMap/ADMIN_DASHBOARD_GUIDE.md) for full page-by-page workflows, role permissions, and mathematical Urgency & Compliance formulas.
+
 The **Municipal Admin Portal** provides municipal councils (e.g. Colombo Municipal Council — CMC) with a decision-making and infrastructure oversight portal across Sprints 0, 1, and 2.
 
 ### 4 Core Admin Portal Screens

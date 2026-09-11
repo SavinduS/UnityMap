@@ -1,7 +1,7 @@
 /**
  * AdminLoginScreen.js
  * Page 1: Municipal Staff Secure Portal Login & Ward Jurisdiction Selection
- * 
+ *
  * Assigned Member: Savindu
  * Ticket: SPT-110
  */
@@ -21,6 +21,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import adminAuthService from '../../services/adminAuthService';
 import {
   MUNICIPAL_WARDS,
@@ -97,7 +98,7 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
           {/* Municipal Emblem & Header */}
           <View style={styles.header}>
             <View style={styles.emblemBadge}>
-              <Text style={styles.emblemIcon}>🏛️</Text>
+              <Feather name="shield" size={28} color="#FFFFFF" />
             </View>
             <Text style={styles.govTitle}>COLOMBO MUNICIPAL COUNCIL</Text>
             <Text style={styles.portalTitle}>Municipal Admin Portal</Text>
@@ -109,20 +110,23 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
           {/* Error Banner */}
           {errorMessage ? (
             <View style={styles.errorBanner}>
-              <Text style={styles.errorIcon}>⚠️</Text>
+              <Feather name="alert-triangle" size={16} color="#DC2626" style={{ marginRight: 8 }} />
               <Text style={styles.errorText}>{errorMessage}</Text>
             </View>
           ) : null}
 
           {/* Card Form */}
           <View style={styles.formCard}>
-            <Text style={styles.formSectionHeader}>🔐 Official Staff Authentication</Text>
+            <View style={styles.formSectionHeaderRow}>
+              <Feather name="lock" size={16} color="#0B3D2E" />
+              <Text style={styles.formSectionHeader}>Official Staff Authentication</Text>
+            </View>
 
             {/* Email / Badge ID Input */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>MUNICIPAL EMAIL / BADGE ID</Text>
               <View style={styles.inputWrapper}>
-                <Text style={styles.inputLeadingIcon}>👤</Text>
+                <Feather name="user" size={16} color="#94A3B8" style={styles.inputLeadingIcon} />
                 <TextInput
                   style={styles.textInput}
                   placeholder="e.g. k.perera@cmc.gov.lk or CMC-882"
@@ -143,7 +147,7 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>SECURITY PIN / PASSWORD</Text>
               <View style={styles.inputWrapper}>
-                <Text style={styles.inputLeadingIcon}>🔒</Text>
+                <Feather name="lock" size={16} color="#94A3B8" style={styles.inputLeadingIcon} />
                 <TextInput
                   style={[styles.textInput, { flex: 1 }]}
                   placeholder="Enter authorized password"
@@ -160,8 +164,14 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                   onPress={() => setShowPassword(!showPassword)}
                   style={styles.eyeToggle}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  <Text style={styles.eyeIcon}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                  <Feather
+                    name={showPassword ? 'eye' : 'eye-off'}
+                    size={16}
+                    color="#94A3B8"
+                  />
                 </TouchableOpacity>
               </View>
             </View>
@@ -217,19 +227,23 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                 style={styles.wardPickerButton}
                 onPress={() => setIsWardModalOpen(true)}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Select ward jurisdiction"
               >
                 <View style={styles.wardPickerLeft}>
-                  <Text style={styles.wardPickerIcon}>📍</Text>
+                  <View style={styles.wardPickerIconBox}>
+                    <Feather name="map-pin" size={14} color="#047857" />
+                  </View>
                   <View>
                     <Text style={styles.wardPickerName}>
                       Ward {activeWard.wardNumber}: {activeWard.name}
                     </Text>
                     <Text style={styles.wardPickerCaption}>
-                      {activeWard.activeBarriers} pending barriers • {activeWard.complianceScore}% compliance
+                      Colombo Municipal Council • {activeWard.priority} Priority Zone
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.wardPickerArrow}>▼</Text>
+                <Feather name="chevron-down" size={16} color="#64748B" />
               </TouchableOpacity>
             </View>
 
@@ -239,6 +253,8 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
               onPress={handleLogin}
               disabled={isLoading}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Authorize and enter portal"
             >
               {isLoading ? (
                 <View style={styles.loadingRow}>
@@ -246,20 +262,24 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                   <Text style={styles.loginButtonText}>Verifying Credentials...</Text>
                 </View>
               ) : (
-                <Text style={styles.loginButtonText}>Authorize & Enter Portal →</Text>
+                <View style={styles.loadingRow}>
+                  <Text style={styles.loginButtonText}>Authorize & Enter Portal</Text>
+                  <Feather name="arrow-right" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+                </View>
               )}
             </TouchableOpacity>
           </View>
 
           {/* Quick-Fill Evaluator / Demo Presets */}
           <View style={styles.demoBox}>
-            <Text style={styles.demoHeader}>⚡ ONE-TAP DEMO PRESETS (EVALUATOR SHORTCUTS)</Text>
+            <Text style={styles.demoHeader}>DEMO PRESETS — EVALUATOR SHORTCUTS</Text>
             <View style={styles.demoButtonsRow}>
               <TouchableOpacity
                 style={styles.presetButton}
                 onPress={() =>
                   handleQuickFill('CHIEF_ENGINEER', 'CMC-W01', 'k.perera@cmc.gov.lk')
                 }
+                activeOpacity={0.7}
               >
                 <Text style={styles.presetTitle} numberOfLines={1}>Chief Engineer</Text>
                 <Text style={styles.presetDesc} numberOfLines={1}>Fort (W1)</Text>
@@ -270,6 +290,7 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                 onPress={() =>
                   handleQuickFill('WARD_INSPECTOR', 'CMC-W06', 'r.wickramasinghe@cmc.gov.lk')
                 }
+                activeOpacity={0.7}
               >
                 <Text style={styles.presetTitle} numberOfLines={1}>Inspector</Text>
                 <Text style={styles.presetDesc} numberOfLines={1}>Borella (W6)</Text>
@@ -280,6 +301,7 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                 onPress={() =>
                   handleQuickFill('BUDGET_OFFICER', 'CMC-W03', 't.jayawardena@cmc.gov.lk')
                 }
+                activeOpacity={0.7}
               >
                 <Text style={styles.presetTitle} numberOfLines={1}>Budget Officer</Text>
                 <Text style={styles.presetDesc} numberOfLines={1}>Kollupitiya (W3)</Text>
@@ -303,8 +325,10 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
               <TouchableOpacity
                 onPress={() => setIsWardModalOpen(false)}
                 style={styles.modalCloseButton}
+                accessibilityRole="button"
+                accessibilityLabel="Close ward selection"
               >
-                <Text style={styles.modalCloseText}>✕</Text>
+                <Feather name="x" size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
 
@@ -339,11 +363,14 @@ export const AdminLoginScreen = ({ onLoginSuccess }) => {
                     </Text>
                     <Text style={styles.modalWardDetails}>{ward.description}</Text>
                     <View style={styles.modalWardStats}>
-                      <Text style={styles.modalStatText}>🚧 {ward.activeBarriers} Active Barriers</Text>
-                      <Text style={styles.modalStatText}>📊 {ward.complianceScore}% Compliance</Text>
-                      <Text style={styles.modalStatText}>
-                        💰 {(ward.allocatedBudgetLKR / 1000000).toFixed(1)}M LKR Budget
-                      </Text>
+                      <View style={styles.modalStatItem}>
+                        <Feather name="map-pin" size={11} color="#64748B" />
+                        <Text style={styles.modalStatText}> Ward {ward.wardNumber} Jurisdiction</Text>
+                      </View>
+                      <View style={styles.modalStatItem}>
+                        <Feather name="dollar-sign" size={11} color="#64748B" />
+                        <Text style={styles.modalStatText}> {(ward.allocatedBudgetLKR / 1000000).toFixed(1)}M LKR Municipal Allocation</Text>
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );
@@ -366,7 +393,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0F4F0',
   },
   scrollContent: {
     paddingBottom: 40,
@@ -376,24 +403,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: Platform.OS === 'android' ? 24 : 12,
-    paddingBottom: 24,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    marginBottom: 16,
+    paddingBottom: 28,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    marginBottom: 20,
   },
   emblemBadge: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
-    borderWidth: 2,
+    marginBottom: 12,
+    borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  emblemIcon: {
-    fontSize: 30,
   },
   govTitle: {
     fontSize: 11,
@@ -413,6 +437,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
     paddingHorizontal: 12,
+    lineHeight: 18,
   },
   errorBanner: {
     flexDirection: 'row',
@@ -421,13 +446,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#EF4444',
     padding: 12,
-    borderRadius: 10,
+    borderRadius: 12,
     marginHorizontal: 16,
     marginBottom: 16,
-  },
-  errorIcon: {
-    fontSize: 18,
-    marginRight: 8,
   },
   errorText: {
     color: '#DC2626',
@@ -442,17 +463,22 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    shadowColor: '#000',
+    shadowColor: '#0B3D2E',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
     elevation: 3,
+  },
+  formSectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 18,
   },
   formSectionHeader: {
     fontSize: 15,
     fontWeight: '800',
     color: '#0F172A',
-    marginBottom: 16,
   },
   inputGroup: {
     marginBottom: 16,
@@ -461,7 +487,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#475569',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
     marginBottom: 6,
   },
   inputWrapper: {
@@ -471,11 +497,18 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
     borderRadius: 12,
-    paddingHorizontal: 12,
-    minHeight: 48,
+    paddingHorizontal: 14,
+    minHeight: 52,
+    ...(Platform.OS === 'web'
+      ? {
+          outlineStyle: 'none',
+          outlineWidth: 0,
+          outline: 'none',
+          boxShadow: 'none',
+        }
+      : {}),
   },
   inputLeadingIcon: {
-    fontSize: 16,
     marginRight: 10,
   },
   textInput: {
@@ -483,12 +516,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0F172A',
     paddingVertical: 10,
+    ...(Platform.OS === 'web'
+      ? {
+          outlineStyle: 'none',
+          outlineWidth: 0,
+          outline: 'none',
+          boxShadow: 'none',
+        }
+      : {}),
   },
   eyeToggle: {
     padding: 6,
-  },
-  eyeIcon: {
-    fontSize: 16,
+    minWidth: 32,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   roleGrid: {
     flexDirection: 'row',
@@ -499,17 +541,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 6,
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
+    minHeight: 48,
   },
   roleIndicatorDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
     marginRight: 6,
   },
   roleChipText: {
@@ -525,16 +568,23 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#E2E8F0',
     borderRadius: 12,
-    padding: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 56,
   },
   wardPickerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    gap: 10,
   },
-  wardPickerIcon: {
-    fontSize: 20,
-    marginRight: 10,
+  wardPickerIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   wardPickerName: {
     fontSize: 13,
@@ -546,26 +596,24 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 2,
   },
-  wardPickerArrow: {
-    fontSize: 12,
-    color: '#64748B',
-    marginLeft: 8,
-  },
   loginButton: {
     backgroundColor: '#0B3D2E',
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: 15,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
+    minHeight: 52,
     shadowColor: '#0B3D2E',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   loginButtonDisabled: {
     backgroundColor: 'rgba(11, 61, 46, 0.4)',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   loginButtonText: {
     fontSize: 15,
@@ -588,7 +636,7 @@ const styles = StyleSheet.create({
     borderColor: '#BBF7D0',
   },
   demoHeader: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     color: '#0B3D2E',
     letterSpacing: 0.8,
@@ -602,22 +650,23 @@ const styles = StyleSheet.create({
   presetButton: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 4,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#BBF7D0',
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 48,
   },
   presetTitle: {
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '700',
     color: '#0B3D2E',
     textAlign: 'center',
   },
   presetDesc: {
-    fontSize: 8.5,
+    fontSize: 9,
     color: '#166534',
     marginTop: 2,
     textAlign: 'center',
@@ -648,12 +697,12 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   modalCloseButton: {
-    padding: 6,
-  },
-  modalCloseText: {
-    fontSize: 18,
-    color: '#64748B',
-    fontWeight: '700',
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalList: {
     padding: 16,
@@ -682,9 +731,9 @@ const styles = StyleSheet.create({
     color: '#0B3D2E',
   },
   modalPriorityBadge: {
-    paddingHorizontal: 6,
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 6,
   },
   criticalBadge: {
     backgroundColor: '#FEE2E2',
@@ -719,6 +768,10 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#E2E8F0',
+  },
+  modalStatItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   modalStatText: {
     fontSize: 10,

@@ -6,6 +6,7 @@
  * Ticket: SPT-111
  */
 
+const mongoose = require('mongoose');
 const {
   getTriagedQueue,
   getTriageMetrics,
@@ -93,6 +94,13 @@ const getReportDetails = async (req, res) => {
   try {
     const { reportId } = req.params;
     const { wardId = 'CMC-W01' } = req.query;
+
+    if (!reportId || !mongoose.Types.ObjectId.isValid(reportId)) {
+      return res.status(404).json({
+        success: false,
+        message: `Barrier report with ID ${reportId} not found`,
+      });
+    }
 
     const report = await BarrierReport.findById(reportId).lean();
     if (!report) {

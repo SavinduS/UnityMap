@@ -296,9 +296,11 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
                         },
                       ]}
                     >
-                      <Text style={styles.avatarIcon}>
-                        {isSuper ? '🛡️' : isAdmin ? '🏛️' : '👤'}
-                      </Text>
+                      <Feather
+                        name={isSuper ? 'shield' : isAdmin ? 'award' : 'user'}
+                        size={18}
+                        color={isSuper ? '#D97706' : isAdmin ? '#047857' : '#64748B'}
+                      />
                     </View>
 
                     <View style={{ flex: 1 }}>
@@ -320,7 +322,12 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
                       </View>
 
                       <Text style={styles.userEmail}>{item.email}</Text>
-                      {item.phone ? <Text style={styles.userPhone}>📞 {item.phone}</Text> : null}
+                      {item.phone ? (
+                        <View style={styles.phoneRow}>
+                          <Feather name="phone" size={11} color="#64748B" style={{ marginRight: 4 }} />
+                          <Text style={styles.userPhone}>{item.phone}</Text>
+                        </View>
+                      ) : null}
                     </View>
                   </View>
 
@@ -514,10 +521,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F8FAFC',
     borderColor: '#E2E8F0',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 42,
+    paddingHorizontal: 14,
+    height: 48,
     marginBottom: 12,
   },
   searchInput: {
@@ -531,13 +538,18 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: '#F1F5F9',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    minHeight: 36,
+    justifyContent: 'center',
   },
   filterChipActive: {
     backgroundColor: '#0B3D2E',
+    borderColor: '#0B3D2E',
   },
   filterChipText: {
     fontSize: 12,
@@ -581,15 +593,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   avatarCircle: {
-    width: 40,
-    height: 40,
+    width: 42,
+    height: 42,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
-  },
-  avatarIcon: {
-    fontSize: 18,
+    marginRight: 12,
+    flexShrink: 0,
   },
   nameRow: {
     flexDirection: 'row',
@@ -649,9 +659,15 @@ const styles = StyleSheet.create({
   },
   userPhone: {
     fontSize: 11,
-    color: '#94A3B8',
+    color: '#64748B',
+    marginTop: 1,
+  },
+  phoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 2,
   },
+
   cardActionRow: {
     marginTop: 10,
     paddingTop: 8,

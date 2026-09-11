@@ -149,7 +149,7 @@ export const ReportInspectionScreen = ({
       setReport((prev) => ({ ...prev, triageStatus: 'approved' }));
       setActiveModal(null);
       Alert.alert(
-        'Work Order Dispatched! 🛠️',
+        'Work Order Dispatched',
         `Barrier approved and ${budgetNum.toLocaleString()} LKR budgeted for repair. Work order scheduled within ${targetPriority} days.`,
         [
           {
@@ -221,7 +221,7 @@ export const ReportInspectionScreen = ({
       setReport((prev) => ({ ...prev, triageStatus: 'info_requested' }));
       setActiveModal(null);
       Alert.alert(
-        'Information Requested 📩',
+        'Information Requested',
         'Notification sent to volunteer contributor. Report placed in pending clarification queue.',
         [
           {
@@ -240,13 +240,38 @@ export const ReportInspectionScreen = ({
     }
   };
 
-  if (isLoading || !report) {
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#0B3D2E" />
           <Text style={styles.loadingText}>Loading inspection workspace evidence...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!report) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B3D2E" />
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
+            <Text style={styles.backBtnText}>← Triage Queue</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.emptyStateContainer}>
+          <View style={styles.emptyStateIconBox}>
+            <Feather name="clipboard" size={36} color="#94A3B8" />
+          </View>
+          <Text style={styles.emptyStateTitle}>No Report Selected</Text>
+          <Text style={styles.emptyStateDesc}>
+            Please select an active barrier report from the Triage Queue to inspect photographic evidence and dispatch municipal decisions.
+          </Text>
+          <TouchableOpacity style={styles.emptyStateActionBtn} onPress={onBack} activeOpacity={0.8}>
+            <Text style={styles.emptyStateActionText}>Open Triage Queue</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -283,7 +308,7 @@ export const ReportInspectionScreen = ({
         <View style={styles.topBarTitleRow}>
           <Text style={styles.topBarTitle} numberOfLines={1}>Report Inspection</Text>
           <View style={styles.idBadge}>
-            <Text style={styles.topBarSub}>{report._id || 'RPT-CMC'}</Text>
+            <Text style={styles.topBarSub}>{report._id}</Text>
           </View>
         </View>
       </View>
@@ -310,7 +335,7 @@ export const ReportInspectionScreen = ({
               ]}
             >
               <Text style={[styles.urgencyBadgeText, { color: badgeStyle.text }]}>
-                {triage.priorityBadge} • {triage.urgencyIndex || 85}/100
+                {triage.priorityBadge || 'PENDING'} • {triage.urgencyIndex ?? 0}/100
               </Text>
             </View>
           </View>
@@ -392,34 +417,49 @@ export const ReportInspectionScreen = ({
             </View>
           </View>
 
-          {/* EXIF Metadata Extraction Table */}
+          {/* EXIF Metadata Extraction Table (Live Data) */}
           <View style={styles.exifCard}>
             <Text style={styles.exifHeader}>📷 EXIF METADATA AUDIT</Text>
             <View style={styles.exifRow}>
               <Text style={styles.exifKey}>Camera Hardware</Text>
-              <Text style={styles.exifVal}>Apple iPhone 14 Pro (Main Lens)</Text>
+              <Text style={styles.exifVal}>
+                {report.exifMetadata?.cameraMake || report.exifMetadata?.cameraModel
+                  ? `${report.exifMetadata.cameraMake || ''} ${report.exifMetadata.cameraModel || ''}`.trim()
+                  : 'Direct Mobile / Web Capture'}
+              </Text>
             </View>
             <View style={styles.exifRow}>
-              <Text style={styles.exifKey}>Shutter & Exposure</Text>
-              <Text style={styles.exifVal}>1/120s • f/1.78 • ISO 80</Text>
+              <Text style={styles.exifKey}>Exposure / Shutter</Text>
+              <Text style={styles.exifVal}>
+                {report.exifMetadata?.exposureTime || report.exifMetadata?.fNumber
+                  ? `${report.exifMetadata.exposureTime ? report.exifMetadata.exposureTime + 's' : ''} ${report.exifMetadata.fNumber ? 'f/' + report.exifMetadata.fNumber : ''}`.trim()
+                  : 'Standard Device Auto-Exposure'}
+              </Text>
             </View>
             <View style={styles.exifRow}>
               <Text style={styles.exifKey}>Capture Timestamp</Text>
               <Text style={styles.exifVal}>
-                {report.createdAt ? new Date(report.createdAt).toLocaleString() : 'Recent'}
+                {report.capturedAt
+                  ? new Date(report.capturedAt).toLocaleString()
+                  : report.createdAt
+                  ? new Date(report.createdAt).toLocaleString()
+                  : 'Recorded upon upload'}
               </Text>
             </View>
             <View style={styles.exifRow}>
               <Text style={styles.exifKey}>GPS Coordinates</Text>
               <Text style={styles.exifVal}>
-                {report.coordinates?.latitude?.toFixed(4) || '6.9352'}° N,{' '}
-                {report.coordinates?.longitude?.toFixed(4) || '79.8559'}° E
+                {report.coordinates?.latitude && report.coordinates?.longitude
+                  ? `${report.coordinates.latitude.toFixed(5)}° N, ${report.coordinates.longitude.toFixed(5)}° E`
+                  : 'Location Pin on Map'}
               </Text>
             </View>
             <View style={[styles.exifRow, { borderBottomWidth: 0 }]}>
-              <Text style={styles.exifKey}>GPS Horizontal Accuracy</Text>
+              <Text style={styles.exifKey}>GPS Accuracy</Text>
               <Text style={[styles.exifVal, { color: '#16A34A', fontWeight: '700' }]}>
-                ± 3.2 meters (High Precision)
+                {report.exifMetadata?.accuracy
+                  ? `± ${Math.round(report.exifMetadata.accuracy)}m (Verified)`
+                  : 'Device GPS Verified'}
               </Text>
             </View>
           </View>
@@ -432,84 +472,59 @@ export const ReportInspectionScreen = ({
           {crossRef ? (
             <View style={styles.assetCard}>
               <View style={styles.assetHeaderRow}>
-                <View>
-                  <Text style={styles.assetCode}>{crossRef.assetCode || 'CMC-AST-2081'}</Text>
-                  <Text style={styles.assetName}>{crossRef.name || 'Pettah Overpass Infrastructure'}</Text>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.assetCode}>{crossRef.assetCode || 'MUNICIPAL-ASSET'}</Text>
+                  <Text style={styles.assetName}>{crossRef.name || 'Registered Municipal Asset'}</Text>
                 </View>
                 <View style={styles.assetDistancePill}>
                   <Text style={styles.assetDistanceText}>
-                    📍 {triage.distanceToAssetMeters || 35}m away
+                    📍 {triage.distanceToAssetMeters != null ? `${triage.distanceToAssetMeters}m away` : 'Nearby'}
                   </Text>
                 </View>
               </View>
 
-              {/* Specification Variance Table */}
+              {/* Specification Comparison Table (Dynamic) */}
               <View style={styles.varianceTable}>
                 <View style={styles.varianceHeaderRow}>
                   <Text style={[styles.varianceColHeader, { flex: 1.2 }]}>Metric</Text>
-                  <Text style={[styles.varianceColHeader, { flex: 1 }]}>Reported Condition</Text>
-                  <Text style={[styles.varianceColHeader, { flex: 1 }]}>CMC Standard</Text>
+                  <Text style={[styles.varianceColHeader, { flex: 1 }]}>Reported State</Text>
+                  <Text style={[styles.varianceColHeader, { flex: 1 }]}>Registered Spec</Text>
                 </View>
 
-                {report.category === 'Ramp' && (
-                  <>
-                    <View style={styles.varianceDataRow}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Slope Gradient</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>&gt; 12° (Steep)</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>≤ 8.0° (1:12)</Text>
-                    </View>
-                    <View style={styles.varianceDataRow}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Handrail Integrity</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>Loose Anchor</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>Dual-tier 900mm</Text>
-                    </View>
-                    <View style={[styles.varianceDataRow, { borderBottomWidth: 0 }]}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Surface Quality</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>Concrete Cracked</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>Grooved Non-Slip</Text>
-                    </View>
-                  </>
-                )}
+                <View style={styles.varianceDataRow}>
+                  <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Condition Status</Text>
+                  <Text style={[styles.varianceReported, { flex: 1 }]}>
+                    {report.condition ? report.condition.toUpperCase() : 'DEFECTIVE'}
+                  </Text>
+                  <Text style={[styles.varianceStandard, { flex: 1 }]}>
+                    {crossRef.operationalStatus || 'OPERATIONAL'}
+                  </Text>
+                </View>
 
-                {report.category === 'Lift' && (
-                  <>
-                    <View style={styles.varianceDataRow}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Operating State</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>Door Jammed</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>24/7 Active</Text>
-                    </View>
-                    <View style={styles.varianceDataRow}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Emergency Alarm</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>Unresponsive</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>Connected to Hub</Text>
-                    </View>
-                    <View style={[styles.varianceDataRow, { borderBottomWidth: 0 }]}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Audio Guidance</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>No Audio</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>Bilingual Chime</Text>
-                    </View>
-                  </>
-                )}
+                <View style={styles.varianceDataRow}>
+                  <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Reported Barrier</Text>
+                  <Text style={[styles.varianceReported, { flex: 1 }]}>
+                    {report.category}
+                  </Text>
+                  <Text style={[styles.varianceStandard, { flex: 1 }]}>
+                    {crossRef.category || report.category}
+                  </Text>
+                </View>
 
-                {report.category !== 'Ramp' && report.category !== 'Lift' && (
-                  <>
-                    <View style={styles.varianceDataRow}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Pathway Clearance</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>Obstructed</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>Min 1200mm</Text>
-                    </View>
-                    <View style={[styles.varianceDataRow, { borderBottomWidth: 0 }]}>
-                      <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Tactile Warning</Text>
-                      <Text style={[styles.varianceReported, { flex: 1 }]}>Tiles Missing</Text>
-                      <Text style={[styles.varianceStandard, { flex: 1 }]}>Standard Hazard Studs</Text>
-                    </View>
-                  </>
-                )}
+                <View style={[styles.varianceDataRow, { borderBottomWidth: 0 }]}>
+                  <Text style={[styles.varianceLabel, { flex: 1.2 }]}>Severity Assessment</Text>
+                  <Text style={[styles.varianceReported, { flex: 1 }]}>
+                    ★ {report.rating || 3}/5 ({triage.priorityBadge || 'HIGH'})
+                  </Text>
+                  <Text style={[styles.varianceStandard, { flex: 1 }]}>
+                    Zero Barrier Policy
+                  </Text>
+                </View>
               </View>
 
               <View style={styles.assetFooter}>
                 <Text style={styles.assetHistoryText}>
-                  Last Council Maintenance: 2026-03-12 • Status: {crossRef.operationalStatus || 'DEGRADED'}
+                  Asset Code: {crossRef.assetCode} • Status: {crossRef.operationalStatus || 'ACTIVE'}
                 </Text>
               </View>
             </View>
@@ -1408,6 +1423,48 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  emptyStateContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#F8FAFC',
+  },
+  emptyStateIconBox: {
+    width: 80,
+    height: 80,
+    borderRadius: 22,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+
+  emptyStateDesc: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 24,
+  },
+  emptyStateActionBtn: {
+    backgroundColor: '#0B3D2E',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  emptyStateActionText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 

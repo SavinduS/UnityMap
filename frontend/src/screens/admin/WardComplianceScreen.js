@@ -20,6 +20,7 @@ import {
   Modal,
   Alert,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { fetchWardCompliance, exportAuditReport } from '../../services/wardComplianceService';
 import adminAuthService from '../../services/adminAuthService';
 import { MUNICIPAL_WARDS, getWardById } from '../../utils/wardJurisdictions';
@@ -84,7 +85,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
     return { text: '#DC2626', bg: '#FEE2E2', border: '#FCA5A5', label: 'CRITICAL DEFICIT' };
   };
 
-  const scoreTheme = getScoreColor(complianceData?.complianceScorePercent || 72);
+  const scoreTheme = getScoreColor(complianceData?.complianceScorePercent ?? 100);
 
   const getWorkOrderStatusBadge = (status) => {
     switch (status) {
@@ -105,8 +106,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
       <View style={styles.topBar}>
         <View style={styles.topBarNavRow}>
           {onBack ? (
-            <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
-              <Text style={styles.backBtnText}>← Dashboard</Text>
+            <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}
+              accessibilityRole="button" accessibilityLabel="Back to Dashboard">
+              <Feather name="arrow-left" size={16} color="#FFFFFF" style={{ marginRight: 5 }} />
+              <Text style={styles.backBtnText}>Dashboard</Text>
             </TouchableOpacity>
           ) : (
             <View style={{ width: 40 }} />
@@ -120,7 +123,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
             {isExporting ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
-              <Text style={styles.exportTopBtnText}>📑 Audit Report</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <Feather name="file-text" size={13} color="#FFFFFF" />
+                <Text style={styles.exportTopBtnText}>Audit Report</Text>
+              </View>
             )}
           </TouchableOpacity>
         </View>
@@ -191,9 +197,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                   <Text style={styles.scoreInspector}>
                     Assigned: {complianceData.assignedInspector}
                   </Text>
-                  <Text style={styles.scoreTargetSla}>
-                    🎯 Target SLA: 85% minimum council benchmark
-                  </Text>
+                  <View style={styles.slaRow}>
+                    <Feather name="target" size={11} color="#047857" style={{ marginRight: 4 }} />
+                    <Text style={styles.scoreTargetSla}>Target SLA: 85% minimum council benchmark</Text>
+                  </View>
                 </View>
               </View>
 
@@ -224,7 +231,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
 
             {/* Repair Budget Utilization Card */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>💰 REPAIR BUDGET UTILIZATION</Text>
+              <View style={styles.sectionTitleRow}>
+                <Feather name="dollar-sign" size={13} color="#047857" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>REPAIR BUDGET UTILIZATION</Text>
+              </View>
               <Text style={styles.sectionSubtitle}>
                 Municipal allocation vs. committed work order expenditures
               </Text>
@@ -278,7 +288,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
 
             {/* Category-Wise Accessibility Compliance Breakdown */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>📊 CATEGORY COMPLIANCE BREAKDOWN</Text>
+              <View style={styles.sectionTitleRow}>
+                <Feather name="bar-chart-2" size={13} color="#047857" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>CATEGORY COMPLIANCE BREAKDOWN</Text>
+              </View>
               <Text style={styles.sectionSubtitle}>
                 Evaluation of barrier types against Colombo Municipal standards
               </Text>
@@ -319,7 +332,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
             {/* Active Work Order Repair Queue */}
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionTitle}>🛠️ ACTIVE WORK ORDERS QUEUE</Text>
+                <View style={styles.sectionTitleRow}>
+                  <Feather name="tool" size={13} color="#047857" style={{ marginRight: 6 }} />
+                  <Text style={styles.sectionTitle}>ACTIVE WORK ORDERS QUEUE</Text>
+                </View>
                 <Text style={styles.workOrderCountBadge}>
                   {complianceData.activeWorkOrders?.length || 0} active
                 </Text>
@@ -351,7 +367,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                       </View>
 
                       <View style={styles.workOrderDetails}>
-                        <Text style={styles.contractorText}>👷 {wo.contractor}</Text>
+                        <View style={styles.contractorRow}>
+                          <Feather name="user" size={12} color="#475569" style={{ marginRight: 5 }} />
+                          <Text style={styles.contractorText}>{wo.contractor}</Text>
+                        </View>
                         <View style={styles.workOrderFooterRow}>
                           <Text style={styles.workOrderBudget}>
                             Cost: {Number(wo.allocatedLKR).toLocaleString()} LKR
@@ -364,7 +383,9 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                 })
               ) : (
                 <View style={styles.noWorkOrdersBox}>
-                  <Text style={{ fontSize: 24 }}>✨</Text>
+                  <View style={styles.noWorkOrdersIconBox}>
+                    <Feather name="check-circle" size={28} color="#10B981" />
+                  </View>
                   <Text style={styles.noWorkOrdersTitle}>No Pending Work Orders</Text>
                   <Text style={styles.noWorkOrdersSub}>
                     All reported barriers in this ward are either resolved or undergoing initial triage inspection.
@@ -375,7 +396,10 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
 
             {/* Monthly Resolution Trend */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>📈 MONTHLY RESOLUTION PROGRESS</Text>
+              <View style={styles.sectionTitleRow}>
+                <Feather name="trending-up" size={13} color="#047857" style={{ marginRight: 6 }} />
+                <Text style={styles.sectionTitle}>MONTHLY RESOLUTION PROGRESS</Text>
+              </View>
               <Text style={styles.sectionSubtitle}>
                 Barriers resolved by municipal crews over the last 5 months
               </Text>
@@ -403,10 +427,12 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
               style={styles.exportFullBtn}
               onPress={handleExportAudit}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Generate compliance audit report"
             >
-              <Text style={styles.exportFullBtnIcon}>📑</Text>
+              <Feather name="file-text" size={15} color="#FFFFFF" style={{ marginRight: 8 }} />
               <Text style={styles.exportFullBtnText}>
-                Generate Council Compliance Audit Report (CSV / PDF)
+                Generate Council Compliance Audit Report
               </Text>
             </TouchableOpacity>
           </>
@@ -418,9 +444,14 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalDialog}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>🏛️ Municipal Compliance Audit</Text>
-              <TouchableOpacity onPress={() => setAuditModalData(null)}>
-                <Text style={styles.modalCloseIcon}>✕</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Feather name="shield" size={16} color="#0B3D2E" />
+                <Text style={styles.modalTitle}>Municipal Compliance Audit</Text>
+              </View>
+              <TouchableOpacity onPress={() => setAuditModalData(null)}
+                style={styles.modalCloseBtn}
+                accessibilityRole="button" accessibilityLabel="Close audit modal">
+                <Feather name="x" size={18} color="#64748B" />
               </TouchableOpacity>
             </View>
 
@@ -474,14 +505,17 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                   style={styles.downloadReportBtn}
                   onPress={() => {
                     Alert.alert(
-                      'Report Ready 📥',
+                      'Report Ready',
                       `Municipal compliance document ${auditModalData.reportReference}.pdf generated for council presentation.`
                     );
                     setAuditModalData(null);
                   }}
                   activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Download official PDF audit"
                 >
-                  <Text style={styles.downloadReportText}>Download Official PDF Audit →</Text>
+                  <Feather name="download" size={15} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.downloadReportText}>Download Official PDF Audit</Text>
                 </TouchableOpacity>
               </ScrollView>
             )}
@@ -499,7 +533,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#F0F4F0',
   },
   content: {
     paddingBottom: 40,
@@ -522,10 +556,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   backBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 10,
+    minHeight: 36,
   },
   backBtnText: {
     color: '#FFFFFF',
@@ -545,12 +582,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   exportTopBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    minHeight: 36,
   },
   exportTopBtnText: {
     color: '#FFFFFF',
@@ -719,18 +759,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 4,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
   },
   sectionTitle: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 0.8,
+    color: '#475569',
+    letterSpacing: 0.7,
   },
   sectionSubtitle: {
     fontSize: 11,
     color: '#94A3B8',
     marginTop: 2,
     marginBottom: 12,
+    paddingLeft: 19,
   },
   workOrderCountBadge: {
     fontSize: 11,
@@ -862,6 +909,10 @@ const styles = StyleSheet.create({
   workOrderDetails: {
     marginTop: 4,
   },
+  contractorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   contractorText: {
     fontSize: 11,
     color: '#475569',
@@ -889,6 +940,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 24,
     paddingHorizontal: 16,
+  },
+  noWorkOrdersIconBox: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
   },
   noWorkOrdersTitle: {
     fontSize: 13,
@@ -949,18 +1009,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#0B3D2E',
     marginHorizontal: 16,
     marginTop: 14,
-    paddingVertical: 14,
+    marginBottom: 8,
+    paddingVertical: 15,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#0B3D2E',
-  },
-  exportFullBtnIcon: {
-    fontSize: 16,
-    marginRight: 8,
+    minHeight: 52,
+    shadowColor: '#0B3D2E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
   exportFullBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
   },
   modalOverlay: {
@@ -989,11 +1050,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
   },
-  modalCloseIcon: {
-    fontSize: 18,
-    color: '#64748B',
-    fontWeight: '700',
-    padding: 4,
+  modalCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   auditReferenceBox: {
     backgroundColor: '#F8FAFC',
@@ -1038,17 +1101,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   downloadReportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#0B3D2E',
     borderRadius: 12,
-    paddingVertical: 13,
-    alignItems: 'center',
+    paddingVertical: 14,
     marginTop: 18,
     marginBottom: 20,
+    minHeight: 52,
   },
   downloadReportText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+  },
+  slaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
   },
 });
 

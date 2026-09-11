@@ -335,16 +335,9 @@ const getUsers = async (req, res) => {
       dbUsers = [];
     }
 
-    const userMap = new Map();
-    SEED_ACCOUNTS.forEach((seed) => {
-      userMap.set(seed.email.toLowerCase(), formatUserResponse(seed));
-    });
-
-    dbUsers.forEach((user) => {
-      userMap.set(user.email.toLowerCase(), formatUserResponse(user));
-    });
-
-    const userList = Array.from(userMap.values());
+    const userList = dbUsers.length > 0
+      ? dbUsers.map(formatUserResponse)
+      : SEED_ACCOUNTS.map(formatUserResponse);
 
     return res.status(200).json({
       success: true,
