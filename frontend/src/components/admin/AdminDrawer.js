@@ -35,6 +35,13 @@ export const AdminDrawer = ({
 }) => {
   const isSuper = !!currentUser?.isSuperAdmin || currentUser?.email === 'admin@unitymap.com';
 
+  const getInitials = (name) => {
+    if (!name) return 'AD';
+    const parts = name.trim().split(' ');
+    if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
+
   const menuSections = [
     {
       category: 'OPERATIONS & DISPATCH',
@@ -106,8 +113,8 @@ export const AdminDrawer = ({
               {/* Admin Profile Card */}
               {currentUser ? (
                 <View style={styles.profileCard}>
-                  <View style={styles.profileAvatar}>
-                    <Text style={styles.avatarEmoji}>{isSuper ? '🛡️' : '🏛️'}</Text>
+                  <View style={[styles.profileAvatar, { backgroundColor: isSuper ? '#F59E0B' : '#10B981' }]}>
+                    <Text style={styles.avatarInitials}>{getInitials(currentUser.name)}</Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.profileName} numberOfLines={1}>
@@ -144,11 +151,13 @@ export const AdminDrawer = ({
                         style={[styles.menuItem, isActive && styles.menuItemActive]}
                         onPress={() => handleSelect(item.id)}
                         activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
                       >
                         <View style={[styles.menuIconBox, isActive && styles.menuIconBoxActive]}>
                           <Feather
                             name={item.icon}
-                            size={18}
+                            size={17}
                             color={isActive ? '#FFFFFF' : '#0B3D2E'}
                           />
                         </View>
@@ -160,8 +169,8 @@ export const AdminDrawer = ({
                         </View>
                         <Feather
                           name="chevron-right"
-                          size={16}
-                          color={isActive ? '#10B981' : '#94A3B8'}
+                          size={15}
+                          color={isActive ? '#10B981' : '#CBD5E1'}
                         />
                       </TouchableOpacity>
                     );
@@ -279,16 +288,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   profileAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
   },
-  avatarEmoji: {
-    fontSize: 18,
+  avatarInitials: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
   },
   profileName: {
     fontSize: 14,
@@ -341,15 +352,18 @@ const styles = StyleSheet.create({
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 10,
     borderRadius: 12,
     marginBottom: 4,
+    minHeight: 52,
   },
   menuItemActive: {
     backgroundColor: '#ECFDF5',
     borderColor: '#A7F3D0',
     borderWidth: 1,
+    borderLeftWidth: 3,
+    borderLeftColor: '#10B981',
   },
   menuIconBox: {
     width: 36,

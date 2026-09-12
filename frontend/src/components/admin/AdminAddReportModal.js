@@ -26,7 +26,6 @@ import { getWardById } from '../../utils/wardJurisdictions';
 import { useLocation } from '../../hooks/useLocation';
 import { extractExifData, toBarrierReportFields } from '../../utils/exifHelper';
 import { createReport, createBarrierReport } from '../../services/api';
-import { addMockTriageReport } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
 
 import BaseMap from '../BaseMap';
@@ -508,6 +507,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       if (onReportCreated) onReportCreated(newReport);
       onClose && onClose();
     } catch (e) {
+<<<<<<< HEAD
       // Offline / backend unreachable -> seamless mock injection so queue updates
       // Also treat AbortError / TimeoutError (signal is aborted without reason) as network issue
       const msg = e?.message || '';
@@ -552,6 +552,9 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
         displayMsg = 'Submission timed out — please check your network and try again. If the problem persists, try a smaller photo.';
       }
       setErrorMsg(displayMsg);
+=======
+      setErrorMsg(e?.message || 'Failed to submit barrier report to server. Please try again.');
+>>>>>>> origin/develop
     } finally {
       setSubmitting(false);
       setFallbackLoading(false);
