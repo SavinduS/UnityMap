@@ -1,53 +1,105 @@
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-/**
- * Convert a local file:// or content:// uri (camera photo) to a data URI for JSON fallback.
- * This guarantees the photo can still be uploaded via uploadDataUriToCloudinary when FormData serialization fails
- * (e.g. large camera photo causing timeout or invalid MIME).
- */
+const decodeUriFully = (uri) => {
+  try {
+    let cur = uri;
+    let prev = '';
+    while (cur !== prev) {
+      prev = cur;
+      try { cur = decodeURIComponent(cur); } catch { break; }
+    }
+    return cur;
+  } catch { return uri; }
+};
+
+const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+  try {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const res = reader.result;
+      if (typeof res === 'string' && res.startsWith('data:')) resolve(res);
+      else reject(new Error('FileReader result not data URI'));
+    };
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsDataURL(blob);
+  } catch (e) { reject(e); }
+});
+
 const fileUriToDataUri = async (uri) => {
   if (!uri || typeof uri !== 'string') return '';
   if (uri.startsWith('data:')) return uri;
-  // Only attempt conversion for local file URIs on native
-  if (Platform.OS === 'web' || (!uri.startsWith('file://') && !uri.startsWith('content://'))) {
+  if (Platform.OS === 'web' || (!uri.startsWith('file://') && !uri.startsWith('content://') && !uri.startsWith('/'))) {
     return uri;
   }
-  try {
-    const FileSystem = await import('expo-file-system').catch(() => null);
-    const FS = FileSystem?.default || FileSystem;
-    if (FS?.readAsStringAsync) {
-      // Prefer legacy API if available, else new File API
-      if (FS.EncodingType?.Base64) {
-        const base64 = await FS.readAsStringAsync(uri, { encoding: FS.EncodingType.Base64 });
-        return `data:image/jpeg;base64,${base64}`;
-      } else if (FS.File) {
-        const file = new FS.File(uri);
-        if (file?.base64) {
-          const b64 = await file.base64();
-          return `data:image/jpeg;base64,${b64}`;
-        }
-        // fallback to read
-        const b64 = await file.text().catch(() => null);
-        if (b64) return `data:image/jpeg;base64,${b64}`;
+  const candidates = [uri, decodeUriFully(uri)];
+  if (uri.startsWith('/') && !uri.startsWith('file://')) candidates.push(`file://${uri}`);
+  const uniq = [...new Set(candidates.filter(Boolean))];
+  for (const cand of uniq) {
+    // Try new expo-file-system File API (SDK 57+)
+    try {
+      const FS = await import('expo-file-system').catch(() => null);
+      const FileClass = FS?.File || FS?.default?.File;
+      if (FileClass) {
+        try {
+          const file = new FileClass(cand);
+          if (file?.exists) {
+            const exists = await file.exists().catch(() => true);
+            if (exists === false) continue;
+          }
+          if (typeof file?.base64 === 'function') {
+            const b64 = await file.base64();
+            if (b64 && b64.length > 100) {
+              // File.base64() may return raw base64 or data URI
+              if (b64.startsWith('data:')) return b64;
+              return `data:image/jpeg;base64,${b64}`;
+            }
+          }
+          if (typeof file?.text === 'function') {
+            // fallback via arrayBuffer
+            const buf = await file.arrayBuffer?.().catch(() => null);
+            if (buf && buf.byteLength > 100) {
+              const b64 = Buffer.from(buf).toString('base64');
+              if (b64.length > 100) return `data:image/jpeg;base64,${b64}`;
+            }
+          }
+        } catch {}
       }
-    }
-  } catch {}
-  return uri;
+    } catch {}
+    // Try legacy readAsStringAsync
+    try {
+      let FS = null;
+      try {
+        FS = await import('expo-file-system/legacy');
+        FS = FS.default || FS;
+      } catch {
+        const mod = await import('expo-file-system').catch(() => null);
+        FS = mod?.default || mod;
+      }
+      if (FS?.readAsStringAsync && FS.EncodingType?.Base64) {
+        const info = await FS.getInfoAsync?.(cand).catch(() => ({ exists: true }));
+        if (info && info.exists === false) continue;
+        const base64 = await FS.readAsStringAsync(cand, { encoding: FS.EncodingType.Base64 });
+        if (base64 && base64.length > 100) return `data:image/jpeg;base64,${base64}`;
+      }
+    } catch {}
+    try {
+      const resp = await fetch(cand);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (blob && blob.size > 0) {
+          const dataUri = await blobToBase64(blob);
+          if (dataUri && dataUri.startsWith('data:')) return dataUri;
+        }
+      }
+    } catch {}
+  }
+  return '';
 };
 
-/**
- * UnityMap Centralized API Service
- * Connects React Native / Web frontend to Node.js / Express backend with MongoDB.
- */
-
-const PRIMARY_PORT = '5000'; // Matches backend/.env PORT
+const PRIMARY_PORT = '5000';
 const FALLBACK_PORT = '5001';
 
-/**
- * Dynamically resolves the host IP for mobile devices and web browsers.
- * Extracts the Metro bundler IP from scriptURL when running on physical devices/emulators.
- */
 export const getHostAddress = () => {
   if (Platform.OS === 'web') {
     if (typeof window !== 'undefined' && window.location && window.location.hostname) {
@@ -55,8 +107,14 @@ export const getHostAddress = () => {
     }
     return 'localhost';
   }
-
-  // React Native dev server host detection
+  try {
+    const Constants = require('expo-constants').default || require('expo-constants');
+    const hostUri = Constants?.expoConfig?.hostUri || Constants?.manifest?.hostUri || Constants?.manifest2?.extra?.expoGo?.debuggerHost;
+    if (hostUri) {
+      const host = hostUri.split(':')[0];
+      if (host && host !== 'localhost' && host !== '127.0.0.1') return host;
+    }
+  } catch {}
   try {
     const scriptURL = NativeModules?.SourceCode?.scriptURL;
     if (scriptURL) {
@@ -66,9 +124,8 @@ export const getHostAddress = () => {
       }
     }
   } catch (e) {}
-
-  // Fallback to local network IP or Android emulator localhost
-  return '192.168.8.183';
+  if (Platform.OS === 'android') return '10.0.2.2';
+  return '172.28.6.97';
 };
 
 export const getBaseUrl = (port = PRIMARY_PORT) => {
@@ -80,20 +137,19 @@ export const API_BASE_URL = getBaseUrl();
 
 export const apiRequest = async (endpoint, options = {}) => {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-
-  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
-
+  const isFormData =
+    typeof FormData !== 'undefined' &&
+    options.body != null &&
+    (options.body instanceof FormData || typeof options.body.append === 'function');
   const defaultHeaders = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     Accept: 'application/json',
   };
-
   const tryFetch = async (baseUrl) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
-    // Harden timeout for large photo uploads to Cloudinary — increased from 30000ms to 45000ms
-    const timeoutMs = isFormData ? 45000 : 45000;
-    // Explicit 45000ms timeout allows Cloudinary uploads to complete on slow Android networks
+    const isReportsPost = cleanEndpoint === '/reports' && options?.method === 'POST';
+    const timeoutMs = isReportsPost || isFormData ? 60000 : 15000;
     const timeoutId = setTimeout(() => {
       try {
         controller.abort(new DOMException(`Request timed out after ${timeoutMs}ms`, 'TimeoutError'));
@@ -101,20 +157,15 @@ export const apiRequest = async (endpoint, options = {}) => {
         controller.abort();
       }
     }, timeoutMs);
-
     console.log(`[API Request] Fetching: ${url}`);
-
     try {
       const response = await fetch(url, {
         ...options,
         headers: { ...defaultHeaders, ...options.headers },
         signal: controller.signal,
       });
-
       clearTimeout(timeoutId);
-
       if (!response.ok) {
-        // Try to parse error body for more context
         let errorBody = '';
         try {
           const text = await response.text();
@@ -122,14 +173,11 @@ export const apiRequest = async (endpoint, options = {}) => {
         } catch {}
         throw new Error(`API Request Failed: ${response.status} ${response.statusText}${errorBody}`);
       }
-
       const data = await response.json();
       console.log(`[API Success] ${cleanEndpoint} (from ${baseUrl})`);
       return data;
     } catch (err) {
       clearTimeout(timeoutId);
-      // Normalize AbortError / TimeoutError / Canceled to a user-friendly message so UI can handle it
-      // React Native fetch on Android throws "Fetch request has been canceled" for abort/timeout
       if (err && (err.name === 'AbortError' || err.name === 'TimeoutError' || /aborted|abort|timeout|canceled|cancelled|cancel/i.test(err.message || ''))) {
         const timeoutErr = new Error(`Request to ${cleanEndpoint} timed out or was aborted — please check your network and try again. (original: ${err.message})`);
         timeoutErr.name = 'TimeoutError';
@@ -139,30 +187,47 @@ export const apiRequest = async (endpoint, options = {}) => {
       throw err;
     }
   };
-
-  // Try primary configured port
+  // Don't retry on client errors (400/422) - they will not succeed on another host
+  const isClientError = (err) => /400|401|403|422|photo is required/i.test(err?.message || '');
   try {
     return await tryFetch(getBaseUrl(PRIMARY_PORT));
   } catch (primaryErr) {
-    console.warn(
-      `[API Warning] Endpoint ${cleanEndpoint} unreachable on port ${PRIMARY_PORT} (${primaryErr.message}). Retrying fallback...`
-    );
-
-    // Try fallback port (5001)
+    if (isClientError(primaryErr)) {
+      console.error(`[API Error] Client error for ${cleanEndpoint} - not retrying:`, primaryErr.message);
+      throw primaryErr;
+    }
+    // Only warn + retry for true network/unreachable or server errors or FormData serialization errors that might succeed via JSON fallback
+    const shouldRetryFormData = /Unsupported FormDataPart/i.test(primaryErr?.message || '');
+    if (!shouldRetryFormData) {
+      console.warn(
+        `[API Warning] Endpoint ${cleanEndpoint} unreachable on port ${PRIMARY_PORT} (${primaryErr.message}). Retrying fallback...`
+      );
+    } else {
+      console.warn(`[API Warning] FormData failed on primary: ${primaryErr.message} - trying JSON fallback via fallback port if applicable`);
+    }
     try {
       return await tryFetch(getBaseUrl(FALLBACK_PORT));
     } catch (fallbackErr) {
-      // If native mobile failed, try exhaustive last-resort hosts:
-      // 10.0.2.2 (Android emulator), localhost, and common LAN IPs
+      if (isClientError(fallbackErr) || isClientError(primaryErr)) {
+        console.error(`[API Error] Client error for ${cleanEndpoint}:`, fallbackErr.message || primaryErr.message);
+        throw fallbackErr.message ? fallbackErr : primaryErr;
+      }
       if (Platform.OS !== 'web') {
-        const lastResortHosts = [
-          `http://10.0.2.2:${PRIMARY_PORT}/api`,
-          `http://localhost:${PRIMARY_PORT}/api`,
-          `http://192.168.8.183:${PRIMARY_PORT}/api`,
-          `http://192.168.1.177:${PRIMARY_PORT}/api`,
-          `http://192.168.0.100:${PRIMARY_PORT}/api`,
-        ];
-        // Avoid retrying the same host already tried (getBaseUrl)
+        const isLargePost = cleanEndpoint === '/reports' && options?.method === 'POST';
+        const lastResortHosts = isLargePost
+          ? [
+              `http://10.0.2.2:${PRIMARY_PORT}/api`,
+              `http://172.28.6.97:${PRIMARY_PORT}/api`,
+              `http://192.168.8.183:${PRIMARY_PORT}/api`,
+            ]
+          : [
+              `http://10.0.2.2:${PRIMARY_PORT}/api`,
+              `http://localhost:${PRIMARY_PORT}/api`,
+              `http://172.28.6.97:${PRIMARY_PORT}/api`,
+              `http://192.168.8.183:${PRIMARY_PORT}/api`,
+              `http://192.168.1.177:${PRIMARY_PORT}/api`,
+              `http://192.168.0.100:${PRIMARY_PORT}/api`,
+            ];
         const tried = new Set([getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)]);
         for (const host of lastResortHosts) {
           if (tried.has(host)) continue;
@@ -173,7 +238,6 @@ export const apiRequest = async (endpoint, options = {}) => {
           }
         }
       }
-
       console.error(
         `[API Error] All connection attempts failed for ${cleanEndpoint}:`,
         primaryErr.message
@@ -213,11 +277,6 @@ export const getNearbyObstacles = (lng, lat, maxDistance = 1000) => {
   return apiRequest(`/obstacles/nearby?lng=${lng}&lat=${lat}&maxDistance=${maxDistance}`);
 };
 
-/**
- * Snaps a GPS coordinate to the nearest routable DB node.
- * Used by tap-to-route: tap → nearest node → getRoute().
- * Returns the first node in the nearby result, or null.
- */
 export const getNearestNode = async (lng, lat, maxDistance = 500) => {
   const res = await apiRequest(`/nodes/nearby?lng=${lng}&lat=${lat}&maxDistance=${maxDistance}`);
   const nodes = res?.data ?? res;
@@ -250,12 +309,7 @@ export const getPathways = (options = {}) => {
   return apiRequest(`/pathways${query}`);
 };
 
-/**
- * SPT-102 — Fetch a computed route between two nodes.
- * SPT-106 — Optionally include spoken summary via includeSpeech & locale (en only).
- */
 export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible = false, options = {}) => {
-  // Backward compat: wheelchairAccessible may be options object
   let includeSpeech = false;
   let locale = 'en';
   if (typeof wheelchairAccessible === 'object' && wheelchairAccessible !== null) {
@@ -264,7 +318,6 @@ export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible =
   }
   if (options.includeSpeech) includeSpeech = options.includeSpeech;
   if (options.locale) locale = options.locale;
-
   const params = new URLSearchParams({
     originNodeId,
     destinationNodeId,
@@ -277,10 +330,6 @@ export const getRoute = (originNodeId, destinationNodeId, wheelchairAccessible =
   return apiRequest(`/pathways/route?${params.toString()}`);
 };
 
-/**
- * Fetches real road and pathway routing geometry and distance along the street network via OSRM.
- * Matches OpenStreetMap road networks and returns road curve coordinates & exact distance.
- */
 export const getRoadRoute = async (originLng, originLat, destLng, destLat) => {
   try {
     const controller = new AbortController();
@@ -332,9 +381,6 @@ export const previewSpeech = (body) => {
 
 // ——— Barrier Report Endpoints (Cloudinary photo upload) ———
 
-/**
- * Get barrier reports with optional filters
- */
 export const getReports = (params = {}) => {
   const query = new URLSearchParams(params).toString();
   return apiRequest(`/reports${query ? `?${query}` : ''}`);
@@ -342,57 +388,103 @@ export const getReports = (params = {}) => {
 
 export const getReportById = (id) => apiRequest(`/reports/${id}`);
 
-/**
- * Create a barrier report — photo is uploaded to Cloudinary via backend.
- * Form fields mirror report form image: name, locationName, coordinates, category, rating (1-5 kept), condition, notes, capturedAt — reporterName removed.
- *
- * @param {object} reportData - { name, locationName, coordinates:{latitude,longitude}, category, rating(1-5 kept), condition:'good'|'bad', notes/note, exifMetadata, capturedAt/timestamp, reporterId }
- * @param {File|Blob|{uri:string, name?:string, type?:string}} [photoFile] - image file to upload (field `photo`)
- * If photoFile is provided, request is sent as multipart/form-data; photoUrl is ignored (server uploads to Cloudinary).
- * If no photoFile, photoUrl must be inside reportData.
- */
 export const createReport = async (reportData, photoFile) => {
-  // If no file, fallback to JSON (backward compat)
   if (!photoFile) {
     return apiRequest('/reports', {
       method: 'POST',
       body: JSON.stringify(reportData),
     });
   }
-
-  // Harden FormData Construction: wrap serialization in inner try/catch before JSON fallback
+  // Prefer JSON data URI for native (most reliable) — avoids RN FormData Unsupported errors.
+  // Try to convert file:// to data: URI first; if that fails or is too large, fallback to multipart.
+  if (Platform.OS !== 'web' && photoFile) {
+    try {
+      const rawUriForData = typeof photoFile === 'object' && photoFile?.uri ? String(photoFile.uri) : typeof photoFile === 'string' ? String(photoFile) : '';
+      if (rawUriForData && (rawUriForData.startsWith('file://') || rawUriForData.startsWith('content://') || rawUriForData.startsWith('/'))) {
+        console.log(`[createReport] Trying data URI conversion for ${rawUriForData.slice(0,50)}...`);
+        const dataUri = await fileUriToDataUri(rawUriForData);
+        if (dataUri && dataUri.startsWith('data:image') && dataUri.length > 100 && dataUri.length < 8 * 1024 * 1024) {
+          console.log(`[createReport] Data URI success (${(dataUri.length/1024).toFixed(1)}KB), sending JSON`);
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: dataUri }),
+          });
+        } else if (dataUri && dataUri.startsWith('data:image')) {
+          console.warn(`[createReport] Data URI too large (${(dataUri.length/1024).toFixed(1)}KB), falling back to multipart`);
+        } else {
+          console.warn('[createReport] Data URI conversion failed or empty, falling back to multipart');
+        }
+      }
+    } catch (e) {
+      console.warn('[createReport] Data URI attempt failed, falling back to multipart:', e?.message);
+    }
+  }
   let formData;
   try {
     formData = new FormData();
-
     if (Platform.OS === 'web') {
-      // Web: browser FormData accepts File/Blob
       if (photoFile instanceof File || photoFile instanceof Blob) {
         const fileName = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        console.log(`[createReport][web] Appending File/Blob: ${fileName} ${photoFile.type} ${photoFile.size} bytes`);
         formData.append('photo', photoFile, fileName);
       } else if (typeof photoFile === 'object' && photoFile !== null && typeof photoFile.uri === 'string') {
-        const uri = String(photoFile.uri);
-        const name = String(photoFile.name || `photo_${Date.now()}.jpg`);
-        const type = String(photoFile.type || 'image/jpeg');
+        let uri = String(photoFile.uri).trim();
+        let name = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) name = name.replace(/\.[^/.]+$/, '') + '.jpg';
+        let type = String(photoFile.type || 'image/jpeg');
+        if (!type.startsWith('image/')) type = 'image/jpeg';
+        // On web, expo-image-picker often returns data: or blob:. Handle data: directly as photoUrl to avoid fetch issues
+        if (uri.startsWith('data:image')) {
+          console.log('[createReport][web] data: URI detected - sending as photoUrl JSON for Cloudinary');
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: uri }),
+          });
+        }
         if (uri.startsWith('blob:') || uri.startsWith('data:')) {
           try {
+            console.log(`[createReport][web] Fetching ${uri.slice(0,30)}... to File`);
             const resp = await fetch(uri);
+            if (!resp.ok) throw new Error(`fetch blob/data failed: ${resp.status}`);
             const blob = await resp.blob();
+            if (!blob || blob.size === 0) throw new Error('empty blob');
             const file = new File([blob], name, { type: String(blob.type || type) });
+            console.log(`[createReport][web] Converted ${uri.slice(0,20)} -> File ${file.name} ${file.size} bytes`);
             formData.append('photo', file, name);
-          } catch {
+          } catch (e) {
+            console.warn('[createReport][web] blob/data fetch failed, falling back to photoUrl:', e?.message);
+            // Try fileUriToDataUri as fallback, then direct blob uri as last resort
+            try {
+              const dataUri = await fileUriToDataUri(uri);
+              if (dataUri && dataUri.startsWith('data:')) {
+                return apiRequest('/reports', {
+                  method: 'POST',
+                  body: JSON.stringify({ ...reportData, photoUrl: dataUri }),
+                });
+              }
+            } catch {}
             return apiRequest('/reports', {
               method: 'POST',
               body: JSON.stringify({ ...reportData, photoUrl: String(uri) }),
             });
           }
+        } else if (uri.startsWith('http://') || uri.startsWith('https://')) {
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: uri }),
+          });
         } else {
+          // file:// or content:// should not happen on web, but handle
           try {
+            console.log(`[createReport][web] Trying fetch for uri: ${uri.slice(0,50)}`);
             const resp = await fetch(uri);
+            if (!resp.ok) throw new Error(`fetch failed ${resp.status}`);
             const blob = await resp.blob();
+            if (!blob || blob.size===0) throw new Error('empty blob');
             const file = new File([blob], name, { type: String(blob.type || type) });
             formData.append('photo', file, name);
-          } catch {
+          } catch (e) {
+            console.warn('[createReport][web] fetch uri failed, sending as photoUrl:', e?.message);
             return apiRequest('/reports', {
               method: 'POST',
               body: JSON.stringify({ ...reportData, photoUrl: String(uri) }),
@@ -415,42 +507,114 @@ export const createReport = async (reportData, photoFile) => {
         formData.append('photo', photoFile);
       }
     } else {
-      // React Native: strictly format the photo object to { uri, name, type } with type: 'image/jpeg'
+      // Native (Android/iOS): directly append RN file descriptor — React Native handles multipart.
+      // RN FormData ONLY supports {uri, name, type} where uri is file:// or content://. Blob/File/data:/blob: are unsupported -> Unsupported FormDataPart.
       if (typeof photoFile === 'object' && photoFile !== null && typeof photoFile.uri === 'string') {
-        const formattedPhoto = {
-          uri: String(photoFile.uri),
-          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
-          type: 'image/jpeg',
-        };
+        let rawUri = String(photoFile.uri).trim();
+        let name = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) {
+          name = name.replace(/\.[^/.]+$/, '') + '.jpg';
+        }
+        let type = String(photoFile.type || 'image/jpeg');
+        if (!type.startsWith('image/')) type = 'image/jpeg';
+        // If uri is http/data/blob on native, we cannot send as multipart file - fallback to JSON photoUrl
+        if (rawUri.startsWith('http://') || rawUri.startsWith('https://') || rawUri.startsWith('data:')) {
+          console.warn(`[createReport] Native photo uri is ${rawUri.slice(0,20)} - sending as photoUrl JSON fallback`);
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: rawUri }),
+          });
+        }
+        if (rawUri.startsWith('blob:')) {
+          console.warn('[createReport] blob: uri on native is unsupported - attempting dataUri fallback');
+          try {
+            const dataUri = await fileUriToDataUri(reportData.photoUrl || rawUri);
+            if (dataUri && dataUri.startsWith('data:')) {
+              return apiRequest('/reports', {
+                method: 'POST',
+                body: JSON.stringify({ ...reportData, photoUrl: dataUri }),
+              });
+            }
+          } catch {}
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || '') }),
+          });
+        }
+        if (!rawUri.startsWith('file://') && !rawUri.startsWith('content://')) {
+          // Expo may return file:// without prefix on some devices - add it
+          if (rawUri.startsWith('/')) rawUri = `file://${rawUri}`;
+        }
+        const formattedPhoto = { uri: rawUri, name, type };
+        console.log(`[createReport] Appending native photo: ${name} (${type}) ${rawUri.slice(0,60)}...`);
+        // Validate file exists before append (helps catch stale content:// or revoked blob: early)
+        try {
+          const FS = await import('expo-file-system').catch(() => null);
+          if (FS?.getInfoAsync) {
+            const info = await FS.getInfoAsync(rawUri).catch(() => null);
+            if (info && info.exists === false) {
+              console.warn(`[createReport] File does not exist at ${rawUri}, will fallback to JSON`);
+              const dataUri = await fileUriToDataUri(rawUri).catch(() => '');
+              if (dataUri && dataUri.startsWith('data:')) {
+                return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: dataUri }) });
+              }
+              throw new Error(`Photo file not found at ${rawUri.slice(0,40)}. Please retake photo.`);
+            }
+          }
+        } catch (e) {
+          if (e?.message?.includes('Photo file not found')) throw e;
+          // ignore validation errors, proceed to append
+        }
         formData.append('photo', formattedPhoto);
       } else if (typeof File !== 'undefined' && photoFile instanceof File) {
-        const formattedPhoto = {
-          uri: String(photoFile.uri || `file:///tmp/photo_${Date.now()}.jpg`),
-          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
-          type: 'image/jpeg',
-        };
+        // File on native should not happen - convert to descriptor
+        const rawUri = String(photoFile.uri || photoFile.name || `file:///tmp/photo_${Date.now()}.jpg`);
+        const name = String(photoFile.name || `photo_${Date.now()}.jpg`).replace(/\.[^/.]+$/, '') + '.jpg';
+        const formattedPhoto = { uri: rawUri.startsWith('file://') ? rawUri : `file://${rawUri}`, name, type: 'image/jpeg' };
+        console.warn('[createReport] Converting File instance to native descriptor', formattedPhoto);
         formData.append('photo', formattedPhoto);
       } else if (typeof Blob !== 'undefined' && photoFile instanceof Blob) {
+        console.warn('[createReport] Blob on native unsupported - falling back to JSON');
+        try {
+          const dataUri = await blobToBase64(photoFile);
+          if (dataUri) {
+            return apiRequest('/reports', {
+              method: 'POST',
+              body: JSON.stringify({ ...reportData, photoUrl: dataUri }),
+            });
+          }
+        } catch {}
         return apiRequest('/reports', {
           method: 'POST',
           body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || '') }),
         });
       } else if (typeof photoFile === 'string') {
-        const formattedPhoto = {
-          uri: String(photoFile),
-          name: String(`photo_${Date.now()}.jpg`),
-          type: 'image/jpeg',
-        };
+        const raw = String(photoFile).trim();
+        if (raw.startsWith('data:') || raw.startsWith('http')) {
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: raw }),
+          });
+        }
+        if (raw.startsWith('blob:')) {
+          console.warn('[createReport] string blob: on native - fallback to JSON');
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || '') }),
+          });
+        }
+        const name = `photo_${Date.now()}.jpg`;
+        const uri = raw.startsWith('file://') || raw.startsWith('content://') ? raw : raw.startsWith('/') ? `file://${raw}` : raw;
+        const formattedPhoto = { uri, name, type: 'image/jpeg' };
         formData.append('photo', formattedPhoto);
       } else {
+        console.warn('[createReport] Unknown photoFile type on native, falling back to JSON', typeof photoFile, photoFile);
         return apiRequest('/reports', {
           method: 'POST',
           body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || String(photoFile || '')) }),
         });
       }
     }
-
-    // Append text fields with explicit type guards and String() conversions
     const appendString = (key, value) => {
       if (value === undefined || value === null || value === '') return;
       formData.append(key, String(value));
@@ -461,7 +625,6 @@ export const createReport = async (reportData, photoFile) => {
       else if (typeof value === 'object') formData.append(key, JSON.stringify(value));
       else formData.append(key, String(value));
     };
-
     const category = reportData.category;
     const ratingStr = reportData.rating !== undefined && reportData.rating !== null ? String(reportData.rating) : undefined;
     const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
@@ -483,7 +646,6 @@ export const createReport = async (reportData, photoFile) => {
         if (!Number.isNaN(d.getTime())) capturedIso = d.toISOString();
       }
     }
-
     appendString('name', reportData.name || '');
     appendString('locationName', reportData.locationName || reportData.location || '');
     appendString('condition', reportData.condition || 'bad');
@@ -500,14 +662,29 @@ export const createReport = async (reportData, photoFile) => {
   } catch (serializationErr) {
     console.warn('[createReport] FormData serialization failed, falling back to JSON:', serializationErr.message);
     const rawFallback = reportData.photoUrl || (typeof photoFile === 'object' && photoFile?.uri ? String(photoFile.uri) : typeof photoFile === 'string' ? String(photoFile) : '');
-    // Convert camera file:// uri to data URI so backend uploadDataUriToCloudinary can handle it
-    const fallbackPhotoUrl = rawFallback ? await fileUriToDataUri(String(rawFallback)) : '';
+    let fallbackPhotoUrl = '';
+    if (rawFallback) {
+      try {
+        fallbackPhotoUrl = await fileUriToDataUri(String(rawFallback));
+        console.log(`[createReport] fileUriToDataUri fallback result: ${fallbackPhotoUrl ? fallbackPhotoUrl.slice(0,30)+'...' : 'empty'}`);
+      } catch (e) {
+        console.warn('[createReport] fileUriToDataUri error:', e?.message);
+      }
+    }
+    const finalPhotoUrl = String(fallbackPhotoUrl || reportData.photoUrl || rawFallback || '');
+    if (!finalPhotoUrl || finalPhotoUrl.length < 10) {
+      throw new Error('Failed to process photo file (empty after fallback). Please retake or choose a different image.');
+    }
     return apiRequest('/reports', {
       method: 'POST',
-      body: JSON.stringify({ ...reportData, photoUrl: String(fallbackPhotoUrl || reportData.photoUrl || '') }),
+      body: JSON.stringify({ ...reportData, photoUrl: finalPhotoUrl }),
     });
   }
-
+  // Log FormData contents for debugging (RN: _parts)
+  try {
+    const parts = formData?._parts || [];
+    console.log(`[createReport] Sending FormData with ${parts.length} parts, photo:`, typeof photoFile==='object' ? photoFile?.uri?.slice(0,50) : photoFile);
+  } catch {}
   try {
     return await apiRequest('/reports', {
       method: 'POST',
@@ -516,76 +693,136 @@ export const createReport = async (reportData, photoFile) => {
   } catch (err) {
     const msg = err?.message || '';
     if (/Unsupported FormDataPart|FormData/i.test(msg)) {
-      console.warn('[createReport] FormData serialization failed, falling back to JSON:', msg);
+      console.warn('[createReport] FormData unsupported, falling back to JSON:', msg, 'photoFile:', JSON.stringify(photoFile)?.slice(0,200));
       const rawFallback = reportData.photoUrl || (typeof photoFile === 'object' && photoFile?.uri ? String(photoFile.uri) : typeof photoFile === 'string' ? String(photoFile) : '');
-      const fallbackPhotoUrl = rawFallback ? await fileUriToDataUri(String(rawFallback)) : '';
+      let fallbackPhotoUrl = '';
+      if (rawFallback) {
+        try {
+          fallbackPhotoUrl = await fileUriToDataUri(String(rawFallback));
+          console.log(`[createReport] Unsupported fallback fileUriToDataUri: ${fallbackPhotoUrl ? fallbackPhotoUrl.slice(0,30)+'...' : 'empty'}`);
+        } catch (e) {
+          console.warn('[createReport] fallback fileUriToDataUri error:', e?.message);
+        }
+      }
+      const finalPhotoUrl = String(fallbackPhotoUrl || reportData.photoUrl || rawFallback || '');
+      if (!finalPhotoUrl || finalPhotoUrl.length < 10) {
+        throw new Error('Photo upload failed: Unsupported file format. Please try taking a new photo or choose from gallery.');
+      }
+      // If data: URI is huge (>6MB), backend may hit 10mb limit, try to send as is and let backend handle
       return apiRequest('/reports', {
         method: 'POST',
-        body: JSON.stringify({ ...reportData, photoUrl: String(fallbackPhotoUrl || reportData.photoUrl || '') }),
+        body: JSON.stringify({ ...reportData, photoUrl: finalPhotoUrl }),
       });
     }
     throw err;
   }
 };
 
-/**
- * Create barrier report with FormData hardening and JSON fallback (also supports photo upload)
- * Hardened: explicit type guards, String() conversions, strict { uri, name, type: 'image/jpeg' } on RN, inner try/catch
- */
 export const createBarrierReport = async (reportData, photoFile) => {
-  // JSON-only path when no photoFile provided (explicit type guards via JSON.stringify)
   if (!photoFile) {
     return apiRequest('/reports', {
       method: 'POST',
       body: JSON.stringify(reportData),
     });
   }
-
-  // When photoFile is provided, harden FormData construction with same guards as createReport
+  // Prefer JSON data URI for native (most reliable) — fallback to multipart
+  if (Platform.OS !== 'web' && photoFile) {
+    try {
+      const rawUriForData = typeof photoFile === 'object' && photoFile?.uri ? String(photoFile.uri) : typeof photoFile === 'string' ? String(photoFile) : '';
+      if (rawUriForData && (rawUriForData.startsWith('file://') || rawUriForData.startsWith('content://') || rawUriForData.startsWith('/'))) {
+        console.log(`[createBarrierReport] Trying data URI conversion for ${rawUriForData.slice(0,50)}...`);
+        const dataUri = await fileUriToDataUri(rawUriForData);
+        if (dataUri && dataUri.startsWith('data:image') && dataUri.length > 100 && dataUri.length < 8 * 1024 * 1024) {
+          console.log(`[createBarrierReport] Data URI success (${(dataUri.length/1024).toFixed(1)}KB), sending JSON`);
+          return apiRequest('/reports', {
+            method: 'POST',
+            body: JSON.stringify({ ...reportData, photoUrl: dataUri }),
+          });
+        } else if (dataUri && dataUri.startsWith('data:image')) {
+          console.warn(`[createBarrierReport] Data URI too large (${(dataUri.length/1024).toFixed(1)}KB), falling back to multipart`);
+        }
+      }
+    } catch (e) {
+      console.warn('[createBarrierReport] Data URI attempt failed, falling back to multipart:', e?.message);
+    }
+  }
   let formData;
   try {
     formData = new FormData();
     if (Platform.OS !== 'web') {
-      // React Native: strictly format the photo object to { uri, name, type } with type: 'image/jpeg'
       if (typeof photoFile === 'object' && photoFile !== null && typeof photoFile.uri === 'string') {
-        const formattedPhoto = {
-          uri: String(photoFile.uri),
-          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
-          type: 'image/jpeg',
-        };
+        let rawUri = String(photoFile.uri).trim();
+        let name = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) name = name.replace(/\.[^/.]+$/, '') + '.jpg';
+        let type = String(photoFile.type || 'image/jpeg');
+        if (!type.startsWith('image/')) type = 'image/jpeg';
+        if (rawUri.startsWith('http') || rawUri.startsWith('data:')) {
+          return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: rawUri }) });
+        }
+        if (rawUri.startsWith('blob:')) {
+          return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || '') }) });
+        }
+        if (!rawUri.startsWith('file://') && !rawUri.startsWith('content://') && rawUri.startsWith('/')) rawUri = `file://${rawUri}`;
+        const formattedPhoto = { uri: rawUri, name, type };
+        console.log(`[createBarrierReport] Appending native photo: ${name} (${type})`);
         formData.append('photo', formattedPhoto);
       } else if (typeof photoFile === 'string') {
-        const formattedPhoto = {
-          uri: String(photoFile),
-          name: String(`photo_${Date.now()}.jpg`),
-          type: 'image/jpeg',
-        };
+        const raw = String(photoFile).trim();
+        if (raw.startsWith('data:') || raw.startsWith('http')) {
+          return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: raw }) });
+        }
+        if (raw.startsWith('blob:')) {
+          return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: String(reportData.photoUrl || '') }) });
+        }
+        const uri = raw.startsWith('file://') || raw.startsWith('content://') ? raw : raw.startsWith('/') ? `file://${raw}` : raw;
+        const formattedPhoto = { uri, name: `photo_${Date.now()}.jpg`, type: 'image/jpeg' };
         formData.append('photo', formattedPhoto);
       } else {
-        formData.append('photo', { uri: String(photoFile.uri), name: String(photoFile.name || `photo_${Date.now()}.jpg`), type: 'image/jpeg' });
+        const rawUri = String(photoFile.uri || `file:///tmp/photo_${Date.now()}.jpg`);
+        const name = String(photoFile.name || `photo_${Date.now()}.jpg`).replace(/\.[^/.]+$/, '') + '.jpg';
+        formData.append('photo', { uri: rawUri.startsWith('file://') ? rawUri : `file://${rawUri}`, name, type: 'image/jpeg' });
       }
     } else {
       if (photoFile instanceof File || photoFile instanceof Blob) {
-        formData.append('photo', photoFile, String(photoFile.name || `photo_${Date.now()}.jpg`));
+        const fileName = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        console.log(`[createBarrierReport][web] Appending File/Blob: ${fileName} ${photoFile.type} ${photoFile.size} bytes`);
+        formData.append('photo', photoFile, fileName);
       } else if (typeof photoFile === 'object' && typeof photoFile.uri === 'string') {
-        const formattedPhoto = {
-          uri: String(photoFile.uri),
-          name: String(photoFile.name || `photo_${Date.now()}.jpg`),
-          type: 'image/jpeg',
-        };
+        let uri = String(photoFile.uri).trim();
+        let name = String(photoFile.name || `photo_${Date.now()}.jpg`);
+        if (!name.toLowerCase().endsWith('.jpg') && !name.toLowerCase().endsWith('.jpeg')) name = name.replace(/\.[^/.]+$/, '') + '.jpg';
+        let type = String(photoFile.type || 'image/jpeg');
+        if (!type.startsWith('image/')) type = 'image/jpeg';
+        if (uri.startsWith('data:image')) {
+          console.log('[createBarrierReport][web] data: URI - sending as photoUrl JSON');
+          return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: uri }) });
+        }
+        if (uri.startsWith('http://') || uri.startsWith('https://')) {
+          return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: uri }) });
+        }
         try {
-          const resp = await fetch(String(photoFile.uri));
+          console.log(`[createBarrierReport][web] Fetching ${uri.slice(0,30)}...`);
+          const resp = await fetch(uri);
+          if (!resp.ok) throw new Error(`fetch failed ${resp.status}`);
           const blob = await resp.blob();
-          const file = new File([blob], formattedPhoto.name, { type: String(blob.type || 'image/jpeg') });
-          formData.append('photo', file, formattedPhoto.name);
-        } catch {
-          formData.append('photo', formattedPhoto);
+          if (!blob || blob.size===0) throw new Error('empty blob');
+          const file = new File([blob], name, { type: String(blob.type || type) });
+          console.log(`[createBarrierReport][web] Converted -> File ${file.name} ${file.size} bytes`);
+          formData.append('photo', file, name);
+        } catch (e) {
+          console.warn('[createBarrierReport][web] fetch failed, trying photoUrl fallback:', e?.message);
+          try {
+            const dataUri = await fileUriToDataUri(uri);
+            if (dataUri && dataUri.startsWith('data:')) {
+              return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: dataUri }) });
+            }
+          } catch {}
+          return apiRequest('/reports', { method: 'POST', body: JSON.stringify({ ...reportData, photoUrl: uri }) });
         }
       } else {
         formData.append('photo', photoFile);
       }
     }
-
     const appendString = (key, value) => {
       if (value === undefined || value === null || value === '') return;
       formData.append(key, String(value));
@@ -596,7 +833,6 @@ export const createBarrierReport = async (reportData, photoFile) => {
       else if (typeof value === 'object') formData.append(key, JSON.stringify(value));
       else formData.append(key, String(value));
     };
-
     appendString('name', reportData.name || '');
     appendString('locationName', reportData.locationName || reportData.location || '');
     appendString('condition', reportData.condition || 'bad');
@@ -622,7 +858,6 @@ export const createBarrierReport = async (reportData, photoFile) => {
       body: JSON.stringify({ ...reportData, photoUrl: String(fallbackPhotoUrl || reportData.photoUrl || '') }),
     });
   }
-
   try {
     return await apiRequest('/reports', {
       method: 'POST',

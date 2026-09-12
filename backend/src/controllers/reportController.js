@@ -128,17 +128,23 @@ exports.createReport = async (req, res) => {
     const uploadedFile = req.file || (req.files && req.files.photo && req.files.photo[0]) || null;
     if (uploadedFile) {
       try {
+        console.log(`[createReport] Uploading photo to Cloudinary: ${uploadedFile.originalname || 'photo'} (${(uploadedFile.size / 1024).toFixed(1)}KB, ${uploadedFile.mimetype})`);
+        const start = Date.now();
         const result = await uploadBufferToCloudinary(uploadedFile.buffer, uploadedFile.mimetype, {
           public_id: undefined,
         });
+        console.log(`[createReport] Cloudinary upload success in ${Date.now() - start}ms: ${result.secure_url}`);
         photoUrl = result.secure_url;
       } catch (uploadErr) {
         console.error('Cloudinary upload failed:', uploadErr);
         const isConfigErr = uploadErr.message && uploadErr.message.includes('not configured');
-        return res.status(isConfigErr ? 500 : 502).json({
+        const isTimeout = uploadErr.message && /timed out/i.test(uploadErr.message);
+        return res.status(isConfigErr ? 500 : isTimeout ? 504 : 502).json({
           success: false,
           message: isConfigErr
             ? 'Photo upload service not configured. Contact administrator.'
+            : isTimeout
+            ? 'Photo upload timed out — please try a smaller photo or check your connection.'
             : 'Failed to upload photo to Cloudinary.',
           error: uploadErr.message,
         });

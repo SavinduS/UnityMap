@@ -122,12 +122,11 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
       setIsAddReportOpen(false);
       setSelectedCategory('all');
       setTimeout(() => loadTriageData(), 50);
-      const ref = newReport?._id || newReport?.id || '';
       try {
         AccessibilityInfo.announceForAccessibility('Barrier report successfully added to queue');
       } catch {}
       try {
-        Alert.alert('Report Added', `Barrier report ${ref ? ref + ' ' : ''}added to Triage Queue.`);
+        Alert.alert('Report Added', 'Barrier report has been successfully added to the Triage Queue.');
       } catch {}
     },
     [loadTriageData]

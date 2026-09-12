@@ -175,10 +175,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
   const ward = getWardById(wardId);
   const currentAdmin = adminAuthService.getCurrentUser();
   const reporterName = currentAdmin?.name || currentAdmin?.email || 'Admin Officer';
-  // reporterId must be a valid Mongo ObjectId — staffId like CMC-CHI-325 is not valid, so ignore
-  const rawReporterId = currentAdmin?._id || currentAdmin?.id;
-  const isValidObjectId = (val) => typeof val === 'string' && /^[0-9a-fA-F]{24}$/.test(val);
-  const reporterId = rawReporterId && isValidObjectId(String(rawReporterId)) ? String(rawReporterId) : undefined;
+  const reporterId = currentAdmin?._id || currentAdmin?.id || undefined;
 
   // Auto-fill locationName from ward context (if not manually edited)
   useEffect(() => {
@@ -237,35 +234,21 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
 
   const handleCapturedFromPicker = useCallback(async (asset) => {
     if (!asset) return;
-    const originalUri = asset.uri;
+    const uri = asset.uri;
+    setImageUri(uri);
     setErrorMsg(null);
 
-    // Task 1: Fix Asset MIME Type — explicitly ensure valid MIME (fixes "image" → "image/jpeg" on Android)
-    const mimeType = asset.mimeType || (asset.type?.includes('/') ? asset.type : 'image/jpeg');
-    const formattedPhoto = {
-      uri: asset.uri,
-      name: asset.fileName || `photo_${Date.now()}.jpg`,
-      type: mimeType,
-    };
-    // Harden for RN FormData: ensure .jpg extension and strict image/jpeg (fixes Unsupported FormDataPart where type is "image")
+    // Build a file-like object for api createReport — harden MIME to image/jpeg (fixes Unsupported FormDataPart where mimeType is "image")
     let fileName = asset.fileName || `photo_${Date.now()}.jpg`;
     if (!fileName.toLowerCase().endsWith('.jpg') && !fileName.toLowerCase().endsWith('.jpeg')) {
       fileName = fileName.replace(/\.[^/.]+$/, '') + '.jpg';
     }
-    const validatedMime = mimeType.includes('/') ? mimeType : 'image/jpeg';
-    const strictPhoto = {
-      uri: String(formattedPhoto.uri),
-      name: String(fileName),
-      type: 'image/jpeg',
-    };
-    void validatedMime;
-    setImageUri(String(originalUri));
-    // Use strict JPEG for actual upload, formattedPhoto kept per Task 1 spec for verification
-    setPhotoFile(strictPhoto);
+    const fileLike = { uri: String(uri), name: String(fileName), type: 'image/jpeg' };
+    setPhotoFile(fileLike);
 
-    // Try EXIF extraction (use finalUri for consistency)
+    // Try EXIF extraction
     try {
-      const exif = await extractExifData({ uri: String(finalUri) });
+      const exif = await extractExifData({ uri });
       setExifResult(exif);
     } catch {
       setExifResult({
@@ -291,7 +274,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
         }
         result = await ImagePicker.launchCameraAsync({
           mediaTypes: ['images'],
-          quality: 0.6,
+          quality: 0.35,
           exif: true,
           allowsEditing: false,
         });
@@ -477,6 +460,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       exifMetadata,
       capturedAt: resolvedCapturedAt,
       timestamp: resolvedCapturedAt,
+      reporterName,
       reporterId,
     };
 
@@ -507,59 +491,12 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       if (onReportCreated) onReportCreated(newReport);
       onClose && onClose();
     } catch (e) {
-<<<<<<< HEAD
-      // Offline / backend unreachable -> seamless mock injection so queue updates
-      // Also treat AbortError / TimeoutError (signal is aborted without reason) as network issue
-      const msg = e?.message || '';
-      const isOffline =
-        msg.includes('Failed to fetch') ||
-        msg.includes('Network request failed') ||
-        msg.includes('unreachable') ||
-        msg.includes('API Request Failed') ||
-        msg.includes('aborted') ||
-        msg.includes('abort') ||
-        msg.includes('timed out') ||
-        msg.includes('TimeoutError') ||
-        e?.name === 'AbortError' ||
-        e?.name === 'TimeoutError' ||
-        /signal is aborted/i.test(msg);
-      if (isOffline) {
-        try {
-          const mockReport = addMockTriageReport({
-            category,
-            rating,
-            notes: notes?.trim(),
-            name: (name && name.trim()) || (category ? `${category} Barrier` : 'Barrier Report'),
-            locationName: (locationName && locationName.trim()) || ward.name,
-            condition: condition || 'bad',
-            capturedAt: capturedAt || new Date().toISOString(),
-            coordinates: { latitude: finalLat, longitude: finalLng },
-            photoUrl: imageUri,
-            wardId: ward?.id || wardId,
-          });
-          try {
-            AccessibilityInfo.announceForAccessibility('Barrier report successfully added to queue');
-          } catch {}
-          if (onReportCreated) onReportCreated(mockReport);
-          onClose && onClose();
-          return;
-        } catch (mockErr) {
-          // fall through to error display
-        }
-      }
-      let displayMsg = e?.message || 'Failed to submit report. Please try again.';
-      if (/aborted|abort|timed out|TimeoutError|signal is aborted/i.test(displayMsg) || e?.name === 'AbortError' || e?.name === 'TimeoutError') {
-        displayMsg = 'Submission timed out — please check your network and try again. If the problem persists, try a smaller photo.';
-      }
-      setErrorMsg(displayMsg);
-=======
       setErrorMsg(e?.message || 'Failed to submit barrier report to server. Please try again.');
->>>>>>> origin/develop
     } finally {
       setSubmitting(false);
       setFallbackLoading(false);
     }
-  }, [category, imageUri, photoFile, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, name, locationName, condition, capturedAt, reporterId, ward, wardId, manualCoords, onReportCreated, onClose]);
+  }, [category, imageUri, photoFile, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, name, locationName, condition, capturedAt, reporterName, reporterId, ward, wardId, manualCoords, onReportCreated, onClose]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>

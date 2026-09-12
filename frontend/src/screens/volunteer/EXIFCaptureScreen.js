@@ -7,6 +7,43 @@ import { getTextStyle, textProps } from '../../theme/typography';
 import { extractExifData } from '../../utils/exifHelper';
 import { saveVolunteerDraft, clearVolunteerDraft } from '../../theme/storage';
 
+async function compressWebImageIfNeeded(file) {
+  if (Platform.OS !== 'web' || !(file instanceof File) || file.size < 1024 * 1024) return file;
+  try {
+    if (typeof document === 'undefined' || typeof createImageBitmap === 'undefined' && typeof Image === 'undefined') return file;
+    // Use canvas to resize to max 1024 width
+    const bitmap = await createImageBitmap(file).catch(async () => {
+      // Fallback via Image element
+      const url = URL.createObjectURL(file);
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = url;
+      });
+      URL.revokeObjectURL(url);
+      return img;
+    });
+    const maxWidth = 1024;
+    const scale = Math.min(1, maxWidth / bitmap.width);
+    if (scale >= 1) return file;
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    if (bitmap.close) try { bitmap.close(); } catch {}
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.6));
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.[^/.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch {
+    return file;
+  }
+}
+
 /**
  * EXIF Capture & Geotagging Screen — SPT-108 minimal web-standard solution
  * - Custom viewfinder UI (reuses Card/Button, ThemeContext, tokens)
@@ -126,13 +163,20 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
     setErrorMsg(null);
     setExifLoading(true);
 
+    // Compress large web images (>1MB) to ~1024px / 0.6 quality to avoid upload timeouts
+    let uploadFile = file;
+    try {
+      const compressed = await compressWebImageIfNeeded(file);
+      if (compressed && compressed.size < file.size) uploadFile = compressed;
+    } catch {}
+
     try {
       // SPT-008: pass File directly — supports File/Blob/ArrayBuffer
       const exif = await extractExifData(file);
       if (!isMountedRef.current) return;
       // Validate GPS/timestamp are already normalized to null if invalid by helper
       setExifResult(exif);
-      await persistDraft(previewUrl, exif, file);
+      await persistDraft(previewUrl, exif, uploadFile);
     } catch (exifErr) {
       if (!isMountedRef.current) return;
       // Unsupported/invalid image fallback — do not claim GPS/timestamp
@@ -145,7 +189,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
         hasTimestamp: false,
       };
       setExifResult(fallback);
-      await persistDraft(previewUrl, fallback, file);
+      await persistDraft(previewUrl, fallback, uploadFile);
       // If exif error was due to corrupt image, surface generic message only if no preview
       if (!exifErr || /unsupported|invalid|exif/i.test(exifErr.message || '')) {
         // Keep preview but ensure badges show missing data — no additional error needed
@@ -194,12 +238,32 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           setIsLoading(false);
           return;
         }
-        const asset = result.assets && result.assets[0];
+        let asset = result.assets && result.assets[0];
         if (!asset || !asset.uri) {
           setErrorMsg('Failed to capture image. Please try again.');
           setIsLoading(false);
           return;
         }
+        // Try to compress/resize to ~1024px width and 0.6 quality to keep upload <1MB and avoid timeout.
+        // Uses expo-image-manipulator if available; otherwise falls back to original asset.
+        try {
+          const Manipulator = await import('expo-image-manipulator').catch(() => null);
+          const manipulator = Manipulator?.default || Manipulator;
+          if (manipulator?.manipulateAsync) {
+            try {
+              const manipulated = await manipulator.manipulateAsync(
+                asset.uri,
+                [{ resize: { width: 1024 } }],
+                { compress: 0.6, format: manipulator.SaveFormat?.JPEG || 'jpeg' }
+              );
+              if (manipulated?.uri) {
+                asset = { ...asset, uri: manipulated.uri };
+              }
+            } catch (manipErr) {
+              console.warn('[EXIFCapture] ImageManipulator compress failed, using original:', manipErr?.message);
+            }
+          }
+        } catch {}
         // Show preview directly from file uri (no createObjectURL)
         revokePreview();
         if (!isMountedRef.current) return;
@@ -213,7 +277,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           if (!isMountedRef.current) return;
           setExifResult(exif);
           // Convert camera photo format to JPEG with explicit MIME guard (fix Unsupported FormDataPart where mimeType is "image")
-          // No extra dep: normalize extension + force image/jpeg + ImagePicker quality 0.6 already compresses (avoids 403 on expo-image-manipulator)
+          // normalize extension + force image/jpeg + ImagePicker quality 0.6 + manipulator resize avoids large uploads / timeouts
           let finalUri = asset.uri;
           let finalName = asset.fileName || `photo_${Date.now()}.jpg`;
           if (!finalName.toLowerCase().endsWith('.jpg') && !finalName.toLowerCase().endsWith('.jpeg')) {

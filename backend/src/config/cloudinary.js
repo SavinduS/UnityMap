@@ -38,12 +38,30 @@ function uploadBufferToCloudinary(buffer, mimetype, options = {}) {
       folder,
       resource_type: 'image',
       transformation: [{ quality: 'auto', fetch_format: 'auto' }],
+      timeout: 20000,
       ...options,
     };
 
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('Cloudinary upload timed out after 20s — please try again or use a smaller photo'));
+    }, 20000);
+
     const stream = cloudinary.uploader.upload_stream(uploadOptions, (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
       if (error) return reject(error);
       resolve(result);
+    });
+
+    stream.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(err);
     });
 
     stream.end(buffer);
@@ -58,11 +76,15 @@ function uploadDataUriToCloudinary(dataUri, options = {}) {
     return Promise.reject(new Error('Cloudinary is not configured.'));
   }
   const folder = process.env.CLOUDINARY_FOLDER || 'unitymap/barrier-reports';
-  return cloudinary.uploader.upload(dataUri, {
-    folder,
-    resource_type: 'image',
-    ...options,
-  });
+  return Promise.race([
+    cloudinary.uploader.upload(dataUri, {
+      folder,
+      resource_type: 'image',
+      timeout: 20000,
+      ...options,
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Cloudinary data URI upload timed out after 20s')), 20000)),
+  ]);
 }
 
 module.exports = { cloudinary, uploadBufferToCloudinary, uploadDataUriToCloudinary };
