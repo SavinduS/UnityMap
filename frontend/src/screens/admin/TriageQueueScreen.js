@@ -20,12 +20,23 @@ import {
   Image,
   AccessibilityInfo,
   Alert,
+  Platform,
 } from 'react-native';
 import { fetchTriageQueue, fetchTriageMetrics } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
 import { getWardById, MUNICIPAL_WARDS } from '../../utils/wardJurisdictions';
 import { Feather } from '@expo/vector-icons';
 import AdminAddReportModal from '../../components/admin/AdminAddReportModal';
+import { corroborateReport } from '../../services/api';
+
+const isValidPhotoUri = (uri) => {
+  if (!uri || typeof uri !== 'string') return false;
+  const trimmed = uri.trim();
+  if (!trimmed) return false;
+  // React Native on iOS/Android cannot load web blob: URIs
+  if (Platform.OS !== 'web' && trimmed.startsWith('blob:')) return false;
+  return true;
+};
 
 const CATEGORIES = [
   { id: 'all', label: 'All Categories' },
@@ -159,6 +170,22 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
     [selectedWardId]
   );
 
+  const handleCorroboratePress = async (reportItem) => {
+    if (!reportItem?._id) return;
+    try {
+      const response = await corroborateReport(reportItem._id);
+      const updated = response?.data || response;
+      handleCorroborationSuccess({
+        _id: reportItem._id,
+        corroborationCount: updated?.corroborationCount ?? (reportItem.corroborationCount || 0) + 1,
+        upvotedBy: updated?.upvotedBy,
+        triage: updated?.triage,
+      });
+    } catch (err) {
+      console.warn('[TriageQueueScreen] Corroborate error:', err.message);
+    }
+  };
+
   const getPriorityBadgeStyle = (badge) => {
     switch (badge) {
       case 'CRITICAL':
@@ -223,6 +250,38 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
           <Text style={styles.topBarSubtitle}>
             {activeWard.name} — Ward {activeWard.wardNumber}
           </Text>
+        </View>
+
+        {/* Ward Jurisdiction Selection Strip */}
+        <View style={styles.wardStripWrap}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wardScrollContent}>
+            {MUNICIPAL_WARDS.map((ward) => {
+              const isSelected = selectedWardId === ward.id;
+              return (
+                <TouchableOpacity
+                  key={ward.id}
+                  style={[styles.wardChip, isSelected && styles.wardChipSelected]}
+                  onPress={() => {
+                    setSelectedWardId(ward.id);
+                    if (onWardChange) onWardChange(ward.id);
+                  }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Switch to Ward ${ward.wardNumber}: ${ward.name}`}
+                >
+                  <Feather
+                    name="map-pin"
+                    size={10}
+                    color={isSelected ? '#FFFFFF' : '#A7F3D0'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.wardChipText, isSelected && styles.wardChipTextSelected]}>
+                    W{ward.wardNumber}: {ward.name.split(' ')[0]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
       </View>
 
@@ -385,7 +444,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
 
                   {/* Barrier Notes & Photo Preview */}
                   <View style={styles.cardBody}>
-                    {report.photoUrl ? (
+                    {isValidPhotoUri(report.photoUrl) ? (
                       <Image
                         source={{ uri: report.photoUrl }}
                         style={styles.cardThumbnail}
@@ -420,12 +479,18 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                           {'★'.repeat(report.rating || 3)}
                           {'☆'.repeat(5 - (report.rating || 3))}
                         </Text>
-                        <View style={styles.corroborationPill}>
+                        <TouchableOpacity
+                          style={styles.corroborationPill}
+                          onPress={() => handleCorroboratePress(report)}
+                          activeOpacity={0.7}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Confirm barrier. Current count ${report.corroborationCount || 0}`}
+                        >
                           <Feather name="users" size={10} color="#047857" style={{ marginRight: 4 }} />
                           <Text style={styles.corroborationText}>
                             {report.corroborationCount || 0}
                           </Text>
-                        </View>
+                        </TouchableOpacity>
                       </View>
                     </View>
                   </View>
@@ -976,6 +1041,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  wardStripWrap: {
+    marginTop: 10,
+  },
+  wardScrollContent: {
+    gap: 8,
+  },
+  wardChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+  },
+  wardChipSelected: {
+    backgroundColor: '#059669',
+    borderColor: '#34D399',
+  },
+  wardChipText: {
+    fontSize: 11,
+    color: '#D1FAE5',
+    fontWeight: '600',
+  },
+  wardChipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
 });
 

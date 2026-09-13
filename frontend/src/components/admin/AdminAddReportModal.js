@@ -452,7 +452,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
       coordinates: { latitude: finalLat, longitude: finalLng },
       latitude: finalLat,
       longitude: finalLng,
-      photoUrl: photoFile ? undefined : imageUri,
+      photoUrl: photoFile ? undefined : (imageUri && typeof imageUri === 'string' && !imageUri.startsWith('blob:') ? imageUri : undefined),
       category,
       rating,
       notes: notes?.trim() || undefined,
