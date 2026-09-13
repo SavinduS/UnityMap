@@ -561,21 +561,51 @@ const UnityMapScreen = () => {
     setIsTurnByTurnActive(true);
   }, [tapRouteMeta, tapRoute, tappedLocation, location]);
 
-  // Select destination from real DB list / search history
-  const handleSelectDestination = useCallback((dest) => {
-    setSearchQuery(dest.title);
-    if (dest.lat && dest.lng) {
-      setMapCenter([dest.lat, dest.lng]);
-    }
+  // Select destination from real DB list / search history — also starts live navigation on current BaseMap
+  const handleSelectDestination = useCallback(
+    async (dest) => {
+      setSearchQuery(dest.title);
+      if (dest.lat && dest.lng) {
+        setMapCenter([dest.lat, dest.lng]);
+        // Reuse current map pipeline to draw route and show summary
+        try {
+          await handleMapTap({ latitude: dest.lat, longitude: dest.lng });
+        } catch (_) {}
+      }
+      // Move selected to top of recent list and save
+      setRecentDestinations((prev) => {
+        const filtered = prev.filter((d) => d.id !== dest.id);
+        const updated = [dest, ...filtered];
+        saveRecentSearches(updated);
+        return updated;
+      });
+    },
+    [handleMapTap]
+  );
 
-    // Move selected to top of recent list and save
-    setRecentDestinations((prev) => {
-      const filtered = prev.filter((d) => d.id !== dest.id);
-      const updated = [dest, ...filtered];
-      saveRecentSearches(updated);
-      return updated;
-    });
-  }, []);
+  // Typed search fallback: Enter with no exact match → top-score fuzzy handleMapTap
+  const handleSearchSubmit = useCallback(async () => {
+    const q = searchQuery.trim();
+    if (!q) return;
+    const all = [...dbNodes, ...recentDestinations];
+    let best = null;
+    let bestScore = -1;
+    const lowerQ = q.toLowerCase();
+    for (const dest of all) {
+      const titleLower = dest.title.toLowerCase();
+      let score = 0;
+      if (titleLower === lowerQ) score = 3;
+      else if (titleLower.includes(lowerQ) || lowerQ.includes(titleLower)) score = 2;
+      else if (titleLower.split(' ').some((w) => lowerQ.includes(w) || w.includes(lowerQ))) score = 1;
+      if (score > bestScore) {
+        bestScore = score;
+        best = dest;
+      }
+    }
+    if (best && bestScore >= 1) {
+      await handleSelectDestination(best);
+    }
+  }, [searchQuery, dbNodes, recentDestinations, handleSelectDestination]);
 
   // SPT-106: bridge spoken transcript to Voice Input & Summary Readout Screen — summary first via getRoute includeSpeech, draw on Confirm
   const handleLauncherNavigate = useCallback(
@@ -1226,6 +1256,9 @@ const UnityMapScreen = () => {
                     showClear
                     onClear={() => setSearchQuery('')}
                     leftIcon={<Feather name="search" size={18} color={palette.primary} />}
+                    onSubmitEditing={handleSearchSubmit}
+                    returnKeyType="search"
+                    blurOnSubmit={false}
                   />
                 </View>
 
