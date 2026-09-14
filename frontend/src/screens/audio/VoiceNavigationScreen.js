@@ -5,12 +5,11 @@ import Card from '../../components/Card';
 import Button from '../../components/Button';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
-import { useSpeech } from '../../hooks/useSpeech';
 import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
 
 /**
  * Voice Input & Summary Readout Screen (SPT-106 — Audio Page 2)
- * Overwritten in-place per SPT-106: animated mic, live transcript, spoken route summary controls, single-tap confirmation.
+ * Simplified: animated mic, live transcript, route summary (distance + ETA + spoken text), single-tap confirmation.
  */
 export const VoiceNavigationScreen = ({
   initialTranscript = '',
@@ -19,7 +18,6 @@ export const VoiceNavigationScreen = ({
   onCancel,
 }) => {
   const { palette, borderWidth, isHighContrast, isReduceMotionEnabled } = useTheme();
-  const { speak, stop: stopSpeak, isSpeaking } = useSpeech();
   const {
     isSupported,
     isListening,
@@ -32,17 +30,13 @@ export const VoiceNavigationScreen = ({
   } = useSpeechRecognition();
 
   const [localTranscript, setLocalTranscript] = useState(initialTranscript);
-  const [speechRate, setSpeechRate] = useState(1.0);
 
-  // Prefer prop transcript if parent bridges from launcher, otherwise internal
   const displayTranscript = localTranscript || transcript;
-  const displayInterim = interimTranscript;
   const effectiveRouteSummary = propRouteSummary || null;
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const opacityAnim = useRef(new Animated.Value(0.6)).current;
 
-  // Animated mic pulse when listening, disabled for reduceMotion
   useEffect(() => {
     if (isListening && !isReduceMotionEnabled) {
       const pulse = Animated.loop(
@@ -69,12 +63,10 @@ export const VoiceNavigationScreen = ({
     }
   }, [isListening, isReduceMotionEnabled, pulseAnim, opacityAnim]);
 
-  // Sync external initialTranscript
   useEffect(() => {
     if (initialTranscript) setLocalTranscript(initialTranscript);
   }, [initialTranscript]);
 
-  // Sync internal transcript to local
   useEffect(() => {
     if (transcript) setLocalTranscript(transcript);
   }, [transcript]);
@@ -94,33 +86,19 @@ export const VoiceNavigationScreen = ({
     : `Route summary not yet available. Speak destination to generate summary.`;
 
   const distanceText = effectiveRouteSummary?.distanceText || effectiveRouteSummary?.distance || '--';
-  const crossingsText = effectiveRouteSummary?.crossings ?? effectiveRouteSummary?.crossingsText ?? '--';
   const etaText = effectiveRouteSummary?.etaText || effectiveRouteSummary?.eta || '--';
-  const hazardCount = effectiveRouteSummary?.hazardCount ?? '--';
-  const destName = effectiveRouteSummary?.destName || effectiveRouteSummary?.landmark || 'Destination';
-
-  const handlePlay = () => {
-    const text = `Route to ${destName}: ${distanceText}, ${crossingsText} crossings, ${etaText}, ${hazardCount} hazards.`;
-    speak(text, { rate: speechRate, pitch: 1.0 });
-  };
-
-  const handleStop = () => {
-    try { stopSpeak(); } catch (_) {}
-  };
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: palette.background }]} contentContainerStyle={styles.content}>
-      {/* Landmark Header */}
       <View accessible accessibilityRole="header" accessibilityLabel="Voice input and summary readout" style={styles.landmarkHeader}>
         <Text {...textProps} style={[getTextStyle('xl', { isHighContrast }), { color: palette.textPrimary, textAlign: 'center' }]}>
           Voice Input & Summary
         </Text>
         <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: palette.textMuted, textAlign: 'center', marginTop: 4 }]}>
-          Speak destination, review spoken summary, confirm with one tap
+          Speak destination, review summary, confirm with one tap
         </Text>
       </View>
 
-      {/* Animated Mic Graphic */}
       <Pressable
         accessible
         accessibilityRole="button"
@@ -152,7 +130,6 @@ export const VoiceNavigationScreen = ({
         </Text>
       </Pressable>
 
-      {/* Live Transcript */}
       <Card style={[styles.card, { borderColor: palette.cardBorder, borderWidth, backgroundColor: palette.surface }]}>
         <Text {...textProps} style={[styles.cardTitle, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>Live Transcript</Text>
         <View accessible accessibilityLiveRegion="polite" style={[styles.transcriptBox, { borderColor: palette.border, borderWidth, backgroundColor: palette.background, minHeight: 48 }]}>
@@ -186,7 +163,6 @@ export const VoiceNavigationScreen = ({
         )}
       </Card>
 
-      {/* Route Summary */}
       <Card style={[styles.card, { borderColor: palette.cardBorder, borderWidth, backgroundColor: palette.surface }]}>
         <Text {...textProps} style={[styles.cardTitle, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>Route Summary</Text>
         <View style={styles.summaryGrid}>
@@ -195,16 +171,8 @@ export const VoiceNavigationScreen = ({
             <Text {...textProps} style={[getTextStyle('base', { isHighContrast }), { color: palette.textPrimary, fontWeight: '700' }]}>{String(distanceText)}</Text>
           </View>
           <View style={[styles.summaryItem, { borderColor: palette.border, borderWidth: isHighContrast ? borderWidth : 0, backgroundColor: palette.background }]}>
-            <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>Crossings</Text>
-            <Text {...textProps} style={[getTextStyle('base', { isHighContrast }), { color: palette.textPrimary, fontWeight: '700' }]}>{String(crossingsText)}</Text>
-          </View>
-          <View style={[styles.summaryItem, { borderColor: palette.border, borderWidth: isHighContrast ? borderWidth : 0, backgroundColor: palette.background }]}>
             <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>ETA</Text>
             <Text {...textProps} style={[getTextStyle('base', { isHighContrast }), { color: palette.textPrimary, fontWeight: '700' }]}>{String(etaText)}</Text>
-          </View>
-          <View style={[styles.summaryItem, { borderColor: palette.border, borderWidth: isHighContrast ? borderWidth : 0, backgroundColor: palette.background }]}>
-            <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>Hazards</Text>
-            <Text {...textProps} style={[getTextStyle('base', { isHighContrast }), { color: palette.textPrimary, fontWeight: '700' }]}>{String(hazardCount)}</Text>
           </View>
         </View>
         <View style={[styles.spokenBox, { borderColor: palette.border, borderWidth, backgroundColor: palette.background, minHeight: 48 }]}>
@@ -214,67 +182,6 @@ export const VoiceNavigationScreen = ({
         </View>
       </Card>
 
-      {/* Spoken Route Summary Controls */}
-      <Card style={[styles.card, { borderColor: palette.cardBorder, borderWidth, backgroundColor: palette.surface }]}>
-        <Text {...textProps} style={[styles.cardTitle, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>Spoken Summary Controls</Text>
-        <View style={styles.controlsRow}>
-          <Pressable
-            onPress={handlePlay}
-            accessibilityRole="button"
-            accessibilityLabel="Play spoken summary"
-            style={[styles.controlBtn, { backgroundColor: palette.primary, minHeight: 44, minWidth: 44 }]}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Feather name={isSpeaking ? 'volume-2' : 'play'} size={18} color={palette.primaryText} />
-            <Text style={[getTextStyle('xs', { isHighContrast }), { color: palette.primaryText, marginLeft: 6, fontWeight: '700' }]}>{isSpeaking ? 'Playing' : 'Play'}</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleStop}
-            accessibilityRole="button"
-            accessibilityLabel="Stop spoken summary"
-            style={[styles.controlBtn, { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth, minHeight: 44 }]}
-          >
-            <Feather name="square" size={14} color={palette.textPrimary} />
-            <Text style={[getTextStyle('xs', { isHighContrast }), { color: palette.textPrimary, marginLeft: 6 }]}>Stop</Text>
-          </Pressable>
-          <Pressable
-            onPress={handlePlay}
-            accessibilityRole="button"
-            accessibilityLabel="Replay spoken summary"
-            style={[styles.controlBtn, { backgroundColor: palette.surfaceAlt, borderColor: palette.border, borderWidth, minHeight: 44 }]}
-          >
-            <Feather name="repeat" size={14} color={palette.textPrimary} />
-            <Text style={[getTextStyle('xs', { isHighContrast }), { color: palette.textPrimary, marginLeft: 6 }]}>Replay</Text>
-          </Pressable>
-        </View>
-        <View style={styles.rateRow}>
-          <Text {...textProps} style={[getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>Rate</Text>
-          {[0.8, 1.0, 1.2].map((r) => (
-            <Pressable
-              key={r}
-              onPress={() => setSpeechRate(r)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: speechRate === r }}
-              style={[
-                styles.rateChip,
-                {
-                  backgroundColor: speechRate === r ? palette.primary : palette.surfaceAlt,
-                  borderColor: palette.border,
-                  borderWidth: speechRate === r ? 0 : 1,
-                  minHeight: 36,
-                  minWidth: 48,
-                },
-              ]}
-            >
-              <Text style={[getTextStyle('xs', { isHighContrast }), { color: speechRate === r ? palette.primaryText : palette.textPrimary, fontWeight: '700' }]}>
-                {r}x
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </Card>
-
-      {/* Single-tap Confirmation */}
       <Button
         title="Confirm & Navigate"
         onPress={() => {
@@ -346,30 +253,6 @@ const styles = StyleSheet.create({
   spokenBox: {
     borderRadius: 12,
     padding: 12,
-    justifyContent: 'center',
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  controlBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    flex: 1,
-  },
-  rateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  rateChip: {
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    alignItems: 'center',
     justifyContent: 'center',
   },
 });

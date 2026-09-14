@@ -32,6 +32,10 @@ export const Input = ({
   numberOfLines,
   maxLength,
   textAlignVertical,
+  onSubmitEditing,
+  returnKeyType,
+  blurOnSubmit,
+  enablesReturnKeyAutomatically,
 }) => {
   const { isHighContrast, palette, borderWidth } = useTheme();
 
@@ -90,6 +94,10 @@ export const Input = ({
           accessible
           accessibilityLabel={accessibilityLabel || label || placeholder}
           accessibilityState={{}}
+          onSubmitEditing={onSubmitEditing}
+          returnKeyType={returnKeyType}
+          blurOnSubmit={blurOnSubmit}
+          enablesReturnKeyAutomatically={enablesReturnKeyAutomatically}
           {...textProps}
         />
 
