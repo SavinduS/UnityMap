@@ -1,11 +1,10 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Animated, Easing } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
-import { useSpeech } from '../../hooks/useSpeech';
 import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
 
 /**
@@ -19,7 +18,6 @@ export const VoiceNavigationScreen = ({
   onCancel,
 }) => {
   const { palette, borderWidth, isHighContrast, isReduceMotionEnabled } = useTheme();
-  const { speak } = useSpeech();
   const {
     isSupported,
     isListening,
@@ -34,7 +32,6 @@ export const VoiceNavigationScreen = ({
   const [localTranscript, setLocalTranscript] = useState(initialTranscript);
 
   const displayTranscript = localTranscript || transcript;
-  const displayInterim = interimTranscript;
   const effectiveRouteSummary = propRouteSummary || null;
 
   const pulseAnim = useRef(new Animated.Value(1)).current;

@@ -695,7 +695,7 @@ const UnityMapScreen = () => {
         speak(summary.spokenSummary);
       } catch (_) {}
     },
-    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, currentLocation, location, mapCenter, dbPathways, isWheelchairAccessible, speak]
+    [dbNodes, recentDestinations, tapRouteMeta, nearbyHazards, currentLocation, location, mapCenter, isWheelchairAccessible, speak]
   );
 
   const handleVoiceConfirm = useCallback(
