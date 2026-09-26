@@ -503,7 +503,6 @@ const styles = StyleSheet.create({
       ? {
           outlineStyle: 'none',
           outlineWidth: 0,
-          outline: 'none',
           boxShadow: 'none',
         }
       : {}),
@@ -520,7 +519,6 @@ const styles = StyleSheet.create({
       ? {
           outlineStyle: 'none',
           outlineWidth: 0,
-          outline: 'none',
           boxShadow: 'none',
         }
       : {}),

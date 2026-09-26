@@ -90,7 +90,7 @@ const Field = React.memo(({
           style={[
             styles.textInput,
             multiline && { height: 80, textAlignVertical: 'top' },
-            Platform.OS === 'web' && { outlineStyle: 'none', outlineWidth: 0, outline: 'none', boxShadow: 'none' },
+            Platform.OS === 'web' && { outlineStyle: 'none', outlineWidth: 0, boxShadow: 'none' },
           ]}
           placeholder={placeholder}
           placeholderTextColor="#94A3B8"
@@ -804,7 +804,6 @@ const styles = StyleSheet.create({
       ? {
           outlineStyle: 'none',
           outlineWidth: 0,
-          outline: 'none',
           boxShadow: 'none',
         }
       : {}),
@@ -829,7 +828,6 @@ const styles = StyleSheet.create({
       ? {
           outlineStyle: 'none',
           outlineWidth: 0,
-          outline: 'none',
           boxShadow: 'none',
         }
       : {}),
