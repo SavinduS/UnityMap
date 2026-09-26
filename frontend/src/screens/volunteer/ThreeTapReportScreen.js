@@ -1,18 +1,21 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, AccessibilityInfo } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, AccessibilityInfo, Alert, TextInput, Image } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
 import Input from '../../components/Input';
 import EXIFCaptureScreen from './EXIFCaptureScreen';
+import BaseMap from '../../components/BaseMap';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
-import { loadVolunteerDraft, saveVolunteerDraft, clearVolunteerDraft } from '../../theme/storage';
+import { loadVolunteerDraft, saveVolunteerDraft, clearVolunteerDraft, loadPendingReports, queuePendingReport, syncPendingReports } from '../../theme/storage';
 import { createBarrierReport, createReport, getReports } from '../../services/api';
 import { useLocation } from '../../hooks/useLocation';
 import { toBarrierReportFields } from '../../utils/exifHelper';
 import CorroborateButton from '../../components/CorroborateButton';
 import { calculateHaversineDistance } from '../../utils/mapMath';
 import authService from '../../services/authService';
+
 import { getMockReports } from '../../services/triageService';
 
 const CATEGORIES = [
@@ -24,6 +27,115 @@ const CATEGORIES = [
 ];
 
 const TOTAL_STEPS = 3;
+
+// Lightweight mini-map picker reusing BaseMap (Leaflet) — mirrors AdminAddReportModal MiniMapPicker
+const MiniMapPicker = ({ center, selected, onPick }) => {
+  const mapCenter = selected || center || { latitude: 6.9271, longitude: 79.8612 };
+  const markers = selected ? [{ lat: selected.latitude, lng: selected.longitude, title: 'Selected Pin', type: 'destination' }] : [];
+  const handleMapClick = useCallback(
+    (payload) => {
+      const lat = payload?.latitude ?? payload?.lat;
+      const lng = payload?.longitude ?? payload?.lng;
+      if (typeof lat === 'number' && typeof lng === 'number') onPick(lat, lng);
+    },
+    [onPick]
+  );
+  const nudge = (dLat, dLng) => {
+    const cur = selected || mapCenter;
+    onPick(cur.latitude + dLat, cur.longitude + dLng);
+  };
+  return (
+    <View style={miniMapStyles.container}>
+      <View style={miniMapStyles.mapFrame}>
+        <BaseMap
+          center={[mapCenter.latitude, mapCenter.longitude]}
+          markers={markers}
+          onMapClick={handleMapClick}
+          zoom={16}
+          style={{ height: 200, borderRadius: 12 }}
+        />
+        <View pointerEvents="none" style={miniMapStyles.crosshair}>
+          <Feather name="plus" size={18} color="#0F172A" style={{ opacity: 0.6 }} />
+        </View>
+      </View>
+      <View style={miniMapStyles.nudgeRow}>
+        <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(0.0005, 0)} accessibilityLabel="Nudge north">
+          <Feather name="chevron-up" size={14} color="#0F172A" />
+        </TouchableOpacity>
+        <View style={miniMapStyles.nudgeMiddle}>
+          <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(0, -0.0005)} accessibilityLabel="Nudge west">
+            <Feather name="chevron-left" size={14} color="#0F172A" />
+          </TouchableOpacity>
+          <View style={miniMapStyles.nudgeCenter}>
+            <Feather name="map-pin" size={16} color="#DC2626" />
+          </View>
+          <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(0, 0.0005)} accessibilityLabel="Nudge east">
+            <Feather name="chevron-right" size={14} color="#0F172A" />
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity style={miniMapStyles.nudgeBtn} onPress={() => nudge(-0.0005, 0)} accessibilityLabel="Nudge south">
+          <Feather name="chevron-down" size={14} color="#0F172A" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+const miniMapStyles = StyleSheet.create({
+  container: { gap: 8 },
+  mapFrame: {
+    height: 200,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: '#0F172A',
+    backgroundColor: '#E2E8F0',
+    position: 'relative',
+  },
+  crosshair: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -9,
+    marginLeft: -9,
+    width: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nudgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  nudgeMiddle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  nudgeCenter: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nudgeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});
 
 export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation }) => {
   const { palette, borderWidth, isHighContrast, announce } = useTheme();
@@ -43,12 +155,189 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
   const [draftLoaded, setDraftLoaded] = useState(false);
   const hasHydratedRef = useRef(false);
 
+  // Admin-parity fields — preserved in volunteer flow, distributed across 3 taps
+  const [name, setName] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
+  const [locationName, setLocationName] = useState('');
+  const [locationTouched, setLocationTouched] = useState(false);
+  const [condition, setCondition] = useState('bad');
+  const [capturedAt, setCapturedAt] = useState(new Date().toISOString());
+  const [manualCoords, setManualCoords] = useState(null);
+  const [showMapPicker, setShowMapPicker] = useState(false);
+
+  // Unified parent form state — single source of truth across 3 taps (Back navigation preserves all fields)
+  // Matches MongoDB BarrierReport schema: name, category, condition, locationName, rating, notes, photo, coordinates/location, exifMetadata, capturedAt
+  const formState = useMemo(() => {
+    const lat = manualCoords?.latitude ?? exifResult?.latitude ?? deviceLocation?.latitude ?? null;
+    const lng = manualCoords?.longitude ?? exifResult?.longitude ?? deviceLocation?.longitude ?? null;
+    return {
+      name,
+      category,
+      condition,
+      locationName,
+      rating,
+      notes,
+      photo: photoFile,
+      photoUri: imageUri,
+      latitude: Number.isFinite(lat) ? lat : null,
+      longitude: Number.isFinite(lng) ? lng : null,
+      coordinates: lat != null && lng != null ? { latitude: lat, longitude: lng } : null,
+      location: lat != null && lng != null ? { type: 'Point', coordinates: [lng, lat] } : null,
+      exifMetadata: exifResult
+        ? {
+            latitude: exifResult.latitude ?? lat,
+            longitude: exifResult.longitude ?? lng,
+            altitude: exifResult.altitude ?? null,
+            timestamp: exifResult.capturedAt instanceof Date ? exifResult.capturedAt : exifResult.capturedAt ? new Date(exifResult.capturedAt) : null,
+            capturedAt: exifResult.capturedAt ?? null,
+            hasGps: !!exifResult.hasGps,
+            hasTimestamp: !!exifResult.hasTimestamp,
+          }
+        : null,
+      capturedAt,
+      exifResult,
+      manualCoords,
+    };
+  }, [name, category, condition, locationName, rating, notes, photoFile, imageUri, manualCoords, exifResult, deviceLocation, capturedAt]);
+  // Alias per spec wording
+  const reportData = formState;
+
   // SPT-301: nearby existing barriers for corroboration
   const [nearbyReports, setNearbyReports] = useState([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
   const [corroboratedExistingId, setCorroboratedExistingId] = useState(null);
 
-  // Load draft on mount
+  // Offline queue state — reports cached in storage.js when POST /api/reports is unreachable
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncingPending, setSyncingPending] = useState(false);
+
+  // Direct MongoDB persist: HTTP POST /api/reports via api.js (multipart `photo` or JSON `photoUrl`)
+  // Shaping only — api.js owns strict per-platform FormData construction (never appends
+  // plain objects on web). Pre-flight assert converts a native crash into a clear photo error.
+  const submitToApi = useCallback(async (payload, photoMeta) => {
+    if (photoMeta != null) {
+      const isFile = typeof File !== 'undefined' && (photoMeta instanceof File || photoMeta instanceof Blob);
+      const isUriPart = photoMeta && typeof photoMeta === 'object' && typeof photoMeta.uri === 'string' && !!photoMeta.uri;
+      const isUriString = typeof photoMeta === 'string' && !!photoMeta;
+      if (!isFile && !isUriPart && !isUriString) {
+        throw new Error('Invalid photo attachment — please retake or pick another image.');
+      }
+    }
+    const normalizePhotoForUpload = (pf) => {
+      if (!pf) return null;
+      if (Platform.OS !== 'web') {
+        // Native (Expo Go): strip to the exact { uri, name, type } shape api.js expects
+        if (typeof pf === 'object' && typeof pf.uri === 'string' && pf.uri) {
+          return { uri: pf.uri, name: pf.name || pf.fileName || 'barrier.jpg', type: pf.type || 'image/jpeg' };
+        }
+        return pf;
+      }
+      return pf;
+    };
+    const normalizedPhoto = normalizePhotoForUpload(photoMeta);
+    if (normalizedPhoto) {
+      return createReport(payload, normalizedPhoto);
+    }
+    const uri = payload?.photoUrl;
+    if (uri && typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:')) && Platform.OS === 'web') {
+      // A fetch failure here means the bytes are unreadable (e.g. revoked blob URL) —
+      // route to the photo error path, never the offline queue.
+      try {
+        const blobResp = await fetch(uri);
+        const blob = await blobResp.blob();
+        const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
+        return createReport(payload, file);
+      } catch {
+        throw new Error('Could not read selected image — please retake or pick another image.');
+      }
+    }
+    return createBarrierReport(payload);
+  }, []);
+
+  // Sync offline-cached drafts from storage.js straight to MongoDB once connectivity is back
+  const syncOfflineQueue = useCallback(async () => {
+    setSyncingPending(true);
+    try {
+      const result = await syncPendingReports(async (payload, photoMeta) => {
+        const res = await submitToApi(payload, photoMeta);
+        const ok = res && (res.success || res.data);
+        if (!ok && res && res.success === false) throw new Error(res.message || 'Sync failed');
+        return res;
+      });
+      const remaining = await loadPendingReports();
+      setPendingCount(remaining.length);
+      if (result.synced > 0) {
+        const msg = `Synced ${result.synced} offline report${result.synced > 1 ? 's' : ''} to database`;
+        setSuccessMsg(msg);
+        try { AccessibilityInfo.announceForAccessibility(msg); } catch {}
+      }
+      return result;
+    } catch {
+      return { synced: 0, remaining: pendingCount };
+    } finally {
+      setSyncingPending(false);
+    }
+  }, [submitToApi, pendingCount]);
+
+  const isNetworkError = useCallback((e) => {
+    if (e?.isHttpError) return e.status >= 500 || e.status === 429;
+    const raw = `${e?.message || ''} ${e?.cause?.message || ''}`.toLowerCase();
+    if (/api request failed:\s*4\d\d\b/.test(raw)) return false;
+    return /network|fetch|abort|offline|failed to fetch|econn|etimedout|timeout|unreachable|all connection attempts failed|load failed/.test(raw);
+  }, []);
+
+  // FormData/photo shaping failures must never enter the offline queue — the same
+  // payload would fail on every sync retry. Show a photo-specific message instead.
+  const isFormDataError = useCallback((e) => {
+    const raw = `${e?.message || ''} ${e?.cause?.message || ''}`.toLowerCase();
+    return /formdata|formdatapart|invalid photo attachment|could not read selected image/.test(raw);
+  }, []);
+
+  // Prefer the exact backend validation message (reportController.js) over the
+  // generic "API Request Failed: 400 Bad Request — …" wrapper in banners/alerts.
+  const toFriendlyError = useCallback((e) => {
+    const detail = typeof e?.detail === 'string' && e.detail ? e.detail : '';
+    const backendError = typeof e?.backendError === 'string' && e.backendError ? e.backendError : '';
+    const combined = [detail, backendError && backendError !== detail ? backendError : ''].filter(Boolean).join(' | ');
+    if (combined) return combined;
+    const raw = e?.message || 'Failed to submit report. Please try again.';
+    return raw.replace(/^API Request Failed:\s*\d{3}\s*[^—]*—\s*/, '').trim() || raw;
+  }, []);
+
+  // On mount: refresh offline queue count and push cached drafts to MongoDB when back online
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const pending = await loadPendingReports();
+        if (!cancelled) setPendingCount(pending.length);
+        if (pending.length > 0) {
+          setSyncingPending(true);
+          try {
+            const result = await syncPendingReports(async (payload, photoMeta) => {
+              const res = await submitToApi(payload, photoMeta);
+              const ok = res && (res.success || res.data);
+              if (!ok && res && res.success === false) throw new Error(res.message || 'Sync failed');
+              return res;
+            });
+            if (!cancelled) {
+              setPendingCount(result.remaining);
+              if (result.synced > 0) {
+                const msg = `Synced ${result.synced} offline report${result.synced > 1 ? 's' : ''} to database`;
+                setSuccessMsg(msg);
+                try { AccessibilityInfo.announceForAccessibility(msg); } catch {}
+              }
+            }
+          } finally {
+            if (!cancelled) setSyncingPending(false);
+          }
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [submitToApi]);
+
+  // Load draft on mount — now includes admin-parity fields
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -64,30 +353,73 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
         }
         if (draft.imageUri) setImageUri(draft.imageUri);
         if (draft.exifResult) {
-          // Normalize exifResult: restore Date if string
           let exif = draft.exifResult;
           if (exif.capturedAt && typeof exif.capturedAt === 'string') {
             const d = new Date(exif.capturedAt);
             exif = { ...exif, capturedAt: Number.isNaN(d.getTime()) ? null : d, hasTimestamp: !!d && !Number.isNaN(d.getTime()) };
           }
-          // Ensure hasGps consistent
           const hasGps = typeof exif.latitude === 'number' && typeof exif.longitude === 'number';
           setExifResult({ ...exif, hasGps });
         }
         if (draft.file) setPhotoFile(draft.file);
         if (typeof draft.rating === 'number' && draft.rating >= 1 && draft.rating <= 5) setRating(draft.rating);
         if (typeof draft.notes === 'string') setNotes(draft.notes);
+        if (typeof draft.name === 'string') {
+          setName(draft.name);
+          if (draft.name) setNameTouched(true);
+        }
+        if (draft.condition === 'good' || draft.condition === 'bad') setCondition(draft.condition);
+        if (typeof draft.locationName === 'string') {
+          setLocationName(draft.locationName);
+          if (draft.locationName) setLocationTouched(true);
+        }
+        if (draft.capturedAt) {
+          const d = new Date(draft.capturedAt);
+          if (!Number.isNaN(d.getTime())) setCapturedAt(d.toISOString());
+        }
+        if (draft.manualCoords && typeof draft.manualCoords.latitude === 'number' && typeof draft.manualCoords.longitude === 'number') {
+          setManualCoords(draft.manualCoords);
+        }
       } catch {}
       if (mounted) {
         setDraftLoaded(true);
-        // delay hydration flag to avoid immediate save loop
         setTimeout(() => { hasHydratedRef.current = true; }, 300);
       }
     })();
     return () => { mounted = false; };
   }, []);
 
-  // Save draft on every change after hydration
+  // Auto-fill name from category if not manually touched — mirrors AdminAddReportModal
+  useEffect(() => {
+    if (category && !nameTouched) {
+      setName(`${category} Barrier`);
+    }
+  }, [category, nameTouched]);
+
+  // Auto-fill locationName if not touched — volunteer uses generic fallback (admin uses ward.name)
+  useEffect(() => {
+    if (!locationTouched) {
+      const lat = manualCoords?.latitude ?? exifResult?.latitude ?? deviceLocation?.latitude;
+      const lng = manualCoords?.longitude ?? exifResult?.longitude ?? deviceLocation?.longitude;
+      if (typeof lat === 'number' && typeof lng === 'number') {
+        setLocationName(`Volunteer Report ${lat.toFixed(3)}, ${lng.toFixed(3)}`);
+      } else if (!locationName) {
+        setLocationName('Volunteer Report Location');
+      }
+    }
+  }, [manualCoords, exifResult, deviceLocation, locationTouched, locationName]);
+
+  // Auto-set capturedAt from EXIF or now — mirrors Admin
+  useEffect(() => {
+    if (exifResult?.capturedAt) {
+      const d = exifResult.capturedAt instanceof Date ? exifResult.capturedAt : new Date(exifResult.capturedAt);
+      if (!Number.isNaN(d.getTime())) setCapturedAt(d.toISOString());
+    } else if (imageUri) {
+      // keep existing capturedAt if photo exists but no EXIF timestamp — default already set
+    }
+  }, [exifResult, imageUri]);
+
+  // Save draft on every change after hydration — includes admin-parity fields
   useEffect(() => {
     if (!draftLoaded || !hasHydratedRef.current) return;
     const t = setTimeout(() => {
@@ -106,17 +438,22 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
         category,
         rating,
         notes,
+        name,
+        condition,
+        locationName,
+        capturedAt,
+        manualCoords,
         updatedAt: new Date().toISOString(),
       }).catch(() => {});
     }, 300);
     return () => clearTimeout(t);
-  }, [imageUri, exifResult, category, rating, notes, draftLoaded]);
+  }, [imageUri, exifResult, category, rating, notes, name, condition, locationName, capturedAt, manualCoords, draftLoaded]);
 
   // SPT-301: Fetch nearby existing barriers (250m radius) for Step 1 corroboration
   useEffect(() => {
     if (step !== 1) return;
-    const lat = exifResult?.latitude ?? deviceLocation?.latitude;
-    const lng = exifResult?.longitude ?? deviceLocation?.longitude;
+    const lat = manualCoords?.latitude ?? exifResult?.latitude ?? deviceLocation?.latitude;
+    const lng = manualCoords?.longitude ?? exifResult?.longitude ?? deviceLocation?.longitude;
     if (typeof lat !== 'number' || typeof lng !== 'number') {
       setNearbyReports([]);
       return;
@@ -127,7 +464,6 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       try {
         let allReports = [];
         try {
-          // Try backend with near query, fallback to generic fetch
           let res;
           try {
             res = await getReports({ near: `${lat},${lng}`, radius: 250, limit: 50 });
@@ -136,11 +472,9 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           }
           const data = res?.data || res?.reports || res;
           allReports = Array.isArray(data) ? data : data?.data && Array.isArray(data.data) ? data.data : [];
-          // If API returned paginated wrapper, extract array
           if (!Array.isArray(allReports) && res?.data?.reports) allReports = res.data.reports;
           if (allReports.length === 0) throw new Error('empty');
         } catch {
-          // Offline fallback to mock
           allReports = getMockReports();
         }
         const nearby = allReports
@@ -162,14 +496,22 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     return () => {
       cancelled = true;
     };
-  }, [step, exifResult, deviceLocation]);
+  }, [step, exifResult, deviceLocation, manualCoords]);
 
   const handleCaptured = useCallback((draft) => {
     if (!draft) return;
     if (draft.imageUri) setImageUri(draft.imageUri);
-    if (draft.file) setPhotoFile(draft.file);
-    else if (draft.imageUri && typeof draft.imageUri === 'string' && draft.imageUri.startsWith('blob:')) {
-      // No file provided but we have blob url – will fetch as blob on submit
+    if (draft.file) {
+      // Normalize to proper FormData part: { uri, name, type } for native, File for web
+      // Ensures Unsupported FormDataPart fix per spec
+      const f = draft.file;
+      if (Platform.OS !== 'web' && f && typeof f === 'object' && f.uri) {
+        setPhotoFile({ uri: f.uri, name: f.name || f.fileName || 'barrier.jpg', type: f.type || 'image/jpeg' });
+      } else {
+        setPhotoFile(f);
+      }
+    } else if (draft.imageUri && typeof draft.imageUri === 'string' && draft.imageUri.startsWith('blob:')) {
+      // No file provided but we have blob url – will fetch as blob on submit (web fallback)
     }
     if (draft.exifResult) {
       let exif = draft.exifResult;
@@ -178,9 +520,40 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
         exif = { ...exif, capturedAt: Number.isNaN(d.getTime()) ? null : d };
       }
       setExifResult(exif);
+      // If EXIF already has fallback GPS (from EXIFCaptureScreen), sync manualCoords for map pin
+      if (exif.isFallbackGps && typeof exif.latitude === 'number' && typeof exif.longitude === 'number') {
+        setManualCoords({ latitude: exif.latitude, longitude: exif.longitude });
+      }
     }
     setErrorMsg(null);
   }, []);
+
+  // Auto-fallback: if photo lacks EXIF GPS, silently use device location (soft fallback, never blocks)
+  useEffect(() => {
+    if (!imageUri || !exifResult) return;
+    const needsFallback = !exifResult.hasGps || typeof exifResult.latitude !== 'number' || typeof exifResult.longitude !== 'number';
+    if (needsFallback && !manualCoords && !fallbackLoading) {
+      let cancelled = false;
+      (async () => {
+        try {
+          const coords = await getCurrentLocation();
+          if (!cancelled && coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
+            setManualCoords({ latitude: coords.latitude, longitude: coords.longitude });
+            setExifResult((prev) => ({
+              latitude: coords.latitude,
+              longitude: coords.longitude,
+              altitude: coords.altitude ?? prev?.altitude ?? null,
+              capturedAt: prev?.capturedAt ?? new Date(),
+              hasGps: true,
+              hasTimestamp: !!(prev?.hasTimestamp || prev?.capturedAt),
+              isFallbackGps: true,
+            }));
+          }
+        } catch {}
+      })();
+      return () => { cancelled = true; };
+    }
+  }, [imageUri, exifResult, manualCoords, fallbackLoading, getCurrentLocation]);
 
   const handleSelectCategory = useCallback((val) => {
     setCategory(val);
@@ -201,6 +574,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           hasGps: true,
           hasTimestamp: !!(prev?.hasTimestamp || prev?.capturedAt),
         }));
+        setManualCoords({ latitude: coords.latitude, longitude: coords.longitude });
         try { announce && announce('Current device location applied'); } catch {}
       } else {
         setErrorMsg('Unable to retrieve current location. Please enable GPS.');
@@ -211,6 +585,19 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       setFallbackLoading(false);
     }
   }, [getCurrentLocation, announce]);
+
+  const handleMapPick = useCallback((lat, lng) => {
+    setManualCoords({ latitude: lat, longitude: lng });
+    setExifResult((prev) => ({
+      latitude: lat,
+      longitude: lng,
+      altitude: prev?.altitude ?? null,
+      capturedAt: prev?.capturedAt ?? new Date(),
+      hasGps: true,
+      hasTimestamp: !!(prev?.hasTimestamp || prev?.capturedAt),
+    }));
+    setErrorMsg(null);
+  }, []);
 
   const hasGps = !!(exifResult && exifResult.hasGps && typeof exifResult.latitude === 'number' && typeof exifResult.longitude === 'number');
   const hasPhoto = !!imageUri;
@@ -239,7 +626,6 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
   const handleSubmit = useCallback(async () => {
     setErrorMsg(null);
     setSuccessMsg(null);
-    // Validate required fields with palette.errorBg container
     if (!category) {
       setErrorMsg('Category is required. Please select a barrier type in Step 1.');
       setStep(1);
@@ -256,38 +642,45 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       return;
     }
 
-    // Resolve fallback coordinates for EXIF transform
+    // Resolve fallback coordinates — mirrors AdminAddReportModal fallback chain: manual -> exif -> deviceLocation -> fallbackCoordinates -> default
     let fallbackCoordinates = null;
     if (deviceLocation && typeof deviceLocation.latitude === 'number' && typeof deviceLocation.longitude === 'number') {
       fallbackCoordinates = { latitude: deviceLocation.latitude, longitude: deviceLocation.longitude };
     }
-
-    // If no EXIF GPS, try to acquire live location for fallback
-    let latitude = exifResult?.latitude;
-    let longitude = exifResult?.longitude;
-    if (!hasGps && !fallbackCoordinates) {
+    if (manualCoords && typeof manualCoords.latitude === 'number') {
+      fallbackCoordinates = { ...manualCoords };
+    }
+    let latitude = manualCoords?.latitude ?? exifResult?.latitude;
+    let longitude = manualCoords?.longitude ?? exifResult?.longitude;
+    if ((!hasGps && !manualCoords) && !fallbackCoordinates) {
       try {
         setFallbackLoading(true);
         const coords = await getCurrentLocation();
-        if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
+        if (coords && typeof coords.latitude === 'number') {
           fallbackCoordinates = { latitude: coords.latitude, longitude: coords.longitude };
-          latitude = coords.latitude;
-          longitude = coords.longitude;
+          if (typeof latitude !== 'number') latitude = coords.latitude;
+          if (typeof longitude !== 'number') longitude = coords.longitude;
         }
       } catch {}
       setFallbackLoading(false);
     }
+    // Last fallback: default Colombo center if still missing
     if (typeof latitude !== 'number' || typeof longitude !== 'number') {
       if (fallbackCoordinates) {
         latitude = fallbackCoordinates.latitude;
         longitude = fallbackCoordinates.longitude;
       } else {
-        setErrorMsg('Location is required. Capture GPS photo or tap Use Current Device Location.');
-        return;
+        latitude = 6.9271;
+        longitude = 79.8612;
+        fallbackCoordinates = { latitude, longitude };
       }
     }
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+      setErrorMsg('Location is required. Use Current Device Location or pick on map.');
+      return;
+    }
 
-    // Transform EXIF + form data using helper with fallbackCoordinates (Prompt 4)
+    // Transform EXIF + form data using helper with fallbackCoordinates — same as admin
     const barrierFields = toBarrierReportFields(
       {
         latitude: exifResult?.latitude ?? latitude,
@@ -303,89 +696,142 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     const finalLat = barrierFields.coordinates.latitude ?? latitude;
     const finalLng = barrierFields.coordinates.longitude ?? longitude;
 
+    // Admin-parity resolution for name, locationName, condition, capturedAt
+    const resolvedName = (name && name.trim()) || (category ? `${category} Barrier` : 'Barrier Report');
+    const resolvedLocationName = (locationName && locationName.trim()) || `Volunteer Report ${finalLat.toFixed(3)}, ${finalLng.toFixed(3)}`;
+    const resolvedCondition = condition || 'bad';
+    const resolvedCapturedAt = (() => {
+      if (capturedAt) {
+        const d = new Date(capturedAt);
+        if (!Number.isNaN(d.getTime())) return d.toISOString();
+      }
+      if (barrierFields.capturedAt instanceof Date) return barrierFields.capturedAt.toISOString();
+      if (barrierFields.capturedAt) return String(barrierFields.capturedAt);
+      return new Date().toISOString();
+    })();
+
+    const currentUser = authService.getCurrentUser();
+    const reporterId = currentUser?._id || currentUser?.id || undefined;
+
+    // MongoDB-aligned document — matches BarrierReport schema + reportController.js expectations.
+    // Direct persist target: HTTP POST /api/reports (multipart `photo` or JSON `photoUrl`).
     const exifMetadata = {
       latitude: finalLat,
       longitude: finalLng,
       altitude: exifResult?.altitude ?? null,
-      timestamp: barrierFields.capturedAt,
+      timestamp: resolvedCapturedAt,
+      capturedAt: resolvedCapturedAt,
     };
-
-    const volunteerName = `${category} Barrier`;
-    const volunteerLocationName = deviceLocation ? `Volunteer Report ${finalLat.toFixed(3)}, ${finalLng.toFixed(3)}` : 'Volunteer Report Location';
     const payload = {
-      name: volunteerName,
-      locationName: volunteerLocationName,
-      condition: 'bad',
-      coordinates: { latitude: finalLat, longitude: finalLng },
-      latitude: finalLat,
-      longitude: finalLng,
-      photoUrl: photoFile ? undefined : imageUri,
+      name: resolvedName,
+      locationName: resolvedLocationName,
       category,
       rating,
+      condition: resolvedCondition,
+      triageStatus: 'pending',
       notes: notes?.trim() || undefined,
+      photoUrl: photoFile ? undefined : imageUri,
+      coordinates: { latitude: finalLat, longitude: finalLng },
+      location: { type: 'Point', coordinates: [finalLng, finalLat] },
+      latitude: finalLat,
+      longitude: finalLng,
       exifMetadata,
-      capturedAt: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? new Date().toISOString(),
-      timestamp: barrierFields.capturedAt instanceof Date ? barrierFields.capturedAt.toISOString() : barrierFields.capturedAt ?? new Date().toISOString(),
+      capturedAt: resolvedCapturedAt,
+      timestamp: resolvedCapturedAt,
+      reporterId,
     };
+    // Spec-formatted image part for multipart body (fixes Unsupported FormDataPart)
+    const photoMeta = photoFile
+      ? (Platform.OS !== 'web'
+          ? { uri: photoFile.uri || photoFile, name: photoFile.name || photoFile.fileName || 'barrier.jpg', type: photoFile.type || 'image/jpeg' }
+          : photoFile)
+      : null;
 
-    setSubmitting(true);
-    try {
-      let res;
-      // Prefer multipart file upload when we have a File (fixes blob: local URL issue)
-      if (photoFile) {
-        res = await createReport(payload, photoFile);
-      } else if (imageUri && typeof imageUri === 'string' && imageUri.startsWith('blob:')) {
-        try {
-          const blobResp = await fetch(imageUri);
-          const blob = await blobResp.blob();
-          const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
-          res = await createReport(payload, file);
-        } catch {
-          res = await createBarrierReport(payload);
-        }
-      } else {
-        res = await createBarrierReport(payload);
-      }
-      const ok = res && (res.success || res.data);
-      if (!ok && res && res.success === false) throw new Error(res.message || 'Submission failed');
-
-      await clearVolunteerDraft();
-      const successText = 'Report submitted successfully';
-      setSuccessMsg(successText);
-      // Accessibility announce
-      try {
-        AccessibilityInfo.announceForAccessibility(successText);
-      } catch {}
-      try { announce && announce(successText); } catch {}
-
-      // Reset wizard state
+    const resetWizard = async () => {
       setCategory(null);
       setImageUri(null);
       setExifResult(null);
       setPhotoFile(null);
       setRating(null);
       setNotes('');
+      setName('');
+      setNameTouched(false);
+      setLocationName('');
+      setLocationTouched(false);
+      setCondition('bad');
+      setCapturedAt(new Date().toISOString());
+      setManualCoords(null);
+      setShowMapPicker(false);
       setStep(1);
       setErrorMsg(null);
+      try { await clearVolunteerDraft(); } catch {}
+      try {
+        const remaining = await loadPendingReports();
+        setPendingCount(remaining.length);
+      } catch {}
+    };
 
-      // Navigate back to main map / history tab without losing outer navigation state
+    const handleSuccess = async (res) => {
+      await clearVolunteerDraft();
+      const successText = 'Report submitted successfully — saved to database';
+      setSuccessMsg(successText);
+      try { AccessibilityInfo.announceForAccessibility(successText); } catch {}
+      try { announce && announce(successText); } catch {}
+      try { Alert.alert('Report submitted', 'Your barrier report was saved to the database.'); } catch {}
+      await resetWizard();
       const doNavigate = onSuccess || onNavigateToMap || navigation?.navigate;
       if (typeof doNavigate === 'function') {
-        // Support both callback and navigation prop
         try {
           if (onSuccess) onSuccess(res);
           if (onNavigateToMap) setTimeout(() => onNavigateToMap(), 600);
           else if (navigation?.navigate) setTimeout(() => navigation.navigate('osm_canvas'), 600);
         } catch {}
       }
+    };
+
+    setSubmitting(true);
+    try {
+      // Direct MongoDB persist: POST /api/reports
+      const res = await submitToApi(payload, photoMeta);
+      const ok = res && (res.success || res.data);
+      if (!ok && res && res.success === false) throw new Error(res.message || 'Submission failed');
+      await handleSuccess(res);
     } catch (e) {
-      const msg = e?.message || 'Failed to submit report. Please try again.';
+      // Photo shaping failure → actionable message, never queued (would fail every retry)
+      if (isFormDataError(e)) {
+        const photoMsg = "Couldn't attach the photo — please retake or pick another image, then submit again.";
+        setErrorMsg(photoMsg);
+        try { AccessibilityInfo.announceForAccessibility(`Error: ${photoMsg}`); } catch {}
+        try { Alert.alert('Photo attachment failed', photoMsg); } catch {}
+        return;
+      }
+      // Permanent server-side failures (e.g. Cloudinary not configured, 500) will never
+      // succeed on retry — surface immediately instead of queueing offline forever.
+      const serverPermanent = /not configured|photo upload service/i.test(
+        `${e?.detail || ''} ${e?.backendError || ''} ${e?.message || ''}`
+      );
+      // Offline → cache full schema payload in storage.js queue, keep draft, sync later
+      if (isNetworkError(e) && !serverPermanent) {
+        try {
+          await queuePendingReport({ payload, photoMeta, imageUri, createdAt: new Date().toISOString() });
+          const remaining = await loadPendingReports();
+          setPendingCount(remaining.length);
+        } catch {}
+        const queuedMsg = 'No connection — report saved offline and will sync to the database automatically.';
+        setSuccessMsg(queuedMsg);
+        try { AccessibilityInfo.announceForAccessibility(queuedMsg); } catch {}
+        try { announce && announce(queuedMsg); } catch {}
+        try { Alert.alert('Saved offline', 'No connection. Your report is cached locally and will sync when you are back online.'); } catch {}
+        return;
+      }
+      const msg = toFriendlyError(e);
       setErrorMsg(msg);
       try { AccessibilityInfo.announceForAccessibility(`Error: ${msg}`); } catch {}
+      try { Alert.alert('Submission failed', msg); } catch {}
     } finally {
       setSubmitting(false);
     }
-  }, [category, imageUri, photoFile, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, announce, onSuccess, onNavigateToMap, navigation]);
+  }, [category, imageUri, photoFile, rating, hasGps, exifResult, deviceLocation, getCurrentLocation, notes, name, locationName, condition, capturedAt, manualCoords, announce, onSuccess, onNavigateToMap, navigation, submitToApi, isNetworkError, isFormDataError, toFriendlyError]);
 
   const handleReset = useCallback(async () => {
     setCategory(null);
@@ -394,6 +840,14 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     setPhotoFile(null);
     setRating(null);
     setNotes('');
+    setName('');
+    setNameTouched(false);
+    setLocationName('');
+    setLocationTouched(false);
+    setCondition('bad');
+    setCapturedAt(new Date().toISOString());
+    setManualCoords(null);
+    setShowMapPicker(false);
     setStep(1);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -410,7 +864,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
-      {/* Progress Indicator */}
+      {/* Progress Indicator — preserved 3-step */}
       <View
         style={styles.progressWrap}
         accessible
@@ -458,7 +912,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           Tag accessibility obstacles in 3 taps. Data is saved locally until submitted.
         </Text>
 
-        {/* Step 1: Category */}
+        {/* Step 1: Category — preserved */}
         {step === 1 && (
           <View accessible accessibilityRole="radiogroup" accessibilityLabel="Barrier category selection">
             <Text {...textProps} style={[styles.sectionLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
@@ -493,7 +947,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
                 );
               })}
             </View>
-            {/* SPT-301: Nearby existing barriers — corroborate instead of duplicate */}
+            {/* SPT-301: Nearby existing barriers — corroborate instead of duplicate — PRESERVED */}
             {step === 1 && loadingNearby && (
               <View style={styles.nearbyLoading} accessible accessibilityLabel="Loading nearby barriers">
                 <ActivityIndicator size="small" color={palette.primary} />
@@ -515,8 +969,8 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
                 {nearbyReports.map((report) => {
                   const rLat = report.coordinates?.latitude ?? report.location?.coordinates?.[1];
                   const rLng = report.coordinates?.longitude ?? report.location?.coordinates?.[0];
-                  const curLat = exifResult?.latitude ?? deviceLocation?.latitude;
-                  const curLng = exifResult?.longitude ?? deviceLocation?.longitude;
+                  const curLat = manualCoords?.latitude ?? exifResult?.latitude ?? deviceLocation?.latitude;
+                  const curLng = manualCoords?.longitude ?? exifResult?.longitude ?? deviceLocation?.longitude;
                   const dist = typeof rLat === 'number' && typeof curLat === 'number' ? Math.round(calculateHaversineDistance(curLat, curLng, rLat, rLng)) : null;
                   const currentUser = authService.getCurrentUser();
                   const userId = currentUser?.id || currentUser?._id || 'mock-user';
@@ -537,7 +991,6 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
                         isCorroboratedInitial={isCorroborated}
                         onSuccess={(updated) => {
                           const newCount = updated?.corroborationCount ?? (report.corroborationCount || 0) + 1;
-                          // Update local list so pill reflects new count without refresh
                           setNearbyReports((prev) => prev.map((r) => (r._id === report._id ? { ...r, corroborationCount: newCount, upvotedBy: [...(r.upvotedBy || []), userId] } : r)));
                           setCorroboratedExistingId(report._id);
                           setSuccessMsg(`Confirmed existing barrier ${report._id}. No duplicate needed — audit complete.`);
@@ -564,58 +1017,183 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           </View>
         )}
 
-        {/* Step 2: Photo & EXIF */}
+        {/* Step 2: Photo & EXIF + Enhanced Location Selector (Admin parity) */}
         {step === 2 && (
           <View>
             <Text {...textProps} style={[styles.sectionLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
               2. Capture Photo &amp; EXIF
             </Text>
             <View style={styles.exifEmbedWrap}>
-              <EXIFCaptureScreen onCaptured={handleCaptured} onBack={handleBack} preserveDraftOnBack />
+              <EXIFCaptureScreen onCaptured={handleCaptured} onBack={handleBack} preserveDraftOnBack initialUri={imageUri} initialExifResult={exifResult} />
             </View>
-            {/* GPS fallback */}
-            {hasPhoto && !hasGps && (
-              <View style={[styles.fallbackBox, { backgroundColor: palette.errorBg, borderColor: palette.error, borderWidth }]}>
-                <Text {...textProps} style={[styles.fallbackText, getTextStyle('sm', { isHighContrast }), { color: palette.error }]}>
-                  No GPS in photo. Use device location as fallback.
-                </Text>
-                <Button
-                  title={fallbackLoading ? 'Fetching location…' : 'Use Current Device Location'}
+            {/* Enhanced Location Selector — mirrors AdminAddReportModal Section 5 */}
+            <View style={[styles.locationSelectorCard, { backgroundColor: palette.surface, borderColor: palette.cardBorder, borderWidth }]}>
+              <Text {...textProps} style={[styles.fieldLabel, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>
+                Location *
+              </Text>
+              <View style={styles.locationBtnRow}>
+                <TouchableOpacity
+                  style={[styles.locationBtn, styles.locationBtnPrimary, { borderColor: '#0B3D2E', backgroundColor: '#0B3D2E' }]}
                   onPress={handleUseCurrentLocation}
-                  disabled={fallbackLoading}
-                  accessibilityLabel="Use current device location"
-                  accessibilityHint="Fetches GPS from device when photo has no EXIF location"
-                  style={styles.fallbackBtn}
-                />
-                {deviceLocation && (
-                  <Text {...textProps} style={[styles.fallbackHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
-                    Device: {formatCoord(deviceLocation.latitude)}, {formatCoord(deviceLocation.longitude)}
+                  disabled={fallbackLoading || submitting}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Use current GPS location"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  {fallbackLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Feather name="crosshair" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.locationBtnPrimaryText}>Use Current GPS</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.locationBtn, styles.locationBtnSecondary, { borderColor: palette.textPrimary, backgroundColor: showMapPicker ? palette.textPrimary : palette.surface }, showMapPicker && { backgroundColor: palette.textPrimary }]}
+                  onPress={() => setShowMapPicker((v) => !v)}
+                  disabled={submitting}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Select location on map"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Feather name="map" size={16} color={showMapPicker ? '#FFFFFF' : palette.textPrimary} style={{ marginRight: 6 }} />
+                  <Text style={[styles.locationBtnSecondaryText, { color: showMapPicker ? '#FFFFFF' : palette.textPrimary }]}>{showMapPicker ? 'Hide Map' : 'Pick on Map'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {showMapPicker && (
+                <View style={styles.miniMapContainer}>
+                  <MiniMapPicker
+                    center={
+                      manualCoords ||
+                      (hasGps ? { latitude: exifResult.latitude, longitude: exifResult.longitude } : null) ||
+                      deviceLocation ||
+                      { latitude: 6.9271, longitude: 79.8612 }
+                    }
+                    selected={manualCoords || (hasGps ? { latitude: exifResult.latitude, longitude: exifResult.longitude } : null)}
+                    onPick={handleMapPick}
+                  />
+                  <Text {...textProps} style={[styles.miniMapHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
+                    Tap map to place pin • Nudge to adjust • EXIF GPS extracted automatically
                   </Text>
-                )}
+                </View>
+              )}
+
+              {(() => {
+                const display = manualCoords || (hasGps ? { latitude: exifResult.latitude, longitude: exifResult.longitude } : deviceLocation) || null;
+                if (!display || typeof display.latitude !== 'number') return null;
+                return (
+                  <View style={[styles.coordBadge, { backgroundColor: isHighContrast ? palette.surface : '#ECFDF5', borderColor: isHighContrast ? palette.borderStrong : '#A7F3D0', borderWidth: 1 }]}>
+                    <Feather name="navigation" size={12} color="#059669" style={{ marginRight: 6 }} />
+                    <Text {...textProps} style={[styles.coordBadgeText, getTextStyle('xs', { isHighContrast }), { color: isHighContrast ? palette.textPrimary : '#065F46' }]}>
+                      Selected: {formatCoord(display.latitude)}, {formatCoord(display.longitude)}
+                    </Text>
+                    {manualCoords && <View style={styles.coordBadgeDot} />}
+                  </View>
+                );
+              })()}
+              {!hasGps && !manualCoords && !deviceLocation && (
+                <Text {...textProps} style={[styles.locationFallbackHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
+                  No GPS yet — will auto-fallback to device location
+                </Text>
+              )}
+            </View>
+
+            {/* Consolidated location status — single neutral line (child EXIF badges removed;
+                extraction runs silently). Never blocks: auto-fallback attaches device location. */}
+            {hasPhoto && (hasGps || manualCoords) && (
+              <View style={[styles.badge, { backgroundColor: palette.surfaceAlt, borderColor: palette.cardBorder, borderWidth }]}>
+                <Text {...textProps} style={[styles.badgeTitle, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>
+                  Location attached
+                </Text>
+                <Text {...textProps} style={[styles.badgeDetail, getTextStyle('sm', { isHighContrast }), { color: palette.textMuted }]}>
+                  {formatCoord((manualCoords || exifResult).latitude)}, {formatCoord((manualCoords || exifResult).longitude)}
+                </Text>
               </View>
             )}
-            {hasPhoto && hasGps && (
-              <View style={[styles.badge, { backgroundColor: isHighContrast ? palette.surface : '#ECFDF5', borderColor: isHighContrast ? palette.borderStrong : '#A7F3D0', borderWidth }]}>
-                <Text {...textProps} style={[styles.badgeTitle, getTextStyle('sm', { isHighContrast }), { color: isHighContrast ? palette.textPrimary : '#065F46' }]}>
-                  ✓ Location ready
-                </Text>
-                <Text {...textProps} style={[styles.badgeDetail, getTextStyle('sm', { isHighContrast }), { color: isHighContrast ? palette.textPrimary : '#047857' }]}>
-                  {formatCoord(exifResult.latitude)}, {formatCoord(exifResult.longitude)}
-                </Text>
-              </View>
+            {hasPhoto && !hasGps && !manualCoords && (
+              <Text {...textProps} style={[styles.locationFallbackHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted, marginTop: 8 }]}>
+                Locating… device location will be attached automatically — you can continue.
+              </Text>
             )}
           </View>
         )}
 
-        {/* Step 3: Audit & Submit */}
+        {/* Step 3: Audit & Submit — now includes Admin-parity fields: Name, Condition, Rating, Notes */}
         {step === 3 && (
           <View>
             <Text {...textProps} style={[styles.sectionLabel, getTextStyle('base', { isHighContrast }), { color: palette.textPrimary }]}>
               3. Audit &amp; Submit
             </Text>
 
-            {/* Star Rating */}
-            <View accessible accessibilityRole="radiogroup" accessibilityLabel="Severity rating 1 to 5">
+            {/* 3a. Barrier / Place Name — Admin Section 1 */}
+            <Text {...textProps} style={[styles.fieldLabel, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>
+              Barrier / Place Name
+            </Text>
+            <View style={[styles.sleekInputCard, { backgroundColor: palette.surface, borderColor: palette.cardBorder, borderWidth }]}>
+              <View style={[styles.inputWrapper, { backgroundColor: palette.surfaceAlt, borderColor: palette.border }]}>
+                <Feather name="tag" size={16} color={palette.textPrimary} style={{ marginRight: 8 }} />
+                <TextInput
+                  value={name}
+                  onChangeText={(t) => {
+                    setName(t);
+                    setNameTouched(true);
+                  }}
+                  placeholder={category ? `${category} Barrier` : 'e.g. Main Entrance Ramp'}
+                  placeholderTextColor={palette.textMuted}
+                  style={[styles.inputField, { color: palette.textPrimary }]}
+                  accessibilityLabel="Barrier name"
+                  accessibilityHint="Enter place or barrier name, auto-fills from category"
+                  maxLength={100}
+                  returnKeyType="next"
+                />
+                {name.length > 0 && (
+                  <TouchableOpacity onPress={() => { setName(''); setNameTouched(true); }} style={styles.inputClear} accessibilityLabel="Clear barrier name">
+                    <Feather name="x-circle" size={16} color={palette.textMuted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text {...textProps} style={[styles.inputHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>{name.length}/100 • Auto: "{category ? `${category} Barrier` : 'Barrier Report'}"</Text>
+            </View>
+
+            {/* 3b. Condition Toggle — Admin Section 3 */}
+            <Text {...textProps} style={[styles.fieldLabel, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary, marginTop: 14 }]}>
+              Condition *
+            </Text>
+            <View style={styles.conditionRow}>
+              {[
+                { val: 'bad', label: 'Bad / Issue', icon: 'alert-triangle', color: '#DC2626', bg: '#FEF2F2', border: '#FCA5A5' },
+                { val: 'good', label: 'Good / Functional', icon: 'check-circle', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+              ].map((opt) => {
+                const selected = condition === opt.val;
+                return (
+                  <TouchableOpacity
+                    key={opt.val}
+                    style={[
+                      styles.conditionChip,
+                      { backgroundColor: selected ? opt.bg : palette.surface, borderColor: selected ? opt.color : palette.border },
+                      selected && { borderWidth: 2 },
+                    ]}
+                    onPress={() => setCondition(opt.val)}
+                    activeOpacity={0.7}
+                    accessibilityRole="radio"
+                    accessibilityLabel={opt.label}
+                    accessibilityState={{ selected }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Feather name={opt.icon} size={16} color={selected ? opt.color : palette.textMuted} />
+                    <Text style={[styles.conditionText, { color: selected ? opt.color : palette.textMuted, fontWeight: selected ? '800' : '600' }]}>{opt.label}</Text>
+                    {selected && <View style={[styles.conditionDot, { backgroundColor: opt.color }]} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* 3c. Severity Rating — preserved + admin parity (Section 6) */}
+            <View accessible accessibilityRole="radiogroup" accessibilityLabel="Severity rating 1 to 5" style={{ marginTop: 14 }}>
               <Text {...textProps} style={[styles.fieldLabel, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>
                 Severity Rating *
               </Text>
@@ -656,7 +1234,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
               )}
             </View>
 
-            {/* Notes */}
+            {/* 3d. Notes — preserved (Admin Section 7) */}
             <View style={styles.notesWrap}>
               <Input
                 label="Notes (optional)"
@@ -676,17 +1254,20 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
               </Text>
             </View>
 
-            {/* Location preview */}
+            {/* Location preview — enhanced with admin-parity details */}
             <View style={[styles.previewBadge, { backgroundColor: palette.surfaceAlt, borderColor: palette.cardBorder, borderWidth }]}>
               <Text {...textProps} style={[styles.previewLabel, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
-                LOCATION PREVIEW
+                SUBMISSION PREVIEW
               </Text>
               <Text {...textProps} style={[styles.previewValue, getTextStyle('sm', { isHighContrast }), { color: palette.textPrimary }]}>
-                {hasGps ? `${formatCoord(exifResult.latitude)}, ${formatCoord(exifResult.longitude)}` : deviceLocation ? `${formatCoord(deviceLocation.latitude)}, ${formatCoord(deviceLocation.longitude)} (device)` : 'No location yet – complete step 2'}
+                {hasGps || manualCoords ? `${formatCoord((manualCoords || exifResult).latitude)}, ${formatCoord((manualCoords || exifResult).longitude)}` : deviceLocation ? `${formatCoord(deviceLocation.latitude)}, ${formatCoord(deviceLocation.longitude)} (device)` : 'No location yet – complete step 2'}
               </Text>
-              {category && (
+              <Text {...textProps} style={[styles.previewMeta, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
+                Name: {name || (category ? `${category} Barrier` : '—')} • Category: {category || '—'} • Condition: {condition} • Photo: {hasPhoto ? '✓' : '—'} • Rating: {rating ?? '—'}
+              </Text>
+              {capturedAt && (
                 <Text {...textProps} style={[styles.previewMeta, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
-                  Category: {category} • Photo: {hasPhoto ? '✓' : '—'} • Rating: {rating ?? '—'}
+                  Captured: {new Date(capturedAt).toLocaleString()}
                 </Text>
               )}
             </View>
@@ -712,12 +1293,24 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           <View style={styles.loadingRow} accessible accessibilityLabel="Submitting report loading">
             <ActivityIndicator color={palette.primary} accessibilityLabel="Loading" />
             <Text {...textProps} style={[styles.loadingText, getTextStyle('sm', { isHighContrast }), { color: palette.textSecondary }]}>
-              Submitting report…
+              Submitting report to database…
             </Text>
           </View>
         )}
+        {(pendingCount > 0 || syncingPending) && (
+          <View style={[styles.pendingBox, { backgroundColor: isHighContrast ? palette.surface : '#FFFBEB', borderColor: isHighContrast ? palette.borderStrong : '#FCD34D', borderWidth }]} accessible accessibilityLiveRegion="polite" accessibilityRole="alert">
+            <Text {...textProps} style={[styles.pendingText, getTextStyle('sm', { isHighContrast }), { color: isHighContrast ? palette.textPrimary : '#92400E' }]}>
+              {syncingPending ? 'Syncing offline reports to database…' : `${pendingCount} offline report${pendingCount > 1 ? 's' : ''} cached — will sync to MongoDB when online.`}
+            </Text>
+            {!syncingPending && pendingCount > 0 && (
+              <TouchableOpacity onPress={syncOfflineQueue} disabled={submitting || syncingPending} accessibilityRole="button" accessibilityLabel="Sync offline reports now" style={styles.pendingSyncBtn}>
+                <Text style={styles.pendingSyncText}>Sync now</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
-        {/* Navigation */}
+        {/* Navigation — preserved */}
         <View style={styles.navRow}>
           {step > 1 ? (
             <Button title="Back" onPress={handleBack} variant="secondary" disabled={submitting} accessibilityLabel="Go back" accessibilityHint="Returns to previous step" style={styles.navBtn} />
@@ -752,8 +1345,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           )}
         </View>
 
-        {/* Global fallback hint on step 3 if no GPS */}
-        {step === 3 && !hasGps && !hasPhoto && (
+        {step === 3 && !hasGps && !manualCoords && !hasPhoto && (
           <Text {...textProps} style={[styles.hintText, getTextStyle('xs', { isHighContrast }), { color: palette.error }]}>
             Complete step 2 photo first.
           </Text>
@@ -812,6 +1404,10 @@ const styles = StyleSheet.create({
   errorText: { fontWeight: '600' },
   successBox: { borderRadius: 10, padding: 10, marginTop: 12 },
   successText: { fontWeight: '700' },
+  pendingBox: { borderRadius: 10, padding: 10, marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  pendingText: { fontWeight: '700', flex: 1 },
+  pendingSyncBtn: { backgroundColor: '#0B3D2E', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, minHeight: 40, justifyContent: 'center' },
+  pendingSyncText: { color: '#FFFFFF', fontWeight: '800', fontSize: 12 },
   loadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12 },
   loadingText: { marginLeft: 8 },
   navRow: { flexDirection: 'row', gap: 12, marginTop: 16, alignItems: 'center' },
@@ -830,6 +1426,162 @@ const styles = StyleSheet.create({
   nearbyItemNotes: { lineHeight: 16 },
   corroboratedHintBox: { borderRadius: 10, padding: 10, marginTop: 8 },
   corroboratedHint: { fontWeight: '700', textAlign: 'center', lineHeight: 18 },
+  // Admin-parity additions
+  sleekInputCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    minHeight: 48,
+  },
+  inputField: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0F172A',
+    paddingVertical: 10,
+  },
+  inputClear: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  inputHint: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 4,
+    fontWeight: '500',
+  },
+  conditionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  conditionChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    gap: 6,
+    minHeight: 48,
+  },
+  conditionText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  conditionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 2,
+  },
+  locationSelectorCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+    marginTop: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  locationBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  locationBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    minHeight: 48,
+    gap: 6,
+  },
+  locationBtnPrimary: {
+    backgroundColor: '#0B3D2E',
+    borderColor: '#0B3D2E',
+  },
+  locationBtnPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  locationBtnSecondary: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#0F172A',
+  },
+  locationBtnSecondaryText: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  miniMapContainer: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    gap: 6,
+  },
+  miniMapHint: {
+    fontSize: 10,
+    color: '#64748B',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  coordBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  coordBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#065F46',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  coordBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+    marginLeft: 6,
+  },
+  locationFallbackHint: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
 });
 
 export default ThreeTapReportScreen;

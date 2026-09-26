@@ -64,13 +64,13 @@ exports.createReport = async (req, res) => {
      if (!capturedAt) capturedAt = timestamp || photoTakenAt;
      // Normalize location alias
      if (!locationName && locationAlias && typeof locationAlias === 'string') locationName = locationAlias;
-     // Normalize condition (issue vs good): allow 'issue' as synonym for 'bad'
-     if (condition && typeof condition === 'string') {
-       const c = condition.trim().toLowerCase();
-       if (c === 'issue' || c === 'bad' || c === 'poor' || c === 'blocked') condition = 'bad';
-       else if (c === 'good' || c === 'ok' || c === 'accessible') condition = 'good';
-       else condition = c;
-     }
+      // Normalize condition (issue vs good): allow 'issue'/'damaged' as synonyms for 'bad'
+      if (condition && typeof condition === 'string') {
+        const c = condition.trim().toLowerCase();
+        if (c === 'issue' || c === 'bad' || c === 'poor' || c === 'blocked' || c === 'damaged' || c === 'critical' || c === 'broken') condition = 'bad';
+        else if (c === 'good' || c === 'ok' || c === 'accessible' || c === 'functional') condition = 'good';
+        else condition = c;
+      }
 
      // Robust coordinate handling: support flat latitude/longitude (device fallback) + stringified forms
      // Frontend ThreeTapReportScreen sends coordinates object, but also ensure flat fields work when EXIF GPS missing
@@ -286,6 +286,10 @@ exports.createReport = async (req, res) => {
           });
         }
         sanitizedExif.altitude = exifMetadata.altitude;
+      }
+      // Accept exifMetadata.capturedAt as alias for exifMetadata.timestamp (frontend sends both)
+      if ((exifMetadata.timestamp === undefined || exifMetadata.timestamp === null) && exifMetadata.capturedAt !== undefined && exifMetadata.capturedAt !== null) {
+        exifMetadata.timestamp = exifMetadata.capturedAt;
       }
       if (exifMetadata.timestamp !== undefined && exifMetadata.timestamp !== null) {
         const ts = new Date(exifMetadata.timestamp);
