@@ -16,6 +16,7 @@ import {
   Text,
   TextInput,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
@@ -31,15 +32,25 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
   const [statusMessage, setStatusMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('ALL'); // 'ALL' | 'ADMIN' | 'REGULAR_USER'
+  const [loadError, setLoadError] = useState(null);
 
   const loadUsers = useCallback(async () => {
+    setLoadError(null);
     try {
       const list = await authService.getUsers();
       if (Array.isArray(list)) {
         setUsers(list);
+      } else {
+        setLoadError('The server returned an unexpected user directory.');
       }
-    } catch (_err) {
-      console.warn('[UserManagement] Error fetching user directory');
+    } catch (err) {
+      // Distinguish "denied / offline" from "genuinely no users" so the UI
+      // never claims an empty directory when the request actually failed.
+      setLoadError(
+        err?.status === 403
+          ? 'Your municipal clearance does not permit viewing the user directory.'
+          : err?.message || 'Could not reach the server to load the user directory.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -144,8 +155,21 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
     }
   };
 
+  // Standalone view is hosted directly by the admin scaffold (no parent ScrollView),
+  // so it must scroll itself or the user list is unreachable on short screens.
+  // Inline/hub usage is already inside the scaffold ScrollView — never nest there.
+  const Root = isStandalone ? ScrollView : View;
+  const rootProps = isStandalone
+    ? {
+        style: styles.standaloneScroll,
+        contentContainerStyle: styles.standaloneContainer,
+        showsVerticalScrollIndicator: false,
+        keyboardShouldPersistTaps: 'handled',
+      }
+    : { style: styles.container };
+
   return (
-    <View style={[styles.container, isStandalone && styles.standaloneContainer]}>
+    <Root {...rootProps}>
       {/* Optional Standalone Header with Back Button */}
       {isStandalone && (
         <View style={styles.standaloneHeader}>
@@ -270,6 +294,15 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
             <ActivityIndicator color="#0B3D2E" size="small" />
             <Text style={styles.loadingText}>Loading registered users...</Text>
           </View>
+        ) : loadError ? (
+          <View style={styles.emptyBox}>
+            <Feather name="alert-triangle" size={24} color="#DC2626" />
+            <Text style={styles.emptyText}>{loadError}</Text>
+            <TouchableOpacity onPress={loadUsers} style={styles.retryButton} accessibilityRole="button">
+              <Feather name="refresh-cw" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
         ) : filteredUsers.length === 0 ? (
           <View style={styles.emptyBox}>
             <Feather name="user-x" size={24} color="#94A3B8" />
@@ -305,7 +338,9 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
 
                     <View style={{ flex: 1 }}>
                       <View style={styles.nameRow}>
-                        <Text style={styles.userName}>{item.name}</Text>
+                        <Text style={styles.userName} numberOfLines={2}>
+                          {item.name}
+                        </Text>
                         {isSuper ? (
                           <View style={styles.superBadge}>
                             <Text style={styles.superBadgeText}>SUPER ADMIN</Text>
@@ -321,7 +356,9 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
                         )}
                       </View>
 
-                      <Text style={styles.userEmail}>{item.email}</Text>
+                      <Text style={styles.userEmail} numberOfLines={1} ellipsizeMode="middle">
+                        {item.email}
+                      </Text>
                       {item.phone ? (
                         <View style={styles.phoneRow}>
                           <Feather name="phone" size={11} color="#64748B" style={{ marginRight: 4 }} />
@@ -380,7 +417,7 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
           </View>
         )}
       </View>
-    </View>
+    </Root>
   );
 };
 
@@ -388,8 +425,12 @@ const styles = StyleSheet.create({
   container: {
     marginBottom: 16,
   },
+  standaloneScroll: {
+    flex: 1,
+  },
   standaloneContainer: {
     padding: 16,
+    paddingBottom: 32,
   },
   standaloneHeader: {
     flexDirection: 'row',
@@ -577,6 +618,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748B',
     marginTop: 8,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginTop: 14,
+    backgroundColor: '#0B3D2E',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+    minHeight: 44,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   userList: {
     gap: 10,

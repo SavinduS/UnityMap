@@ -421,7 +421,7 @@ const UnityMapScreen = () => {
         setTapRoute({
           id: `tap_route_${Date.now()}`,
           coordinates: polyCoords,
-          color: '#3B82F6',
+          color: '#10B981',
           isSelected: true,
           destName,
         });
@@ -489,7 +489,7 @@ const UnityMapScreen = () => {
         setTapRoute({
           id: `tap_route_${Date.now()}`,
           coordinates: polyCoords,
-          color: '#3B82F6',
+          color: '#10B981',
           isSelected: true,
           destName: 'Selected Destination',
         });
@@ -1013,12 +1013,12 @@ const UnityMapScreen = () => {
                   tw`absolute top-3 left-4 right-4 z-30 flex-row items-center justify-center p-3 rounded-2xl shadow-md`,
                   {
                     backgroundColor: palette.surface,
-                    borderColor: '#3B82F6',
+                    borderColor: '#10B981',
                     borderWidth: 1.5,
                   },
                 ]}
               >
-                <ActivityIndicator size="small" color="#3B82F6" style={tw`mr-2`} />
+                <ActivityIndicator size="small" color="#10B981" style={tw`mr-2`} />
                 <Text
                   {...textProps}
                   style={[

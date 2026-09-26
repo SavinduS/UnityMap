@@ -22,7 +22,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import { fetchTriageQueue, fetchTriageMetrics } from '../../services/triageService';
+import { fetchTriageQueue, fetchTriageMetrics, recalculateTriageQueue } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
 import { getWardById, MUNICIPAL_WARDS } from '../../utils/wardJurisdictions';
 import { Feather } from '@expo/vector-icons';
@@ -123,9 +123,22 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
     loadTriageData();
   };
 
-  const handleRecalculate = () => {
+  const handleRecalculate = async () => {
+    if (isRecalculating) return;
     setIsRecalculating(true);
-    loadTriageData();
+    try {
+      const result = await recalculateTriageQueue(selectedWardId);
+      // Server-side scores are now persisted — pull the refreshed queue back down.
+      await loadTriageData();
+      Alert.alert(
+        'Urgency Recalculated',
+        `${result?.recalculated ?? 0} pending report(s) rescored and saved for ${result?.wardId || selectedWardId}.`
+      );
+    } catch (err) {
+      Alert.alert('Recalculation Failed', err?.message || 'Could not recalculate the triage queue.');
+    } finally {
+      setIsRecalculating(false);
+    }
   };
 
   const handleReportCreated = useCallback(

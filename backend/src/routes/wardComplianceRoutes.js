@@ -8,12 +8,17 @@
 
 const express = require('express');
 const router = express.Router();
+const { protect, adminOnly } = require('../middleware/auth');
 const {
   getWardCompliance,
   exportAuditReport,
+  downloadAuditReportPdf,
 } = require('../controllers/wardComplianceController');
 
-router.get('/ward/:wardId', getWardCompliance);
-router.get('/audit/:wardId', exportAuditReport);
+// Ward budgets and the statutory audit document are privileged records.
+router.get('/ward/:wardId', protect, adminOnly, getWardCompliance);
+router.get('/audit/:wardId', protect, adminOnly, exportAuditReport);
+router.get('/audit/:wardId/pdf', protect, adminOnly, downloadAuditReportPdf);
+router.get('/audit/:wardId/download', protect, adminOnly, downloadAuditReportPdf);
 
 module.exports = router;

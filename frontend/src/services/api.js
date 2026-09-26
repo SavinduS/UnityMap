@@ -6,8 +6,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * Connects React Native / Web frontend to Node.js / Express backend with MongoDB.
  */
 
-const PRIMARY_PORT = '5000'; // Matches backend/.env PORT
-const FALLBACK_PORT = '5001';
+const PRIMARY_PORT = '5000';
+const FALLBACK_PORT = '5001'; // Matches backend/.env PORT
 
 /**
  * Dynamically resolves the host IP for mobile devices and web browsers.
@@ -41,24 +41,58 @@ export const getBaseUrl = (port = PRIMARY_PORT) => {
   return `http://${host}:${port}/api`;
 };
 
+/**
+ * Every base URL to try, in order, when the primary port is unreachable.
+ * `apiRequest` walks this chain for JSON calls; non-JSON downloads (e.g. the
+ * statutory audit PDF) must walk it too, otherwise they hit a dead port while
+ * the rest of the dashboard still renders fine.
+ */
+export const getApiBaseUrlCandidates = () => {
+  const candidates = [getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)];
+  if (Platform.OS !== 'web') {
+    candidates.push(`http://10.0.2.2:${PRIMARY_PORT}/api`, `http://localhost:${PRIMARY_PORT}/api`);
+  }
+  return [...new Set(candidates)];
+};
+
 export const API_BASE_URL = getBaseUrl();
+
+/**
+ * Invoked when the API rejects our credentials (401). Registered by authService to
+ * avoid a circular import between the API client and the session store.
+ */
+let unauthorizedHandler = null;
+export const setUnauthorizedHandler = (fn) => {
+  unauthorizedHandler = fn;
+};
+
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
 
 export const apiRequest = async (endpoint, options = {}) => {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
+  // Attach the signed session token to every request so authenticated admin
+  // routes are reachable without each caller assembling headers by hand.
+  const authHeaders = await getAuthHeaders();
+
   const defaultHeaders = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     Accept: 'application/json',
+    ...authHeaders,
   };
 
   const tryFetch = async (baseUrl) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000);
-
-    console.log(`[API Request] Fetching: ${url}`);
 
     try {
       const response = await fetch(url, {
@@ -70,12 +104,22 @@ export const apiRequest = async (endpoint, options = {}) => {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`API Request Failed: ${response.status} ${response.statusText}`);
+        // Surface the server's own message (e.g. "Invalid email or password")
+        // instead of a bare status string.
+        let message = `Request failed: ${response.status}`;
+        try {
+          const body = await response.json();
+          if (body?.message) message = body.message;
+        } catch (_) {}
+
+        if (response.status === 401 && unauthorizedHandler) {
+          unauthorizedHandler();
+        }
+
+        throw new ApiError(message, response.status);
       }
 
-      const data = await response.json();
-      console.log(`[API Success] ${cleanEndpoint} (from ${baseUrl})`);
-      return data;
+      return await response.json();
     } catch (err) {
       clearTimeout(timeoutId);
       throw err;
@@ -86,29 +130,33 @@ export const apiRequest = async (endpoint, options = {}) => {
   try {
     return await tryFetch(getBaseUrl(PRIMARY_PORT));
   } catch (primaryErr) {
-    console.warn(
-      `[API Warning] Endpoint ${cleanEndpoint} unreachable on port ${PRIMARY_PORT} (${primaryErr.message}). Retrying fallback...`
-    );
+    // An auth verdict is port-independent — never replay credentials elsewhere.
+    if (primaryErr instanceof ApiError && (primaryErr.status === 401 || primaryErr.status === 403)) {
+      throw primaryErr;
+    }
 
     // Try fallback port (5001)
     try {
       return await tryFetch(getBaseUrl(FALLBACK_PORT));
     } catch (fallbackErr) {
+      if (fallbackErr instanceof ApiError && (fallbackErr.status === 401 || fallbackErr.status === 403)) {
+        throw fallbackErr;
+      }
+
       // If native mobile failed on LAN IP, try localhost / 10.0.2.2 as last resort
       if (Platform.OS !== 'web') {
         try {
           return await tryFetch(`http://10.0.2.2:${PRIMARY_PORT}/api`);
         } catch (emuErr) {
+          if (emuErr instanceof ApiError && (emuErr.status === 401 || emuErr.status === 403)) {
+            throw emuErr;
+          }
           try {
             return await tryFetch(`http://localhost:${PRIMARY_PORT}/api`);
           } catch (_) {}
         }
       }
 
-      console.error(
-        `[API Error] All connection attempts failed for ${cleanEndpoint}:`,
-        primaryErr.message
-      );
       throw primaryErr;
     }
   }
@@ -420,7 +468,7 @@ export const createBarrierReport = (reportData) =>
     body: JSON.stringify(reportData),
   });
 
-const getAuthHeaders = async () => {
+export const getAuthHeaders = async () => {
   try {
     const stored = await AsyncStorage.getItem('@unitymap_session');
     if (stored) {
@@ -446,7 +494,11 @@ export const uncorroborateReport = async (reportId) => {
 export default {
   API_BASE_URL,
   getBaseUrl,
+  getApiBaseUrlCandidates,
   getHostAddress,
+  getAuthHeaders,
+  setUnauthorizedHandler,
+  ApiError,
   apiRequest,
   getNodes,
   getNearbyNodes,

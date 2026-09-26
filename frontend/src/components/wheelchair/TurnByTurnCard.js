@@ -54,7 +54,7 @@ export const getManeuverIcon = (maneuver, isHighContrast = false) => {
       return {
         component: <MaterialIcons name="elevator" size={30} color={defaultColor} />,
         label: 'Elevator',
-        bg: isHighContrast ? '#FFFFFF' : '#1E3A8A',
+        bg: isHighContrast ? '#FFFFFF' : '#0B3D2E',
       };
     case 'arrive':
     case 'destination':
@@ -285,8 +285,8 @@ export const TurnByTurnCard = ({
             style={[
               styles.tagBadge,
               {
-                backgroundColor: isHighContrast ? '#FFFFFF' : '#EFF6FF',
-                borderColor: isHighContrast ? '#000000' : '#BFDBFE',
+                backgroundColor: isHighContrast ? '#FFFFFF' : '#ECFDF5',
+                borderColor: isHighContrast ? '#000000' : '#A7F3D0',
                 borderWidth: 1,
               },
             ]}
@@ -294,12 +294,12 @@ export const TurnByTurnCard = ({
             <MaterialIcons
               name="elevator"
               size={14}
-              color={isHighContrast ? '#000000' : '#2563EB'}
+              color={isHighContrast ? '#000000' : '#059669'}
             />
             <Text
               style={[
                 styles.tagBadgeText,
-                { color: isHighContrast ? '#000000' : '#1D4ED8' },
+                { color: isHighContrast ? '#000000' : '#047857' },
               ]}
             >
               {step.elevatorName}

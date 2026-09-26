@@ -22,7 +22,7 @@ export const TTSInterfaceScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: '#F8FAFC' },
-  card: { borderColor: '#FBCFE8', borderWidth: 1 },
+  card: { borderColor: '#A7F3D0', borderWidth: 1 },
   title: { fontSize: 20, fontWeight: '700', color: '#1E293B', marginBottom: 8 },
   description: { fontSize: 14, color: '#475569', lineHeight: 20, marginBottom: 14 },
 });
