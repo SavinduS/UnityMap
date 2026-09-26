@@ -25,11 +25,29 @@ import {
 } from 'react-native';
 import { fetchReportDetails, dispatchDecision } from '../../services/triageService';
 import adminAuthService from '../../services/adminAuthService';
+import { Feather } from '@expo/vector-icons';
 import {
   getWardById,
   REJECTION_REASON_CODES,
   ASSET_CATEGORIES,
 } from '../../utils/wardJurisdictions';
+
+const isValidPhotoUri = (uri) => {
+  if (!uri || typeof uri !== 'string') return false;
+  const trimmed = uri.trim();
+  if (!trimmed) return false;
+  // React Native on iOS/Android cannot load web blob: URIs
+  if (Platform.OS !== 'web' && trimmed.startsWith('blob:')) return false;
+  return true;
+};
+
+const getCategoryBudget = (cat) => {
+  if (!cat) return 85000;
+  const normalized = String(cat).toUpperCase().replace(/[\s-]+/g, '_');
+  if (ASSET_CATEGORIES[normalized]) return ASSET_CATEGORIES[normalized].estimatedRepairCostLKR;
+  if (normalized === 'LIFT') return ASSET_CATEGORIES.ELEVATOR?.estimatedRepairCostLKR || 250000;
+  return 85000;
+};
 
 export const ReportInspectionScreen = ({
   reportId,
@@ -42,16 +60,14 @@ export const ReportInspectionScreen = ({
   const [isLoading, setIsLoading] = useState(!initialReport && !!reportId);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
 
   // Decision Modal States
   const [activeModal, setActiveModal] = useState(null); // 'APPROVE' | 'REJECT' | 'REQUEST_INFO' | null
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Approval Form State
-  const defaultBudget = report?.category && ASSET_CATEGORIES[report.category.toUpperCase()]
-    ? ASSET_CATEGORIES[report.category.toUpperCase()].estimatedRepairCostLKR
-    : 85000;
-  const [allocatedBudget, setAllocatedBudget] = useState(String(defaultBudget));
+  const [allocatedBudget, setAllocatedBudget] = useState(() => String(getCategoryBudget(report?.category)));
   const [targetPriority, setTargetPriority] = useState('7'); // days
   const [approvalNotes, setApprovalNotes] = useState('');
 
@@ -91,6 +107,14 @@ export const ReportInspectionScreen = ({
       setReport((prev) => (prev ? { ...prev, corroborationCount: initialReport.corroborationCount, upvotedBy: initialReport.upvotedBy } : prev));
     }
   }, [initialReport]);
+
+  // Sync budget and reset photo failure state when report changes
+  useEffect(() => {
+    setImageLoadFailed(false);
+    if (report?.category) {
+      setAllocatedBudget(String(getCategoryBudget(report.category)));
+    }
+  }, [report?._id, report?.photoUrl, report?.category]);
 
   const triage = report?.triage || {};
   const factors = triage.formulaFactors || {};
@@ -317,7 +341,13 @@ export const ReportInspectionScreen = ({
         style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={refreshReport} tintColor="#38BDF8" />}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={refreshReport}
+            tintColor="#0B3D2E"
+          />
+        }
       >
         {/* Urgency & Priority Scorecard */}
         <View style={styles.scoreCard}>
@@ -382,21 +412,32 @@ export const ReportInspectionScreen = ({
         <View style={styles.sectionBox}>
           <Text style={styles.sectionHeading}>📸 VOLUNTEER EVIDENCE INSPECTION</Text>
 
-          {report.photoUrl ? (
+          {isValidPhotoUri(report.photoUrl) && !imageLoadFailed ? (
             <TouchableOpacity
               style={styles.photoContainer}
               onPress={() => setIsPhotoModalOpen(true)}
               activeOpacity={0.9}
             >
-              <Image source={{ uri: report.photoUrl }} style={styles.fullPhoto} resizeMode="cover" />
+              <Image
+                source={{ uri: report.photoUrl }}
+                style={styles.fullPhoto}
+                resizeMode="cover"
+                onError={() => setImageLoadFailed(true)}
+              />
               <View style={styles.photoOverlayBadge}>
                 <Text style={styles.photoOverlayText}>🔍 Tap to View Full Resolution</Text>
               </View>
             </TouchableOpacity>
           ) : (
             <View style={styles.noPhotoBox}>
-              <Text style={{ fontSize: 36 }}>📷</Text>
-              <Text style={styles.noPhotoText}>No photograph attached</Text>
+              <Feather name="camera-off" size={32} color="#94A3B8" />
+              <Text style={styles.noPhotoText}>
+                {report.photoUrl && report.photoUrl.startsWith('blob:')
+                  ? 'Photo preview unavailable on mobile (local web blob)'
+                  : imageLoadFailed
+                  ? 'Photo failed to load'
+                  : 'No photograph attached'}
+              </Text>
             </View>
           )}
 
@@ -404,7 +445,7 @@ export const ReportInspectionScreen = ({
           <View style={styles.notesBox}>
             <Text style={styles.notesTitle}>Volunteer Description</Text>
             <Text style={styles.notesText}>
-              "{report.notes || 'No description notes submitted by volunteer contributor.'}"
+              {`"${report.notes || 'No description notes submitted by volunteer contributor.'}"`}
             </Text>
             <View style={styles.notesMetaRow}>
               <Text style={styles.notesRating}>
@@ -546,40 +587,91 @@ export const ReportInspectionScreen = ({
             Authorize municipal action, allocate repair funds, or archive submission.
           </Text>
 
-          <View style={styles.decisionButtonsRow}>
-            {/* 1. Approve & Budget */}
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.approveBtn]}
-              onPress={() => setActiveModal('APPROVE')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.actionBtnIcon}>✅</Text>
-              <Text style={styles.actionBtnTitle}>Approve & Budget</Text>
-              <Text style={styles.actionBtnSub}>Publish to Live Map</Text>
-            </TouchableOpacity>
+          {report.triageStatus && report.triageStatus !== 'pending' ? (
+            <View style={styles.alreadyDispatchedCard}>
+              <View style={styles.dispatchedStatusRow}>
+                <Feather
+                  name={
+                    report.triageStatus === 'approved'
+                      ? 'check-circle'
+                      : report.triageStatus === 'rejected'
+                      ? 'x-circle'
+                      : 'help-circle'
+                  }
+                  size={20}
+                  color={
+                    report.triageStatus === 'approved'
+                      ? '#16A34A'
+                      : report.triageStatus === 'rejected'
+                      ? '#DC2626'
+                      : '#D97706'
+                  }
+                />
+                <Text
+                  style={[
+                    styles.dispatchedStatusText,
+                    {
+                      color:
+                        report.triageStatus === 'approved'
+                          ? '#16A34A'
+                          : report.triageStatus === 'rejected'
+                          ? '#DC2626'
+                          : '#D97706',
+                    },
+                  ]}
+                >
+                  {report.triageStatus === 'approved'
+                    ? 'Work Order Approved & Budget Allocated'
+                    : report.triageStatus === 'rejected'
+                    ? 'Report Rejected & Archived'
+                    : 'Clarification Requested from Contributor'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.returnQueueBtn}
+                onPress={onBack}
+                activeOpacity={0.8}
+              >
+                <Feather name="arrow-left" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.returnQueueBtnText}>Return to Triage Queue</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.decisionButtonsRow}>
+              {/* 1. Approve & Budget */}
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.approveBtn]}
+                onPress={() => setActiveModal('APPROVE')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.actionBtnIcon}>✅</Text>
+                <Text style={styles.actionBtnTitle}>Approve & Budget</Text>
+                <Text style={styles.actionBtnSub}>Publish to Live Map</Text>
+              </TouchableOpacity>
 
-            {/* 2. Reject */}
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.rejectBtn]}
-              onPress={() => setActiveModal('REJECT')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.actionBtnIcon}>❌</Text>
-              <Text style={styles.actionBtnTitle}>Reject Report</Text>
-              <Text style={styles.actionBtnSub}>With Reason Code</Text>
-            </TouchableOpacity>
+              {/* 2. Reject */}
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.rejectBtn]}
+                onPress={() => setActiveModal('REJECT')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.actionBtnIcon}>❌</Text>
+                <Text style={styles.actionBtnTitle}>Reject Report</Text>
+                <Text style={styles.actionBtnSub}>With Reason Code</Text>
+              </TouchableOpacity>
 
-            {/* 3. Request Info */}
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.requestInfoBtn]}
-              onPress={() => setActiveModal('REQUEST_INFO')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.actionBtnIcon}>📩</Text>
-              <Text style={styles.actionBtnTitle}>Request Info</Text>
-              <Text style={styles.actionBtnSub}>Notify Volunteer</Text>
-            </TouchableOpacity>
-          </View>
+              {/* 3. Request Info */}
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.requestInfoBtn]}
+                onPress={() => setActiveModal('REQUEST_INFO')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.actionBtnIcon}>📩</Text>
+                <Text style={styles.actionBtnTitle}>Request Info</Text>
+                <Text style={styles.actionBtnSub}>Notify Volunteer</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -592,12 +684,19 @@ export const ReportInspectionScreen = ({
           >
             <Text style={styles.closePhotoText}>✕ Close Preview</Text>
           </TouchableOpacity>
-          {report.photoUrl && (
+          {isValidPhotoUri(report.photoUrl) && !imageLoadFailed ? (
             <Image
               source={{ uri: report.photoUrl }}
               style={styles.modalFullImage}
               resizeMode="contain"
             />
+          ) : (
+            <View style={{ alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+              <Feather name="camera-off" size={48} color="#94A3B8" />
+              <Text style={{ color: '#FFFFFF', marginTop: 12, fontSize: 14 }}>
+                Photo preview unavailable
+              </Text>
+            </View>
           )}
         </SafeAreaView>
       </Modal>
@@ -1462,6 +1561,37 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   emptyStateActionText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  alreadyDispatchedCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+  },
+  dispatchedStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 14,
+  },
+  dispatchedStatusText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  returnQueueBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0B3D2E',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  returnQueueBtnText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
