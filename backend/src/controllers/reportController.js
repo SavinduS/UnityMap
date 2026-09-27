@@ -60,10 +60,13 @@ exports.createReport = async (req, res) => {
      exifMetadata = parseJsonField(exifMetadata);
      // capturedAt may be string date — keep as-is for later validation
 
-     // Normalize aliases: timestamp / photoTakenAt -> capturedAt
-     if (!capturedAt) capturedAt = timestamp || photoTakenAt;
-     // Normalize location alias
-     if (!locationName && locationAlias && typeof locationAlias === 'string') locationName = locationAlias;
+      // Normalize aliases: timestamp / photoTakenAt -> capturedAt
+      if (!capturedAt) capturedAt = timestamp || photoTakenAt;
+      // Normalize location alias
+      if (!locationName && locationAlias && typeof locationAlias === 'string') locationName = locationAlias;
+      // Sanitize reporterId: demo/offline ids (e.g. 'UM-123') are not ObjectIds —
+      // save the report anonymously instead of throwing a CastError 500.
+      if (reporterId && !mongoose.Types.ObjectId.isValid(reporterId)) reporterId = undefined;
       // Normalize condition (issue vs good): allow 'issue'/'damaged' as synonyms for 'bad'
       if (condition && typeof condition === 'string') {
         const c = condition.trim().toLowerCase();
@@ -168,6 +171,22 @@ exports.createReport = async (req, res) => {
         success: false,
         message: 'photo is required — upload an image file (field: photo) or provide photoUrl.',
       });
+    }
+    // Reject device-local URIs — they can never be fetched by anyone and would bypass
+    // Cloudinary while returning a false 201 success (e.g. file:// after app restart).
+    {
+      const lowered = photoUrl.trim().toLowerCase();
+      if (
+        lowered.startsWith('file://') ||
+        lowered.startsWith('content://') ||
+        lowered.startsWith('ph://') ||
+        lowered.startsWith('blob:')
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid photo URL scheme. Must upload image binary.',
+        });
+      }
     }
 
     // --- Validate category ---
@@ -367,6 +386,15 @@ exports.createReport = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
+        error: error.message,
+      });
+    }
+    // Invalid id shapes etc. are client errors with field detail — not 500s, so the
+    // frontend won't misclassify them as offline and retry forever.
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid ${error.path || 'field'}: ${error.value}`,
         error: error.message,
       });
     }

@@ -65,13 +65,30 @@ export const getBaseUrl = (port = PRIMARY_PORT) => {
 
 export const API_BASE_URL = getBaseUrl();
 
+// Coalesces concurrent identical background GETs (re-render / navigation remounts)
+// onto one shared promise so map polling can't spawn duplicate request storms.
+// POSTs/mutations are never deduped. Entries are removed on settle (no leak).
+const inflightGets = new Map();
+
 export const apiRequest = async (endpoint, options = {}) => {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   // Per-call timeout override (ms). Image uploads need far longer than plain GETs:
   // aborting a healthy multipart POST at 20s both fails the submit AND mislabels it
-  // as "offline". Never forward timeoutMs to fetch itself.
+  // as "offline". Background GETs default to 20000ms (≥15000ms requirement).
+  // Never forward timeoutMs to fetch itself.
   const { timeoutMs, ...fetchOptions } = options;
   const timeout = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 20000;
+  const method = (fetchOptions.method || 'GET').toUpperCase();
+  const dedupKey = method === 'GET' && typeof fetchOptions.body === 'undefined'
+    ? `GET ${cleanEndpoint}`
+    : null;
+  if (dedupKey && inflightGets.has(dedupKey)) {
+    return inflightGets.get(dedupKey);
+  }
+
+  // Each request owns an independent AbortController/signal — background polls and
+  // the report submission can never cancel each other; only their own timeout aborts them.
+  const run = async () => {
 
   const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
 
@@ -191,6 +208,14 @@ export const apiRequest = async (endpoint, options = {}) => {
       throw primaryErr;
     }
   }
+  };
+
+  if (!dedupKey) return run();
+  const shared = run();
+  inflightGets.set(dedupKey, shared);
+  const cleanup = () => { if (inflightGets.get(dedupKey) === shared) inflightGets.delete(dedupKey); };
+  shared.then(cleanup, cleanup);
+  return shared;
 };
 
 // Node & Destination Endpoints

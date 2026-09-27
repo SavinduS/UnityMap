@@ -8,7 +8,7 @@ import EXIFCaptureScreen from './EXIFCaptureScreen';
 import BaseMap from '../../components/BaseMap';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
-import { loadVolunteerDraft, saveVolunteerDraft, clearVolunteerDraft, loadPendingReports, queuePendingReport, syncPendingReports } from '../../theme/storage';
+import { loadVolunteerDraft, saveVolunteerDraft, clearVolunteerDraft, loadPendingReports, queuePendingReport, removePendingReport, syncPendingReports } from '../../theme/storage';
 import { createBarrierReport, createReport, getReports } from '../../services/api';
 import { useLocation } from '../../hooks/useLocation';
 import { toBarrierReportFields } from '../../utils/exifHelper';
@@ -154,6 +154,10 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
   const [fallbackLoading, setFallbackLoading] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const hasHydratedRef = useRef(false);
+  // Success-authoritative submit: only the latest attempt may surface error UI, and a
+  // 201 success permanently clears any photo/network error state (no stale modals).
+  const submitAttemptRef = useRef(0);
+  const lastSuccessAtRef = useRef(0);
 
   // Admin-parity fields — preserved in volunteer flow, distributed across 3 taps
   const [name, setName] = useState('');
@@ -223,18 +227,35 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
         throw new Error('Invalid photo attachment — please retake or pick another image.');
       }
     }
-    const normalizePhotoForUpload = (pf) => {
+    const normalizePhotoForUpload = async (pf) => {
       if (!pf) return null;
       if (Platform.OS !== 'web') {
         // Native (Expo Go): strip to the exact { uri, name, type } shape api.js expects
         if (typeof pf === 'object' && typeof pf.uri === 'string' && pf.uri) {
+          // Guard sync-retry path too: a queued file:// that was deleted since can
+          // never upload — fail fast as a photo error (dropped after retry) instead
+          // of looping the offline queue forever.
+          if (/^(file|content|ph):\/\//i.test(pf.uri)) {
+            try {
+              const FS = await import('expo-file-system');
+              if (FS && typeof FS.getInfoAsync === 'function') {
+                const info = await FS.getInfoAsync(pf.uri);
+                if (info && info.exists === false) {
+                  throw new Error('Could not read selected image — please retake or pick another image.');
+                }
+              }
+            } catch (e) {
+              if (/could not read selected image/i.test(e?.message || '')) throw e;
+              // Existence check unavailable — proceed, network/backend validates.
+            }
+          }
           return { uri: pf.uri, name: pf.name || pf.fileName || 'barrier.jpg', type: pf.type || 'image/jpeg' };
         }
         return pf;
       }
       return pf;
     };
-    const normalizedPhoto = normalizePhotoForUpload(photoMeta);
+    const normalizedPhoto = await normalizePhotoForUpload(photoMeta);
     if (normalizedPhoto) {
       return createReport(payload, normalizedPhoto);
     }
@@ -254,19 +275,36 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     return createBarrierReport(payload);
   }, []);
 
+  // Single queued-entry submitter shared by manual + mount auto-sync. Entries whose
+  // photo bytes are permanently unreadable (e.g. revoked blob URL from an older app
+  // version) can never succeed — drop them after one retry instead of failing every
+  // launch with a misleading "Photo attachment failed" modal.
+  const syncOneQueuedReport = useCallback(async (payload, photoMeta, entry) => {
+    try {
+      const res = await submitToApi(payload, photoMeta);
+      const ok = res && (res.success || res.data);
+      if (!ok && res && res.success === false) throw new Error(res.message || 'Sync failed');
+      return res;
+    } catch (e) {
+      const raw = `${e?.message || ''}`.toLowerCase();
+      const deadPhoto = /formdata|formdatapart|invalid photo attachment|could not read selected image/.test(raw);
+      if (deadPhoto && (entry?.attempts || 0) >= 1 && entry?.id) {
+        try { await removePendingReport(entry.id); } catch {}
+        return { dropped: true };
+      }
+      throw e;
+    }
+  }, [submitToApi]);
+
   // Sync offline-cached drafts from storage.js straight to MongoDB once connectivity is back
   const syncOfflineQueue = useCallback(async () => {
     setSyncingPending(true);
     try {
-      const result = await syncPendingReports(async (payload, photoMeta) => {
-        const res = await submitToApi(payload, photoMeta);
-        const ok = res && (res.success || res.data);
-        if (!ok && res && res.success === false) throw new Error(res.message || 'Sync failed');
-        return res;
-      });
+      const result = await syncPendingReports(syncOneQueuedReport);
       const remaining = await loadPendingReports();
       setPendingCount(remaining.length);
       if (result.synced > 0) {
+        setErrorMsg(null);
         const msg = `Synced ${result.synced} offline report${result.synced > 1 ? 's' : ''} to database`;
         setSuccessMsg(msg);
         try { AccessibilityInfo.announceForAccessibility(msg); } catch {}
@@ -277,7 +315,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     } finally {
       setSyncingPending(false);
     }
-  }, [submitToApi, pendingCount]);
+  }, [syncOneQueuedReport, pendingCount]);
 
   const isNetworkError = useCallback((e) => {
     if (e?.isHttpError) return e.status >= 500 || e.status === 429;
@@ -314,12 +352,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
         if (pending.length > 0) {
           setSyncingPending(true);
           try {
-            const result = await syncPendingReports(async (payload, photoMeta) => {
-              const res = await submitToApi(payload, photoMeta);
-              const ok = res && (res.success || res.data);
-              if (!ok && res && res.success === false) throw new Error(res.message || 'Sync failed');
-              return res;
-            });
+            const result = await syncPendingReports(syncOneQueuedReport);
             if (!cancelled) {
               setPendingCount(result.remaining);
               if (result.synced > 0) {
@@ -335,7 +368,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       } catch {}
     })();
     return () => { cancelled = true; };
-  }, [submitToApi]);
+  }, [syncOneQueuedReport]);
 
   // Load draft on mount — now includes admin-parity fields
   useEffect(() => {
@@ -711,7 +744,12 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     })();
 
     const currentUser = authService.getCurrentUser();
-    const reporterId = currentUser?._id || currentUser?.id || undefined;
+    // Sanitize reporterId: demo/offline ids (e.g. 'UM-123') are not Mongo ObjectIds —
+    // submit anonymously so the save succeeds instead of 500ing on a CastError.
+    const rawReporterId = currentUser?._id || currentUser?.id || undefined;
+    const reporterId = typeof rawReporterId === 'string' && /^[0-9a-fA-F]{24}$/.test(rawReporterId)
+      ? rawReporterId
+      : undefined;
 
     // MongoDB-aligned document — matches BarrierReport schema + reportController.js expectations.
     // Direct persist target: HTTP POST /api/reports (multipart `photo` or JSON `photoUrl`).
@@ -747,6 +785,32 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
           : photoFile)
       : null;
 
+    // Auto-upload: File objects can't survive storage reload, but the persisted local
+    // URI often still exists on disk — rebuild the multipart payload from it so the
+    // user doesn't have to retake. Never JSON-submit a device-local URI (backend 400s
+    // those); if the file is positively gone, stop here with a retake prompt.
+    let effectivePhotoMeta = photoMeta;
+    if (!effectivePhotoMeta && imageUri && typeof imageUri === 'string' && Platform.OS !== 'web' && /^(file|content|ph):\/\//i.test(imageUri)) {
+      const rebuilt = { uri: imageUri, name: `photo_${Date.now()}.jpg`, type: 'image/jpeg' };
+      let status = 'unknown';
+      try {
+        const FS = await import('expo-file-system');
+        if (FS && typeof FS.getInfoAsync === 'function') {
+          const info = await FS.getInfoAsync(imageUri);
+          status = info?.exists ? 'exists' : 'missing';
+        }
+      } catch {}
+      if (status === 'exists' || status === 'unknown') {
+        effectivePhotoMeta = rebuilt;
+      } else {
+        const goneMsg = 'The saved photo is no longer available on this device — please capture or pick the photo again.';
+        setErrorMsg(goneMsg);
+        try { AccessibilityInfo.announceForAccessibility(`Error: ${goneMsg}`); } catch {}
+        try { Alert.alert('Photo expired', goneMsg); } catch {}
+        return;
+      }
+    }
+
     const resetWizard = async () => {
       setCategory(null);
       setImageUri(null);
@@ -772,6 +836,10 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     };
 
     const handleSuccess = async (res) => {
+      // Success is authoritative: record it first so any late/stale failure from a
+      // concurrent path can never overwrite it with a misleading error modal.
+      lastSuccessAtRef.current = Date.now();
+      setErrorMsg(null);
       await clearVolunteerDraft();
       const successText = 'Report submitted successfully — saved to database';
       setSuccessMsg(successText);
@@ -789,14 +857,23 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       }
     };
 
+    // Multipart upload wins on the backend — drop any local URI so it can never be stored.
+    if (effectivePhotoMeta) payload.photoUrl = undefined;
+
+    const attempt = submitAttemptRef.current + 1;
+    submitAttemptRef.current = attempt;
     setSubmitting(true);
     try {
-      // Direct MongoDB persist: POST /api/reports
-      const res = await submitToApi(payload, photoMeta);
+      // Direct MongoDB persist: POST /api/reports (rebuilt local-URI meta included)
+      const res = await submitToApi(payload, effectivePhotoMeta);
       const ok = res && (res.success || res.data);
       if (!ok && res && res.success === false) throw new Error(res.message || 'Submission failed');
       await handleSuccess(res);
     } catch (e) {
+      // Stale attempt (user already resubmitted) or success already shown for this
+      // flow — never let it surface a misleading error modal over the 201 result.
+      if (submitAttemptRef.current !== attempt) return;
+      if (Date.now() - lastSuccessAtRef.current < 5000) return;
       // Photo shaping failure → actionable message, never queued (would fail every retry)
       if (isFormDataError(e)) {
         const photoMsg = "Couldn't attach the photo — please retake or pick another image, then submit again.";
@@ -813,7 +890,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       // Offline → cache full schema payload in storage.js queue, keep draft, sync later
       if (isNetworkError(e) && !serverPermanent) {
         try {
-          await queuePendingReport({ payload, photoMeta, imageUri, createdAt: new Date().toISOString() });
+          await queuePendingReport({ payload, photoMeta: effectivePhotoMeta, imageUri, createdAt: new Date().toISOString() });
           const remaining = await loadPendingReports();
           setPendingCount(remaining.length);
         } catch {}
