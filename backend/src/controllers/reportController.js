@@ -60,17 +60,20 @@ exports.createReport = async (req, res) => {
      exifMetadata = parseJsonField(exifMetadata);
      // capturedAt may be string date — keep as-is for later validation
 
-     // Normalize aliases: timestamp / photoTakenAt -> capturedAt
-     if (!capturedAt) capturedAt = timestamp || photoTakenAt;
-     // Normalize location alias
-     if (!locationName && locationAlias && typeof locationAlias === 'string') locationName = locationAlias;
-     // Normalize condition (issue vs good): allow 'issue' as synonym for 'bad'
-     if (condition && typeof condition === 'string') {
-       const c = condition.trim().toLowerCase();
-       if (c === 'issue' || c === 'bad' || c === 'poor' || c === 'blocked') condition = 'bad';
-       else if (c === 'good' || c === 'ok' || c === 'accessible') condition = 'good';
-       else condition = c;
-     }
+      // Normalize aliases: timestamp / photoTakenAt -> capturedAt
+      if (!capturedAt) capturedAt = timestamp || photoTakenAt;
+      // Normalize location alias
+      if (!locationName && locationAlias && typeof locationAlias === 'string') locationName = locationAlias;
+      // Sanitize reporterId: demo/offline ids (e.g. 'UM-123') are not ObjectIds —
+      // save the report anonymously instead of throwing a CastError 500.
+      if (reporterId && !mongoose.Types.ObjectId.isValid(reporterId)) reporterId = undefined;
+      // Normalize condition (issue vs good): allow 'issue'/'damaged' as synonyms for 'bad'
+      if (condition && typeof condition === 'string') {
+        const c = condition.trim().toLowerCase();
+        if (c === 'issue' || c === 'bad' || c === 'poor' || c === 'blocked' || c === 'damaged' || c === 'critical' || c === 'broken') condition = 'bad';
+        else if (c === 'good' || c === 'ok' || c === 'accessible' || c === 'functional') condition = 'good';
+        else condition = c;
+      }
 
      // Robust coordinate handling: support flat latitude/longitude (device fallback) + stringified forms
      // Frontend ThreeTapReportScreen sends coordinates object, but also ensure flat fields work when EXIF GPS missing
@@ -128,10 +131,13 @@ exports.createReport = async (req, res) => {
     const uploadedFile = req.file || (req.files && req.files.photo && req.files.photo[0]) || null;
     if (uploadedFile) {
       try {
+        console.log(`📷 Image received: ${uploadedFile.size} bytes, mimetype=${uploadedFile.mimetype}`);
+        console.log('☁️ Uploading image to Cloudinary...');
         const result = await uploadBufferToCloudinary(uploadedFile.buffer, uploadedFile.mimetype, {
           public_id: undefined,
         });
         photoUrl = result.secure_url;
+        console.log(`☁️ Cloudinary upload successful: ${photoUrl}`);
       } catch (uploadErr) {
         console.error('Cloudinary upload failed:', uploadErr);
         const isConfigErr = uploadErr.message && uploadErr.message.includes('not configured');
@@ -168,6 +174,22 @@ exports.createReport = async (req, res) => {
         success: false,
         message: 'photo is required — upload an image file (field: photo) or provide photoUrl.',
       });
+    }
+    // Reject device-local URIs — they can never be fetched by anyone and would bypass
+    // Cloudinary while returning a false 201 success (e.g. file:// after app restart).
+    {
+      const lowered = photoUrl.trim().toLowerCase();
+      if (
+        lowered.startsWith('file://') ||
+        lowered.startsWith('content://') ||
+        lowered.startsWith('ph://') ||
+        lowered.startsWith('blob:')
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid photo URL scheme. Must upload image binary.',
+        });
+      }
     }
 
     // --- Validate category ---
@@ -287,6 +309,10 @@ exports.createReport = async (req, res) => {
         }
         sanitizedExif.altitude = exifMetadata.altitude;
       }
+      // Accept exifMetadata.capturedAt as alias for exifMetadata.timestamp (frontend sends both)
+      if ((exifMetadata.timestamp === undefined || exifMetadata.timestamp === null) && exifMetadata.capturedAt !== undefined && exifMetadata.capturedAt !== null) {
+        exifMetadata.timestamp = exifMetadata.capturedAt;
+      }
       if (exifMetadata.timestamp !== undefined && exifMetadata.timestamp !== null) {
         const ts = new Date(exifMetadata.timestamp);
         if (Number.isNaN(ts.getTime())) {
@@ -363,6 +389,15 @@ exports.createReport = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Validation failed',
+        error: error.message,
+      });
+    }
+    // Invalid id shapes etc. are client errors with field detail — not 500s, so the
+    // frontend won't misclassify them as offline and retry forever.
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid ${error.path || 'field'}: ${error.value}`,
         error: error.message,
       });
     }

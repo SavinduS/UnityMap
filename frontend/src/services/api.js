@@ -1,17 +1,20 @@
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
 /**
  * UnityMap Centralized API Service
  * Connects React Native / Web frontend to Node.js / Express backend with MongoDB.
  */
 
-const PRIMARY_PORT = '5000'; // Matches backend/.env PORT
-const FALLBACK_PORT = '5001';
+export const PRIMARY_PORT = '5000'; // Matches backend/.env PORT
+export const FALLBACK_PORT = '5001';
 
 /**
  * Dynamically resolves the host IP for mobile devices and web browsers.
- * Extracts the Metro bundler IP from scriptURL when running on physical devices/emulators.
+ * Prefers the host that served the JS bundle itself (guaranteed routable from the
+ * device, since the bundle loaded from it), then Metro scriptURL, then an explicit
+ * EXPO_PUBLIC_API_HOST override. No hardcoded LAN IPs — they go stale on DHCP change.
  */
 export const getHostAddress = () => {
   if (Platform.OS === 'web') {
@@ -21,56 +24,255 @@ export const getHostAddress = () => {
     return 'localhost';
   }
 
-  // React Native dev server host detection
+  // 1. Explicit override for fixed dev setups (e.g. EXPO_PUBLIC_API_HOST=192.168.1.177)
   try {
-    const scriptURL = NativeModules?.SourceCode?.scriptURL;
-    if (scriptURL) {
-      const parsed = scriptURL.split('://')[1]?.split('/')[0]?.split(':')[0];
-      if (parsed && parsed !== 'localhost' && parsed !== '127.0.0.1') {
-        return parsed;
-      }
+    const override = typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_API_HOST : null;
+    if (override && typeof override === 'string' && override.trim()) {
+      return override.trim();
     }
   } catch (e) {}
 
-  // Fallback to local network IP or Android emulator localhost
-  return '192.168.8.183';
+  const hostOf = (uri) => {
+    if (!uri || typeof uri !== 'string') return null;
+    const host = uri.split('://')[1]?.split('/')[0]?.split(':')[0];
+    return host && host.trim() ? host.trim() : null;
+  };
+
+  // One-time dev diagnostic: prints every host source so a single Metro line reveals
+  // why a physical device falls through to the 10.0.2.2 last resort. Silent in release.
+  if (!getHostAddress._logged) {
+    getHostAddress._logged = true;
+    try {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        const scriptURL = NativeModules?.SourceCode?.scriptURL;
+        console.log(
+          `[net] host sources platform=${Platform.OS} ` +
+          `expoConfig.hostUri=${Constants?.expoConfig?.hostUri || 'none'} ` +
+          `manifest.debuggerHost=${Constants?.manifest?.debuggerHost || 'none'} ` +
+          `scriptURL=${scriptURL || 'none'} ` +
+          `override=${typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_HOST ? 'set' : 'unset'} ` +
+          `appOwnership=${Constants?.appOwnership || 'unknown'}`
+        );
+      }
+    } catch {}
+  }
+
+  // 2. Expo bundle source — same machine that served the app over LAN
+  try {
+    const hostUri = Constants?.expoConfig?.hostUri || Constants?.manifest?.debuggerHost || Constants?.manifest2?.extra?.expoClient?.hostUri;
+    const host = hostOf(hostUri);
+    if (host) return host;
+  } catch (e) {}
+
+  // 3. React Native dev server host detection via scriptURL
+  try {
+    const scriptURL = NativeModules?.SourceCode?.scriptURL;
+    const host = hostOf(scriptURL);
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return host;
+    }
+  } catch (e) {}
+
+  // 4. Android emulator loopback to host PC (last resort on device)
+  return '10.0.2.2';
+};
+
+// Highest priority: full base URL override, e.g.
+// EXPO_PUBLIC_API_URL=http://192.168.1.50:5000/api (documented in frontend/.env.example).
+// Wins over all auto-detection; the port argument is ignored when set.
+export const explicitApiUrl = () => {
+  try {
+    const u = typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_API_URL : null;
+    if (!u || typeof u !== 'string' || !u.trim()) return null;
+    const clean = u.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(clean)) return null;
+    return /\/api$/i.test(clean) ? clean : `${clean}/api`;
+  } catch {}
+  return null;
 };
 
 export const getBaseUrl = (port = PRIMARY_PORT) => {
-  const host = getHostAddress();
+  const explicit = explicitApiUrl();
+  if (explicit) return explicit;
+  const host = (verifiedHost && Date.now() - verifiedHost.at < VERIFIED_HOST_TTL_MS)
+    ? verifiedHost.host
+    : getHostAddress();
   return `http://${host}:${port}/api`;
 };
 
 export const API_BASE_URL = getBaseUrl();
 
+// --- Verified-host selection -----------------------------------------------
+// getHostAddress() can return a stale/unroutable host (DHCP churn, emulator alias
+// on physical hardware). warmApiHost() probes candidate hosts with a fast /health
+// check and caches the first one that answers. getBaseUrl() prefers the cached
+// winner while fresh; the apiRequest fallback chain remains as safety net.
+const VERIFIED_HOST_TTL_MS = 2 * 60 * 1000;
+const VERIFIED_HOST_STORE_KEY = '@unitymap/apiHost';
+const PROBE_TIMEOUT_MS = 2500;
+let verifiedHost = null; // { host, at }
+let warmingPromise = null;
+
+const candidateHosts = () => {
+  const hosts = [];
+  const push = (h) => {
+    if (h && typeof h === 'string' && h.trim() && !hosts.includes(h.trim())) hosts.push(h.trim());
+  };
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.location?.hostname) push(window.location.hostname);
+    push('localhost');
+    return hosts;
+  }
+  try {
+    const override = typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_API_HOST : null;
+    if (override && typeof override === 'string' && override.trim()) push(override);
+  } catch {}
+  // Last-known-good first (cold-start speed); validated by probe below, never trusted blindly.
+  if (verifiedHost?.host) push(verifiedHost.host);
+  try {
+    const hostUri = Constants?.expoConfig?.hostUri || Constants?.manifest?.debuggerHost;
+    const h = hostUri && hostUri.split('://')[1]?.split('/')[0]?.split(':')[0];
+    if (h && h.trim()) push(h);
+  } catch {}
+  try {
+    const scriptURL = NativeModules?.SourceCode?.scriptURL;
+    const h = scriptURL && scriptURL.split('://')[1]?.split('/')[0]?.split(':')[0];
+    if (h && h.trim() && h !== 'localhost' && h !== '127.0.0.1') push(h);
+  } catch {}
+  push('10.0.2.2');
+  push('localhost');
+  return hosts;
+};
+
+const probeBase = async (base) => {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${base}/health`, { signal: controller.signal });
+    return !!r && r.status > 0 && r.status < 600;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+};
+
+/**
+ * Verify backend reachability and cache the winning host. Never throws —
+ * returns the working base URL or null (callers fall back to legacy resolution).
+ * Safe to call on every submit: instant when the cache is fresh.
+ */
+export const warmApiHost = async () => {
+  if (warmingPromise) return warmingPromise;
+  warmingPromise = (async () => {
+    try {
+      if (verifiedHost && Date.now() - verifiedHost.at < VERIFIED_HOST_TTL_MS) {
+        return `http://${verifiedHost.host}:${PRIMARY_PORT}/api`;
+      }
+      // Explicit full-URL override wins immediately when reachable (no sweep needed).
+      const explicit = explicitApiUrl();
+      if (explicit) {
+        if (await probeBase(explicit)) {
+          console.log(`[API] verified host: ${explicit} (EXPO_PUBLIC_API_URL)`);
+          return explicit;
+        }
+        return null;
+      }
+      // Cold start: seed from persisted last-known-good (validated by probe below).
+      if (!verifiedHost) {
+        try {
+          const stored = await AsyncStorage.getItem(VERIFIED_HOST_STORE_KEY);
+          if (stored) verifiedHost = { host: String(stored), at: 0 }; // at=0 forces re-probe, keeps priority
+        } catch {}
+      }
+      const ports = [PRIMARY_PORT, FALLBACK_PORT];
+      for (const port of ports) {
+        for (const host of candidateHosts()) {
+          const base = `http://${host}:${port}/api`;
+          if (await probeBase(base)) {
+            verifiedHost = { host, at: Date.now() };
+            try { await AsyncStorage.setItem(VERIFIED_HOST_STORE_KEY, host); } catch {}
+            console.log(`[API] verified host: ${base}`);
+            return base;
+          }
+        }
+      }
+      return null;
+    } finally {
+      warmingPromise = null;
+    }
+  })();
+  return warmingPromise;
+};
+
+// Coalesces concurrent identical background GETs (re-render / navigation remounts)
+// onto one shared promise so map polling can't spawn duplicate request storms.
+// POSTs/mutations are never deduped. Entries are removed on settle (no leak).
+const inflightGets = new Map();
+
 export const apiRequest = async (endpoint, options = {}) => {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  // Per-call timeout override (ms). Image uploads need far longer than plain GETs:
+  // aborting a healthy multipart POST at 20s both fails the submit AND mislabels it
+  // as "offline". Background GETs default to 20000ms (≥15000ms requirement).
+  // Never forward timeoutMs to fetch itself.
+  const { timeoutMs, ...fetchOptions } = options;
+  const timeout = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 20000;
+  const method = (fetchOptions.method || 'GET').toUpperCase();
+  const dedupKey = method === 'GET' && typeof fetchOptions.body === 'undefined'
+    ? `GET ${cleanEndpoint}`
+    : null;
+  if (dedupKey && inflightGets.has(dedupKey)) {
+    return inflightGets.get(dedupKey);
+  }
 
-  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  // Each request owns an independent AbortController/signal — background polls and
+  // the report submission can never cancel each other; only their own timeout aborts them.
+  const run = async () => {
+
+  const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
 
   const defaultHeaders = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     Accept: 'application/json',
   };
 
-  const tryFetch = async (baseUrl) => {
+  const tryFetch = async (baseUrl, timeoutOverride) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const attemptTimeout = typeof timeoutOverride === 'number' && timeoutOverride > 0 ? timeoutOverride : timeout;
+    const timeoutId = setTimeout(() => controller.abort(), attemptTimeout);
 
     console.log(`[API Request] Fetching: ${url}`);
 
     try {
       const response = await fetch(url, {
-        ...options,
-        headers: { ...defaultHeaders, ...options.headers },
+        ...fetchOptions,
+        headers: { ...defaultHeaders, ...fetchOptions.headers },
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`API Request Failed: ${response.status} ${response.statusText}`);
+        // Surface backend validation message (e.g. reportController 400s) instead of generic status text.
+        // Attaches structured fields so callers can render the exact field error without the wrapper.
+        let detail = '';
+        let backendError = '';
+        try {
+          const clone = typeof response.clone === 'function' ? response.clone() : null;
+          const errBody = clone ? await clone.json() : null;
+          detail = errBody?.message || '';
+          backendError = errBody?.error || '';
+        } catch {}
+        const extra = [detail, backendError && backendError !== detail ? backendError : ''].filter(Boolean).join(' | ');
+        const suffix = extra ? ` — ${extra}` : '';
+        const httpErr = new Error(`API Request Failed: ${response.status} ${response.statusText}${suffix}`);
+        httpErr.status = response.status;
+        httpErr.detail = detail;
+        httpErr.backendError = backendError;
+        httpErr.isHttpError = true;
+        throw httpErr;
       }
 
       const data = await response.json();
@@ -82,36 +284,78 @@ export const apiRequest = async (endpoint, options = {}) => {
     }
   };
 
+  // Throttle repeated fallback logging per endpoint — background polling (health checks,
+  // location-driven nearby fetches) against an unreachable backend would otherwise spam
+  // a warning + error toast on every poll cycle. Behavior is unchanged: errors still throw.
+  const logKey = `${cleanEndpoint}`;
+  const shouldLogWarn = (() => {
+    const now = Date.now();
+    const last = apiRequest._lastWarnAt?.[logKey] || 0;
+    if (now - last < 60000) return false;
+    (apiRequest._lastWarnAt = apiRequest._lastWarnAt || {})[logKey] = now;
+    return true;
+  })();
+
+  // Retry fallback hosts only on true network failures — never on HTTP 4xx validation
+  // errors (retrying a 400 against 3 more hosts just multiplies confusing warnings).
+  const isRetryableNetworkError = (err) => {
+    if (!err) return false;
+    if (err.isHttpError) return err.status >= 500 || err.status === 429;
+    if (typeof err.status === 'number' && err.status >= 400 && err.status < 500) return false;
+    const raw = `${err?.message || ''}`.toLowerCase();
+    if (/api request failed:\s*4\d\d\b/.test(raw)) return false;
+    return /network|fetch|abort|offline|failed to fetch|econn|etimedout|timeout|unreachable|all connection attempts failed|load failed/.test(raw);
+  };
+
   // Try primary configured port
   try {
     return await tryFetch(getBaseUrl(PRIMARY_PORT));
   } catch (primaryErr) {
-    console.warn(
-      `[API Warning] Endpoint ${cleanEndpoint} unreachable on port ${PRIMARY_PORT} (${primaryErr.message}). Retrying fallback...`
-    );
+    if (!isRetryableNetworkError(primaryErr)) throw primaryErr;
+    if (shouldLogWarn) {
+      console.warn(
+        `[API Warning] Endpoint ${cleanEndpoint} unreachable on port ${PRIMARY_PORT} (${primaryErr.message}). Retrying fallback...`
+      );
+    }
 
-    // Try fallback port (5001)
+    // Try fallback port (5001) — same host, full timeout (covers backend port-shift)
     try {
       return await tryFetch(getBaseUrl(FALLBACK_PORT));
     } catch (fallbackErr) {
-      // If native mobile failed on LAN IP, try localhost / 10.0.2.2 as last resort
+      // Speculative emulator hosts get a short timeout and are skipped when they
+      // duplicate a URL already attempted — they must fail fast, not hang per host.
+      const tried = new Set([getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)]);
+      const trySpeculative = async (baseUrl) => {
+        if (tried.has(baseUrl)) return null;
+        tried.add(baseUrl);
+        return tryFetch(baseUrl, Math.min(timeout, 8000));
+      };
       if (Platform.OS !== 'web') {
         try {
-          return await tryFetch(`http://10.0.2.2:${PRIMARY_PORT}/api`);
-        } catch (emuErr) {
-          try {
-            return await tryFetch(`http://localhost:${PRIMARY_PORT}/api`);
-          } catch (_) {}
-        }
+          const r = await trySpeculative(`http://10.0.2.2:${PRIMARY_PORT}/api`);
+          if (r) return r;
+          const r2 = await trySpeculative(`http://localhost:${PRIMARY_PORT}/api`);
+          if (r2) return r2;
+        } catch (_) {}
       }
 
-      console.error(
-        `[API Error] All connection attempts failed for ${cleanEndpoint}:`,
-        primaryErr.message
-      );
+      if (shouldLogWarn) {
+        console.error(
+          `[API Error] All connection attempts failed for ${cleanEndpoint}:`,
+          primaryErr.message
+        );
+      }
       throw primaryErr;
     }
   }
+  };
+
+  if (!dedupKey) return run();
+  const shared = run();
+  inflightGets.set(dedupKey, shared);
+  const cleanup = () => { if (inflightGets.get(dedupKey) === shared) inflightGets.delete(dedupKey); };
+  shared.then(cleanup, cleanup);
+  return shared;
 };
 
 // Node & Destination Endpoints
@@ -292,75 +536,66 @@ export const createReport = async (reportData, photoFile) => {
 
   const formData = new FormData();
 
-  // FIX: Unsupported FormDataPart - Expo requires {uri, name, type} on native, File/Blob only on web
-  // Never append raw string, number, or File on native. Always convert to RN file object on native.
-  if (Platform.OS === 'web') {
-    // Web: browser FormData accepts File/Blob
-    if (photoFile instanceof File || photoFile instanceof Blob) {
-      const fileName = photoFile.name || `photo_${Date.now()}.jpg`;
-      formData.append('photo', photoFile, fileName);
-    } else if (typeof photoFile === 'object' && photoFile.uri) {
-      const uri = photoFile.uri;
-      const name = photoFile.name || `photo_${Date.now()}.jpg`;
-      const type = photoFile.type || 'image/jpeg';
-      if (typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:'))) {
+  // Strict multipart shaping per platform — never append a plain object on Web
+  // (web FormData only accepts string/Blob/File; a {uri,name,type} object throws
+  // "Unsupported FormDataPart implementation"). Native (Expo Go) requires the
+  // { uri, name, type } shape; File/Blob on native throws the same error.
+  const toPhotoPart = async (photo) => {
+    const fileNameOf = (p, fallback) => p?.fileName || p?.name || fallback;
+    const typeOf = (p) => p?.type || 'image/jpeg';
+    if (Platform.OS === 'web') {
+      if (typeof File !== 'undefined' && (photo instanceof File || photo instanceof Blob)) {
+        const file = photo instanceof File ? photo : new File([photo], `photo_${Date.now()}.jpg`, { type: photo.type || 'image/jpeg' });
+        return { kind: 'file', file, fileName: file.name };
+      }
+      const uri = typeof photo === 'string' ? photo : photo?.uri;
+      if (typeof uri === 'string' && uri) {
+        // Convert blob:/data:/file: URIs into a real File before appending.
+        // A fetch failure here means the image bytes are unreadable (e.g. stale
+        // blob URL after reload) — surface as a photo error, NOT a network error,
+        // so the caller shows "retake" instead of wrongly queueing offline.
+        let blob;
         try {
           const resp = await fetch(uri);
-          const blob = await resp.blob();
-          const file = new File([blob], name, { type: blob.type || type });
-          formData.append('photo', file, name);
+          blob = await resp.blob();
         } catch {
-          // fallback to uri object even on web if fetch fails
-          formData.append('photo', { uri, name, type });
+          throw new Error('Could not read selected image — please retake or pick another image.');
         }
-      } else {
-        // web may also need blob fetch for file:// URIs
-        try {
-          const resp = await fetch(uri);
-          const blob = await resp.blob();
-          const file = new File([blob], name, { type: blob.type || type });
-          formData.append('photo', file, name);
-        } catch {
-          formData.append('photo', { uri, name, type });
-        }
+        const name = typeof photo === 'object' ? fileNameOf(photo, `photo_${Date.now()}.jpg`) : `photo_${Date.now()}.jpg`;
+        const file = new File([blob], name, { type: blob.type || typeOf(photo) });
+        return { kind: 'file', file, fileName: name };
       }
-    } else if (typeof photoFile === 'string' && (photoFile.startsWith('blob:') || photoFile.startsWith('data:'))) {
-      try {
-        const resp = await fetch(photoFile);
-        const blob = await resp.blob();
-        const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' });
-        formData.append('photo', file, file.name);
-      } catch {
-        formData.append('photo', photoFile);
-      }
-    } else {
-      formData.append('photo', photoFile);
+      throw new Error('Could not read selected image — please retake or pick another image.');
     }
-  } else {
-    // Native (iOS/Android): MUST be { uri, name, type } - File/Blob causes "Unsupported FormDataPart"
-    if (typeof photoFile === 'object' && photoFile.uri) {
-      const uri = photoFile.uri;
-      const name = photoFile.name || `photo_${Date.now()}.jpg`;
-      const type = photoFile.type || 'image/jpeg';
-      formData.append('photo', { uri, name, type });
-    } else if (photoFile instanceof File || photoFile instanceof Blob) {
-      // Native should never receive File/Blob, but handle defensively by warning and converting to uri obj if possible
-      // Attempt to create temp uri - fallback to JSON photoUrl path
-      console.warn('[createReport] File/Blob on native - converting to uri object fallback');
-      formData.append('photo', {
-        uri: photoFile.uri || `file:///tmp/photo_${Date.now()}.jpg`,
-        name: photoFile.name || `photo_${Date.now()}.jpg`,
-        type: photoFile.type || 'image/jpeg',
-      });
-    } else if (typeof photoFile === 'string') {
-      formData.append('photo', {
-        uri: photoFile,
-        name: `photo_${Date.now()}.jpg`,
-        type: 'image/jpeg',
-      });
-    } else {
-      formData.append('photo', photoFile);
+    // Native (iOS/Android / Expo Go): MUST be { uri, name, type }
+    if (photo && typeof photo === 'object' && typeof photo.uri === 'string' && photo.uri) {
+      return {
+        kind: 'uri-part',
+        part: { uri: photo.uri, name: fileNameOf(photo, 'barrier.jpg'), type: typeOf(photo) },
+      };
     }
+    if (typeof photo === 'string' && photo) {
+      return { kind: 'uri-part', part: { uri: photo, name: 'barrier.jpg', type: 'image/jpeg' } };
+    }
+    const partErr = new Error('Invalid photo attachment — please retake or pick another image.');
+    partErr.code = 'PHOTO_PART';
+    throw partErr;
+  };
+
+  const photoPart = await toPhotoPart(photoFile);
+  // Guard the native append itself: if the RN runtime rejects the part, tag the stage
+  // (PHOTO_APPEND) instead of surfacing an anonymous native error.
+  try {
+    if (photoPart.kind === 'file') {
+      formData.append('photo', photoPart.file, photoPart.fileName);
+    } else {
+      formData.append('photo', photoPart.part);
+    }
+  } catch (appendErr) {
+    const err = new Error(`Photo append failed (${appendErr?.message || 'native FormData rejected the part'}) — please retake or pick another image.`);
+    err.code = 'PHOTO_APPEND';
+    err.cause = appendErr;
+    throw err;
   }
 
   // Append text fields ensuring all are stringified (FormData only supports string/blob)
@@ -381,14 +616,20 @@ export const createReport = async (reportData, photoFile) => {
   const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
   const lng = reportData.coordinates?.longitude ?? reportData.longitude ?? reportData.lng ?? reportData.lon;
   const capturedIso = (() => {
-    const raw = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
-    if (raw instanceof Date) return raw.toISOString();
-    if (typeof raw === 'string' && raw) return new Date(raw).toISOString();
+    try {
+      const raw = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
+      if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw.toISOString();
+      if (typeof raw === 'string' && raw) {
+        const d = new Date(raw);
+        if (!Number.isNaN(d.getTime())) return d.toISOString();
+      }
+    } catch {}
     return new Date().toISOString();
   })();
 
   appendString('name', reportData.name || (category ? `${category} Barrier` : `Barrier Report`));
-  appendString('locationName', reportData.locationName || reportData.location || 'Assigned Jurisdiction');
+  // locationName must be a string — never coerce the GeoJSON `location` object (would send "[object Object]")
+  appendString('locationName', typeof reportData.locationName === 'string' && reportData.locationName ? reportData.locationName : 'Assigned Jurisdiction');
   appendString('condition', reportData.condition || 'bad');
   appendString('category', category);
   appendString('rating', ratingStr);
@@ -405,9 +646,12 @@ export const createReport = async (reportData, photoFile) => {
   if (reportData.reporterName) appendString('reporterName', String(reportData.reporterName));
   if (reportData.photoUrl) appendString('photoUrl', String(reportData.photoUrl));
 
+  // 60s: multipart image POSTs include server-side Cloudinary upload time — aborting
+  // at the default 20s would kill healthy uploads and mislabel them as "offline".
   return apiRequest('/reports', {
     method: 'POST',
     body: formData,
+    timeoutMs: 60000,
   });
 };
 
@@ -418,6 +662,7 @@ export const createBarrierReport = (reportData) =>
   apiRequest('/reports', {
     method: 'POST',
     body: JSON.stringify(reportData),
+    timeoutMs: 30000,
   });
 
 const getAuthHeaders = async () => {
@@ -447,6 +692,8 @@ export default {
   API_BASE_URL,
   getBaseUrl,
   getHostAddress,
+  explicitApiUrl,
+  warmApiHost,
   apiRequest,
   getNodes,
   getNearbyNodes,
