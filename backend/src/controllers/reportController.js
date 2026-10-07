@@ -131,10 +131,13 @@ exports.createReport = async (req, res) => {
     const uploadedFile = req.file || (req.files && req.files.photo && req.files.photo[0]) || null;
     if (uploadedFile) {
       try {
+        console.log(`📷 Image received: ${uploadedFile.size} bytes, mimetype=${uploadedFile.mimetype}`);
+        console.log('☁️ Uploading image to Cloudinary...');
         const result = await uploadBufferToCloudinary(uploadedFile.buffer, uploadedFile.mimetype, {
           public_id: undefined,
         });
         photoUrl = result.secure_url;
+        console.log(`☁️ Cloudinary upload successful: ${photoUrl}`);
       } catch (uploadErr) {
         console.error('Cloudinary upload failed:', uploadErr);
         const isConfigErr = uploadErr.message && uploadErr.message.includes('not configured');

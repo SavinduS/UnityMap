@@ -9,7 +9,12 @@ import BaseMap from '../../components/BaseMap';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { loadVolunteerDraft, saveVolunteerDraft, clearVolunteerDraft, loadPendingReports, queuePendingReport, removePendingReport, syncPendingReports } from '../../theme/storage';
-import { createBarrierReport, createReport, getReports } from '../../services/api';
+import { createBarrierReport, createReport, getReports, getBaseUrl, warmApiHost, PRIMARY_PORT, FALLBACK_PORT } from '../../services/api';
+import { isDirectUploadConfigured, uploadToCloudinary } from '../../utils/cloudinaryUpload';
+// Static FileSystem import: the root/legacy modules are proven present on-device
+// (offlineVoiceCache uses them), while dynamic import() is an unproven failure
+// point that once collapsed every upload tier into a false photo error.
+import * as LegacyFS from 'expo-file-system/legacy';
 import { useLocation } from '../../hooks/useLocation';
 import { toBarrierReportFields } from '../../utils/exifHelper';
 import CorroborateButton from '../../components/CorroborateButton';
@@ -137,6 +142,57 @@ const miniMapStyles = StyleSheet.create({
   },
 });
 
+// Module-level photo helpers (no hooks needed): dev-gated logging, static FileSystem
+// resolution, and extension-based MIME resolution.
+// Diagnostics are Metro-only and automatically silent in release builds.
+const photoLog = (...args) => {
+  try {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[photo]', ...args);
+  } catch {}
+};
+
+let cachedFSLogged = false;
+// Resolve the FileSystem API from the STATIC import above (never dynamic import:
+// a failed dynamic import on-device once collapsed every upload tier into a false
+// photo error). Logs once in dev; silent in release via photoLog.
+const resolveFS = async () => {
+  try {
+    const FS = LegacyFS && (typeof LegacyFS.uploadAsync === 'function' || typeof LegacyFS.readAsStringAsync === 'function')
+      ? LegacyFS
+      : null;
+    if (!cachedFSLogged) {
+      cachedFSLogged = true;
+      photoLog(`FS api via=static upload=${typeof FS?.uploadAsync === 'function'} read=${typeof FS?.readAsStringAsync === 'function'} getInfo=${typeof FS?.getInfoAsync === 'function'}`);
+    }
+    return { FS, via: FS ? 'static' : null };
+  } catch (e) {
+    photoLog(`FS static module unusable err=${e?.message || 'unknown'}`);
+    return { FS: null, via: null };
+  }
+};
+
+const EXT_MIME_MAP = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+};
+// Resolve MIME from URI extension, trusting an explicitly declared non-default type.
+// Never throws; always returns a usable image MIME.
+const mimeFromUri = (uri, declared) => {
+  if (declared && declared !== 'image/jpeg') return declared;
+  try {
+    const clean = String(uri || '').split('?')[0].split('#')[0];
+    const ext = clean.split('.').pop()?.toLowerCase();
+    if (ext && EXT_MIME_MAP[ext]) return EXT_MIME_MAP[ext];
+  } catch {}
+  return declared || 'image/jpeg';
+};
+
 export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation }) => {
   const { palette, borderWidth, isHighContrast, announce } = useTheme();
   const { location: deviceLocation, getCurrentLocation } = useLocation();
@@ -215,41 +271,180 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
   const [pendingCount, setPendingCount] = useState(0);
   const [syncingPending, setSyncingPending] = useState(false);
 
-  // Direct MongoDB persist: HTTP POST /api/reports via api.js (multipart `photo` or JSON `photoUrl`)
-  // Shaping only — api.js owns strict per-platform FormData construction (never appends
-  // plain objects on web). Pre-flight assert converts a native crash into a clear photo error.
+  // Direct MongoDB persist: HTTP POST /api/reports. Web uses RN multipart (proven).
+  // Native uses three tiers — RN multipart → FileSystem.uploadAsync (OS-level upload,
+  // immune to RN FormData quirks) → base64 JSON — with HTTP validation errors
+  // short-circuiting immediately at every tier.
+  // Native FileSystem-tier timeout (ms). A blackholed host must fail fast here — the
+  // RN tier already spent its own timeout; hanging again stalls submit.
+  const NATIVE_TIER_TIMEOUT = 45000;
+
+  // Race helper: timeouts reject but never cancel the underlying op (its result is ignored).
+  const raceTimeout = (promise, ms, message) => {
+    let timer;
+    const t = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, t]).finally(() => clearTimeout(timer));
+  };
+
+  // Serialize report fields exactly like api.createReport so the native FileSystem
+  // upload sends an identical multipart body (uploadAsync parameters must be strings).
+  const buildUploadParameters = (reportData) => {
+    const params = {};
+    const put = (k, v) => {
+      if (v !== undefined && v !== null && v !== '') params[k] = String(v);
+    };
+    const putJson = (k, v) => {
+      if (v === undefined || v === null) return;
+      params[k] = v instanceof Date ? v.toISOString() : typeof v === 'object' ? JSON.stringify(v) : String(v);
+    };
+    const category = reportData.category;
+    const lat = reportData.coordinates?.latitude ?? reportData.latitude ?? reportData.lat;
+    const lng = reportData.coordinates?.longitude ?? reportData.longitude ?? reportData.lng ?? reportData.lon;
+    let capturedIso;
+    try {
+      const raw = reportData.capturedAt ?? reportData.timestamp ?? reportData.photoTakenAt;
+      capturedIso = raw instanceof Date && !Number.isNaN(raw.getTime()) ? raw.toISOString() : null;
+      if (!capturedIso && typeof raw === 'string' && raw) {
+        const d = new Date(raw);
+        capturedIso = !Number.isNaN(d.getTime()) ? d.toISOString() : null;
+      }
+    } catch {}
+    if (!capturedIso) capturedIso = new Date().toISOString();
+    put('name', reportData.name || (category ? `${category} Barrier` : 'Barrier Report'));
+    put('locationName', typeof reportData.locationName === 'string' && reportData.locationName ? reportData.locationName : 'Assigned Jurisdiction');
+    put('condition', reportData.condition || 'bad');
+    put('category', category);
+    put('rating', reportData.rating !== undefined && reportData.rating !== null ? String(reportData.rating) : undefined);
+    put('notes', reportData.notes ?? reportData.note ?? '');
+    if (lat !== undefined && lat !== null) put('latitude', String(lat));
+    if (lng !== undefined && lng !== null) put('longitude', String(lng));
+    put('capturedAt', capturedIso);
+    putJson('coordinates', reportData.coordinates || (lat !== undefined && lng !== undefined ? { latitude: Number(lat), longitude: Number(lng) } : undefined));
+    putJson('exifMetadata', reportData.exifMetadata);
+    if (reportData.reporterId) put('reporterId', String(reportData.reporterId));
+    if (reportData.photoUrl) put('photoUrl', String(reportData.photoUrl));
+    return params;
+  };
+
+  // Tier 1 (native only): FileSystem.uploadAsync multipart. Uses OS-level upload
+  // instead of RN fetch FormData, so RN transport quirks can't break it. Throws
+  // apiRequest-shaped HTTP errors (status/detail/isHttpError) for validation and
+  // transport errors otherwise, preserving all downstream routing. A missing FS
+  // API throws a coded skip-signal (FS_UNAVAILABLE) — never a photo error.
+  const uploadNativeViaFileSystem = async (payload, part) => {
+    const { FS } = await resolveFS();
+    if (!FS || typeof FS.uploadAsync !== 'function' || !FS?.FileSystemUploadType) {
+      const unavailable = new Error('FileSystem upload unavailable');
+      unavailable.code = 'FS_UNAVAILABLE';
+      throw unavailable;
+    }
+    const uri = typeof part === 'string' ? part : part?.uri;
+    const name = (typeof part === 'object' && (part.name || part.fileName)) || 'barrier.jpg';
+    const type = (typeof part === 'object' && part.type) || 'image/jpeg';
+    if (!uri || typeof uri !== 'string') throw new Error('FileSystem upload unavailable');
+    const res = await raceTimeout(
+      FS.uploadAsync(`${getBaseUrl()}/reports`, uri, {
+        httpMethod: 'POST',
+        uploadType: FS.FileSystemUploadType.MULTIPART,
+        fieldName: 'photo',
+        mimeType: type,
+        parameters: buildUploadParameters(payload),
+        headers: { Accept: 'application/json' },
+      }),
+      NATIVE_TIER_TIMEOUT,
+      'FileSystem upload timed out (network)'
+    );
+    let data = null;
+    try {
+      data = res?.body ? JSON.parse(res.body) : null;
+    } catch {
+      data = null;
+    }
+    const status = res?.status ?? 0;
+    if (status >= 200 && status < 300) {
+      if (!data) throw new Error('Invalid server response');
+      return data;
+    }
+    const err = new Error(`API Request Failed: ${status}${data?.message ? ` — ${data.message}` : ''}${data?.error && data.error !== data?.message ? ` | ${data.error}` : ''}`);
+    err.isHttpError = true;
+    err.status = status;
+    err.detail = data?.message || '';
+    err.backendError = data?.error || '';
+    throw err;
+  };
+
+  // Dev-only photo diagnostics: shape only (scheme, no URIs/PII) so a single Metro
+  // log line identifies which stage rejected a native photo. Silent in release.
+  const logPhotoShape = useCallback((stage, pm) => {
+    try {
+      const uri = typeof pm === 'string' ? pm : pm?.uri;
+      photoLog(`stage=${stage} platform=${Platform.OS} kind=${pm instanceof File || (typeof Blob !== 'undefined' && pm instanceof Blob) ? 'file' : typeof pm} scheme=${typeof uri === 'string' ? uri.split(':')[0] : 'none'} hasName=${!!(pm?.name || pm?.fileName)} type=${pm?.type || 'default'}`);
+    } catch {}
+  }, []);
+
+  // Native reachability probe: cheap GETs (primary + fallback port) BEFORE any photo
+  // tier runs. Any HTTP response = server alive (proceed). Transport failure on both
+  // = offline → sentinel error that routes straight to the offline queue, so a dead
+  // network can never surface as a misleading photo modal or waste tier latency.
+  const probeBackendReachable = async () => {
+    const tryProbe = async (base) => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      try {
+        const r = await fetch(`${base}/health`, { signal: ctrl.signal });
+        return !!r && r.status >= 200 && r.status < 600;
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(t);
+      }
+    };
+    if (await tryProbe(getBaseUrl(PRIMARY_PORT))) return true;
+    try {
+      if (await tryProbe(getBaseUrl(FALLBACK_PORT))) return true;
+    } catch {}
+    return false;
+  };
+
   const submitToApi = useCallback(async (payload, photoMeta) => {
     if (photoMeta != null) {
       const isFile = typeof File !== 'undefined' && (photoMeta instanceof File || photoMeta instanceof Blob);
       const isUriPart = photoMeta && typeof photoMeta === 'object' && typeof photoMeta.uri === 'string' && !!photoMeta.uri;
       const isUriString = typeof photoMeta === 'string' && !!photoMeta;
       if (!isFile && !isUriPart && !isUriString) {
-        throw new Error('Invalid photo attachment — please retake or pick another image.');
+        logPhotoShape('PHOTO_PREFLIGHT', photoMeta);
+        const preErr = new Error('Invalid photo attachment — please retake or pick another image.');
+        preErr.code = 'PHOTO_PREFLIGHT';
+        throw preErr;
       }
     }
-    const normalizePhotoForUpload = async (pf) => {
+    // Native only: warm the verified API host first so the probe and all tiers use
+    // a reachable address (not a stale/emulator one), then verify reachability.
+    // Unreachable → offline sentinel (queued, never a photo modal).
+    if (Platform.OS !== 'web') {
+      try { await warmApiHost(); } catch {}
+      let reachable = false;
+      try {
+        reachable = await probeBackendReachable();
+      } catch {
+        reachable = false;
+      }
+      photoLog(`probe reachable=${reachable}`);
+      if (!reachable) {
+        throw new Error('Device offline (backend unreachable) — queueing report locally.');
+      }
+    }
+    // Pure shaper — NO byte reads, NO stat calls, NO fetch→blob on native. Existence
+    // and readability are proven by attempting the upload itself; pre-checks caused
+    // false "Photo attachment failed" modals (scoped-storage false negatives).
+    const normalizePhotoForUpload = (pf) => {
       if (!pf) return null;
       if (Platform.OS !== 'web') {
         // Native (Expo Go): strip to the exact { uri, name, type } shape api.js expects
         if (typeof pf === 'object' && typeof pf.uri === 'string' && pf.uri) {
-          // Guard sync-retry path too: a queued file:// that was deleted since can
-          // never upload — fail fast as a photo error (dropped after retry) instead
-          // of looping the offline queue forever.
-          if (/^(file|content|ph):\/\//i.test(pf.uri)) {
-            try {
-              const FS = await import('expo-file-system');
-              if (FS && typeof FS.getInfoAsync === 'function') {
-                const info = await FS.getInfoAsync(pf.uri);
-                if (info && info.exists === false) {
-                  throw new Error('Could not read selected image — please retake or pick another image.');
-                }
-              }
-            } catch (e) {
-              if (/could not read selected image/i.test(e?.message || '')) throw e;
-              // Existence check unavailable — proceed, network/backend validates.
-            }
-          }
-          return { uri: pf.uri, name: pf.name || pf.fileName || 'barrier.jpg', type: pf.type || 'image/jpeg' };
+          return { uri: pf.uri, name: pf.name || pf.fileName || 'barrier.jpg', type: mimeFromUri(pf.uri, pf.type) };
         }
         return pf;
       }
@@ -257,7 +452,95 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
     };
     const normalizedPhoto = await normalizePhotoForUpload(photoMeta);
     if (normalizedPhoto) {
-      return createReport(payload, normalizedPhoto);
+      // Web: single RN multipart path (proven working).
+      if (Platform.OS === 'web') {
+        return createReport(payload, normalizedPhoto);
+      }
+      // Native three-tier upload, most reliable first:
+      // 1. FileSystem.uploadAsync — OS-level multipart, no RN FormData involved,
+      //    no JS-side byte reads. This sidesteps the "Unsupported FormDataPart"
+      //    rejection this device's RN runtime throws at Tier 2.
+      // 2. RN multipart (api.createReport) — keeps host-fallback chain where it works.
+      // 3. Base64 JSON — backend data-URI path straight to Cloudinary.
+      // HTTP validation errors short-circuit immediately at every tier (never retried).
+      // Missing FS APIs skip their tier instead of failing it: an unavailable API is
+      // not proof of a bad photo, so it must never collapse into PHOTO_BYTES (which
+      // would mask plain network outages as photo errors).
+      const part = typeof normalizedPhoto === 'string'
+        ? { uri: normalizedPhoto, name: 'barrier.jpg', type: mimeFromUri(normalizedPhoto) }
+        : normalizedPhoto;
+      const isFinalHttp = (e) => e?.isHttpError && !(e.status >= 500 || e.status === 429);
+      const isPermanentServer = (e) => /not configured|photo upload service/i.test(`${e?.detail || ''} ${e?.message || ''}`);
+      // Tier 0 (opt-in): direct unsigned Cloudinary upload — active only when
+      // EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME + UPLOAD_PRESET are configured. Skips
+      // the backend hop entirely; falls through to backend tiers on any failure.
+      if (isDirectUploadConfigured()) {
+        try {
+          const directUrl = await uploadToCloudinary(part);
+          const directRes = await createBarrierReport({ ...payload, photoUrl: directUrl });
+          const directOk = directRes && (directRes.success || directRes.data);
+          if (!directOk && directRes && directRes.success === false) throw new Error(directRes.message || 'Direct upload save failed');
+          photoLog('direct Cloudinary tier succeeded');
+          return directRes;
+        } catch (directErr) {
+          photoLog(`direct Cloudinary tier failed (${directErr?.message || 'unknown'}), trying backend tiers`);
+        }
+      }
+      try {
+        return await uploadNativeViaFileSystem(payload, part);
+      } catch (fsErr) {
+        if (isFinalHttp(fsErr) || isPermanentServer(fsErr)) throw fsErr;
+        if (fsErr?.code === 'FS_UNAVAILABLE') {
+          photoLog('FileSystem tier skipped (API unavailable), trying RN multipart tier');
+        } else {
+          photoLog(`FileSystem tier failed (${fsErr?.isHttpError ? `HTTP ${fsErr.status}` : fsErr?.message || 'transport'}), trying RN multipart tier`);
+        }
+        try {
+          return await createReport(payload, normalizedPhoto);
+        } catch (uploadErr) {
+          if (isFinalHttp(uploadErr)) throw uploadErr;
+          photoLog(`RN multipart failed (${uploadErr?.message || 'unknown'}), trying base64 tier`);
+          // Transport failure: RN fetch reports unreadable file parts as generic
+          // network errors, so verify the bytes directly. Unreadable → genuine
+          // photo error (never queued). Readable → retry once as base64 JSON, which
+          // the backend uploads to Cloudinary via its data-URI path; if that also
+          // fails, rethrow the most recent transport error to preserve routing.
+          logPhotoShape('PHOTO_BASE64_RETRY', part);
+          const { FS: readFS } = await resolveFS();
+          if (!readFS || typeof readFS.readAsStringAsync !== 'function') {
+            // Cannot examine bytes at all — preserve the transport error so network
+            // dropouts still route to the offline queue instead of a photo modal.
+            photoLog('base64 tier skipped (read API unavailable)');
+            throw uploadErr;
+          }
+          let b64 = null;
+          let readErrMsg = '';
+          try {
+            b64 = await readFS.readAsStringAsync(part.uri, { encoding: readFS?.EncodingType?.Base64 || 'base64' });
+          } catch (readErr) {
+            b64 = null;
+            readErrMsg = readErr?.message || '';
+            photoLog(`base64 read failed: ${readErrMsg} scheme=${String(part.uri || '').split(':')[0]}`);
+          }
+          if (!b64) {
+            const bytesErr = new Error('Could not read selected image — please retake or pick another image.');
+            bytesErr.code = 'PHOTO_BYTES';
+            throw bytesErr;
+          }
+          try {
+            const b64Res = await createBarrierReport({ ...payload, photoUrl: `data:${part.type || 'image/jpeg'};base64,${b64}` });
+            const ok = b64Res && (b64Res.success || b64Res.data);
+            if (!ok && b64Res && b64Res.success === false) throw new Error(b64Res.message || 'Base64 upload failed');
+            return b64Res;
+          } catch (b64PostErr) {
+            // Freshest error wins: the base64 POST reflects current connectivity, while
+            // uploadErr may be a stale RN-transport quirk from an earlier tier. Throwing
+            // the stale error here once caused raw "Unsupported FormDataPart" modals
+            // during plain network outages instead of the correct offline queue.
+            throw b64PostErr || uploadErr;
+          }
+        }
+      }
     }
     const uri = payload?.photoUrl;
     if (uri && typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:')) && Platform.OS === 'web') {
@@ -273,7 +556,7 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       }
     }
     return createBarrierReport(payload);
-  }, []);
+  }, [logPhotoShape]);
 
   // Single queued-entry submitter shared by manual + mount auto-sync. Entries whose
   // photo bytes are permanently unreadable (e.g. revoked blob URL from an older app
@@ -286,9 +569,17 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       if (!ok && res && res.success === false) throw new Error(res.message || 'Sync failed');
       return res;
     } catch (e) {
-      const raw = `${e?.message || ''}`.toLowerCase();
-      const deadPhoto = /formdata|formdatapart|invalid photo attachment|could not read selected image/.test(raw);
-      if (deadPhoto && (entry?.attempts || 0) >= 1 && entry?.id) {
+      // HTTP errors are never photo errors (a 404 body saying "not found" must not
+      // match the file-missing patterns below). Validation 400s also drop after a
+      // retry — they can never succeed by resubmitting the same payload.
+      if (!e?.isHttpError) {
+        const raw = `${e?.message || ''} ${e?.code || ''}`.toLowerCase();
+        const deadPhoto = /formdata|formdatapart|invalid photo attachment|could not read selected image|photo append|photo_preflight|photo_stat|photo_part|photo_bytes|no such file|enoent/.test(raw);
+        if (deadPhoto && (entry?.attempts || 0) >= 1 && entry?.id) {
+          try { await removePendingReport(entry.id); } catch {}
+          return { dropped: true };
+        }
+      } else if (e.status >= 400 && e.status < 500 && (entry?.attempts || 0) >= 1 && entry?.id) {
         try { await removePendingReport(entry.id); } catch {}
         return { dropped: true };
       }
@@ -326,9 +617,12 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
 
   // FormData/photo shaping failures must never enter the offline queue — the same
   // payload would fail on every sync retry. Show a photo-specific message instead.
+  // HTTP errors are excluded: a backend message merely containing "not found" must
+  // never be mistaken for a missing local file.
   const isFormDataError = useCallback((e) => {
-    const raw = `${e?.message || ''} ${e?.cause?.message || ''}`.toLowerCase();
-    return /formdata|formdatapart|invalid photo attachment|could not read selected image/.test(raw);
+    if (e?.isHttpError) return false;
+    const raw = `${e?.message || ''} ${e?.cause?.message || ''} ${e?.code || ''}`.toLowerCase();
+    return /formdata|formdatapart|invalid photo attachment|could not read selected image|photo append|photo_preflight|photo_stat|photo_part|photo_bytes|no such file|enoent/.test(raw);
   }, []);
 
   // Prefer the exact backend validation message (reportController.js) over the
@@ -778,37 +1072,26 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       timestamp: resolvedCapturedAt,
       reporterId,
     };
-    // Spec-formatted image part for multipart body (fixes Unsupported FormDataPart)
+    // Spec-formatted image part for multipart body (fixes Unsupported FormDataPart).
+    // MIME prefers the picker's declared type, else the URI extension.
     const photoMeta = photoFile
       ? (Platform.OS !== 'web'
-          ? { uri: photoFile.uri || photoFile, name: photoFile.name || photoFile.fileName || 'barrier.jpg', type: photoFile.type || 'image/jpeg' }
+          ? (() => {
+              const uri = photoFile.uri || photoFile;
+              return { uri, name: photoFile.name || photoFile.fileName || 'barrier.jpg', type: mimeFromUri(uri, photoFile.type) };
+            })()
           : photoFile)
       : null;
 
     // Auto-upload: File objects can't survive storage reload, but the persisted local
-    // URI often still exists on disk — rebuild the multipart payload from it so the
-    // user doesn't have to retake. Never JSON-submit a device-local URI (backend 400s
-    // those); if the file is positively gone, stop here with a retake prompt.
+    // URI is rebuilt verbatim into a multipart part — NO existence pre-checks, NO byte
+    // reads. Readability is proven by attempting the upload tiers themselves; stat
+    // gates caused false "Photo attachment failed" modals. Never JSON-submit a
+    // device-local URI (backend 400s those).
     let effectivePhotoMeta = photoMeta;
     if (!effectivePhotoMeta && imageUri && typeof imageUri === 'string' && Platform.OS !== 'web' && /^(file|content|ph):\/\//i.test(imageUri)) {
-      const rebuilt = { uri: imageUri, name: `photo_${Date.now()}.jpg`, type: 'image/jpeg' };
-      let status = 'unknown';
-      try {
-        const FS = await import('expo-file-system');
-        if (FS && typeof FS.getInfoAsync === 'function') {
-          const info = await FS.getInfoAsync(imageUri);
-          status = info?.exists ? 'exists' : 'missing';
-        }
-      } catch {}
-      if (status === 'exists' || status === 'unknown') {
-        effectivePhotoMeta = rebuilt;
-      } else {
-        const goneMsg = 'The saved photo is no longer available on this device — please capture or pick the photo again.';
-        setErrorMsg(goneMsg);
-        try { AccessibilityInfo.announceForAccessibility(`Error: ${goneMsg}`); } catch {}
-        try { Alert.alert('Photo expired', goneMsg); } catch {}
-        return;
-      }
+      effectivePhotoMeta = { uri: imageUri, name: `photo_${Date.now()}.jpg`, type: mimeFromUri(imageUri) };
+      logPhotoShape('PHOTO_REBUILT', effectivePhotoMeta);
     }
 
     const resetWizard = async () => {
@@ -874,10 +1157,15 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
       // flow — never let it surface a misleading error modal over the 201 result.
       if (submitAttemptRef.current !== attempt) return;
       if (Date.now() - lastSuccessAtRef.current < 5000) return;
-      // Photo shaping failure → actionable message, never queued (would fail every retry)
+      // Photo shaping failure → actionable message, never queued (would fail every retry).
+      // In dev, append the stage code + underlying native message so one Metro log line
+      // identifies the exact failure instead of hiding behind the generic modal text.
       if (isFormDataError(e)) {
         const photoMsg = "Couldn't attach the photo — please retake or pick another image, then submit again.";
-        setErrorMsg(photoMsg);
+        const devDetail = (typeof __DEV__ !== 'undefined' && __DEV__ && (e?.code || e?.message))
+          ? ` [${e.code || 'PHOTO'}] ${e.message || ''}`.slice(0, 300)
+          : '';
+        setErrorMsg(photoMsg + devDetail);
         try { AccessibilityInfo.announceForAccessibility(`Error: ${photoMsg}`); } catch {}
         try { Alert.alert('Photo attachment failed', photoMsg); } catch {}
         return;
@@ -898,7 +1186,8 @@ export const ThreeTapReportScreen = ({ onSuccess, onNavigateToMap, navigation })
         setSuccessMsg(queuedMsg);
         try { AccessibilityInfo.announceForAccessibility(queuedMsg); } catch {}
         try { announce && announce(queuedMsg); } catch {}
-        try { Alert.alert('Saved offline', 'No connection. Your report is cached locally and will sync when you are back online.'); } catch {}
+        // Include the resolved backend URL so field diagnosis shows WHICH host failed.
+        try { Alert.alert('Saved offline', `No connection to ${getBaseUrl()}. Your report is cached locally and will sync when you are back online.`); } catch {}
         return;
       }
       const msg = toFriendlyError(e);

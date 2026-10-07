@@ -272,9 +272,11 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           return;
         }
         const result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          // SDK 57: MediaTypeOptions deprecated in favour of the MediaType string union
+          mediaTypes: 'images',
           allowsEditing: false,
-          quality: 1,
+          // 0.8 keeps captures under the backend 10MB cap and bounds base64 memory
+          quality: 0.8,
           exif: true,
         });
         if (!isMountedRef.current) return;
@@ -412,9 +414,11 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           return;
         }
         const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          // SDK 57: MediaTypeOptions deprecated in favour of the MediaType string union
+          mediaTypes: 'images',
           allowsEditing: false,
-          quality: 1,
+          // 0.8 keeps uploads under the backend 10MB cap and bounds base64 memory
+          quality: 0.8,
           exif: true,
         });
         if (!isMountedRef.current) return;

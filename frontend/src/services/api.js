@@ -7,8 +7,8 @@ import Constants from 'expo-constants';
  * Connects React Native / Web frontend to Node.js / Express backend with MongoDB.
  */
 
-const PRIMARY_PORT = '5000'; // Matches backend/.env PORT
-const FALLBACK_PORT = '5001';
+export const PRIMARY_PORT = '5000'; // Matches backend/.env PORT
+export const FALLBACK_PORT = '5001';
 
 /**
  * Dynamically resolves the host IP for mobile devices and web browsers.
@@ -38,6 +38,25 @@ export const getHostAddress = () => {
     return host && host.trim() ? host.trim() : null;
   };
 
+  // One-time dev diagnostic: prints every host source so a single Metro line reveals
+  // why a physical device falls through to the 10.0.2.2 last resort. Silent in release.
+  if (!getHostAddress._logged) {
+    getHostAddress._logged = true;
+    try {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        const scriptURL = NativeModules?.SourceCode?.scriptURL;
+        console.log(
+          `[net] host sources platform=${Platform.OS} ` +
+          `expoConfig.hostUri=${Constants?.expoConfig?.hostUri || 'none'} ` +
+          `manifest.debuggerHost=${Constants?.manifest?.debuggerHost || 'none'} ` +
+          `scriptURL=${scriptURL || 'none'} ` +
+          `override=${typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_HOST ? 'set' : 'unset'} ` +
+          `appOwnership=${Constants?.appOwnership || 'unknown'}`
+        );
+      }
+    } catch {}
+  }
+
   // 2. Expo bundle source — same machine that served the app over LAN
   try {
     const hostUri = Constants?.expoConfig?.hostUri || Constants?.manifest?.debuggerHost || Constants?.manifest2?.extra?.expoClient?.hostUri;
@@ -58,12 +77,133 @@ export const getHostAddress = () => {
   return '10.0.2.2';
 };
 
+// Highest priority: full base URL override, e.g.
+// EXPO_PUBLIC_API_URL=http://192.168.1.50:5000/api (documented in frontend/.env.example).
+// Wins over all auto-detection; the port argument is ignored when set.
+export const explicitApiUrl = () => {
+  try {
+    const u = typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_API_URL : null;
+    if (!u || typeof u !== 'string' || !u.trim()) return null;
+    const clean = u.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(clean)) return null;
+    return /\/api$/i.test(clean) ? clean : `${clean}/api`;
+  } catch {}
+  return null;
+};
+
 export const getBaseUrl = (port = PRIMARY_PORT) => {
-  const host = getHostAddress();
+  const explicit = explicitApiUrl();
+  if (explicit) return explicit;
+  const host = (verifiedHost && Date.now() - verifiedHost.at < VERIFIED_HOST_TTL_MS)
+    ? verifiedHost.host
+    : getHostAddress();
   return `http://${host}:${port}/api`;
 };
 
 export const API_BASE_URL = getBaseUrl();
+
+// --- Verified-host selection -----------------------------------------------
+// getHostAddress() can return a stale/unroutable host (DHCP churn, emulator alias
+// on physical hardware). warmApiHost() probes candidate hosts with a fast /health
+// check and caches the first one that answers. getBaseUrl() prefers the cached
+// winner while fresh; the apiRequest fallback chain remains as safety net.
+const VERIFIED_HOST_TTL_MS = 2 * 60 * 1000;
+const VERIFIED_HOST_STORE_KEY = '@unitymap/apiHost';
+const PROBE_TIMEOUT_MS = 2500;
+let verifiedHost = null; // { host, at }
+let warmingPromise = null;
+
+const candidateHosts = () => {
+  const hosts = [];
+  const push = (h) => {
+    if (h && typeof h === 'string' && h.trim() && !hosts.includes(h.trim())) hosts.push(h.trim());
+  };
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.location?.hostname) push(window.location.hostname);
+    push('localhost');
+    return hosts;
+  }
+  try {
+    const override = typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_API_HOST : null;
+    if (override && typeof override === 'string' && override.trim()) push(override);
+  } catch {}
+  // Last-known-good first (cold-start speed); validated by probe below, never trusted blindly.
+  if (verifiedHost?.host) push(verifiedHost.host);
+  try {
+    const hostUri = Constants?.expoConfig?.hostUri || Constants?.manifest?.debuggerHost;
+    const h = hostUri && hostUri.split('://')[1]?.split('/')[0]?.split(':')[0];
+    if (h && h.trim()) push(h);
+  } catch {}
+  try {
+    const scriptURL = NativeModules?.SourceCode?.scriptURL;
+    const h = scriptURL && scriptURL.split('://')[1]?.split('/')[0]?.split(':')[0];
+    if (h && h.trim() && h !== 'localhost' && h !== '127.0.0.1') push(h);
+  } catch {}
+  push('10.0.2.2');
+  push('localhost');
+  return hosts;
+};
+
+const probeBase = async (base) => {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${base}/health`, { signal: controller.signal });
+    return !!r && r.status > 0 && r.status < 600;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+};
+
+/**
+ * Verify backend reachability and cache the winning host. Never throws —
+ * returns the working base URL or null (callers fall back to legacy resolution).
+ * Safe to call on every submit: instant when the cache is fresh.
+ */
+export const warmApiHost = async () => {
+  if (warmingPromise) return warmingPromise;
+  warmingPromise = (async () => {
+    try {
+      if (verifiedHost && Date.now() - verifiedHost.at < VERIFIED_HOST_TTL_MS) {
+        return `http://${verifiedHost.host}:${PRIMARY_PORT}/api`;
+      }
+      // Explicit full-URL override wins immediately when reachable (no sweep needed).
+      const explicit = explicitApiUrl();
+      if (explicit) {
+        if (await probeBase(explicit)) {
+          console.log(`[API] verified host: ${explicit} (EXPO_PUBLIC_API_URL)`);
+          return explicit;
+        }
+        return null;
+      }
+      // Cold start: seed from persisted last-known-good (validated by probe below).
+      if (!verifiedHost) {
+        try {
+          const stored = await AsyncStorage.getItem(VERIFIED_HOST_STORE_KEY);
+          if (stored) verifiedHost = { host: String(stored), at: 0 }; // at=0 forces re-probe, keeps priority
+        } catch {}
+      }
+      const ports = [PRIMARY_PORT, FALLBACK_PORT];
+      for (const port of ports) {
+        for (const host of candidateHosts()) {
+          const base = `http://${host}:${port}/api`;
+          if (await probeBase(base)) {
+            verifiedHost = { host, at: Date.now() };
+            try { await AsyncStorage.setItem(VERIFIED_HOST_STORE_KEY, host); } catch {}
+            console.log(`[API] verified host: ${base}`);
+            return base;
+          }
+        }
+      }
+      return null;
+    } finally {
+      warmingPromise = null;
+    }
+  })();
+  return warmingPromise;
+};
 
 // Coalesces concurrent identical background GETs (re-render / navigation remounts)
 // onto one shared promise so map polling can't spawn duplicate request storms.
@@ -437,14 +577,25 @@ export const createReport = async (reportData, photoFile) => {
     if (typeof photo === 'string' && photo) {
       return { kind: 'uri-part', part: { uri: photo, name: 'barrier.jpg', type: 'image/jpeg' } };
     }
-    throw new Error('Invalid photo attachment — please retake or pick another image.');
+    const partErr = new Error('Invalid photo attachment — please retake or pick another image.');
+    partErr.code = 'PHOTO_PART';
+    throw partErr;
   };
 
   const photoPart = await toPhotoPart(photoFile);
-  if (photoPart.kind === 'file') {
-    formData.append('photo', photoPart.file, photoPart.fileName);
-  } else {
-    formData.append('photo', photoPart.part);
+  // Guard the native append itself: if the RN runtime rejects the part, tag the stage
+  // (PHOTO_APPEND) instead of surfacing an anonymous native error.
+  try {
+    if (photoPart.kind === 'file') {
+      formData.append('photo', photoPart.file, photoPart.fileName);
+    } else {
+      formData.append('photo', photoPart.part);
+    }
+  } catch (appendErr) {
+    const err = new Error(`Photo append failed (${appendErr?.message || 'native FormData rejected the part'}) — please retake or pick another image.`);
+    err.code = 'PHOTO_APPEND';
+    err.cause = appendErr;
+    throw err;
   }
 
   // Append text fields ensuring all are stringified (FormData only supports string/blob)
@@ -541,6 +692,8 @@ export default {
   API_BASE_URL,
   getBaseUrl,
   getHostAddress,
+  explicitApiUrl,
+  warmApiHost,
   apiRequest,
   getNodes,
   getNearbyNodes,
