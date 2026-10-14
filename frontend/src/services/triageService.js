@@ -106,41 +106,46 @@ export const dispatchDecision = async ({
   allocatedBudgetLKR = 0,
   rejectionReason = null,
   notes = '',
-  staffId = 'CMC-ENG-882',
   wardId = 'CMC-W01',
   repairTargetDays = 7,
 } = {}) => {
-  try {
-    const response = await apiRequest('/admin/triage/dispatch', {
-      method: 'POST',
-      body: JSON.stringify({
-        reportId,
-        decision,
-        allocatedBudgetLKR,
-        rejectionReason,
-        notes,
-        staffId,
-        wardId,
-        repairTargetDays,
-      }),
-    });
-    if (response?.success && response.data) {
-      return response.data;
-    }
-  } catch (error) {
-    console.warn('[triageService] API dispatch error:', error.message);
-    throw error;
+  // `staffId` is intentionally not sent: the backend records the authenticated
+  // officer from the session token, so a client cannot forge the actor.
+  const response = await apiRequest('/admin/triage/dispatch', {
+    method: 'POST',
+    body: JSON.stringify({
+      reportId,
+      decision,
+      allocatedBudgetLKR,
+      rejectionReason,
+      notes,
+      wardId,
+      repairTargetDays,
+    }),
+  });
+
+  if (!response?.success || !response?.data) {
+    throw new Error(response?.message || 'The administrative decision was not accepted.');
   }
 
-  const normalized = decision?.toUpperCase();
-  return {
-    reportId,
-    decision: normalized,
-    status: normalized === 'APPROVED' ? 'approved' : normalized === 'REJECTED' ? 'rejected' : 'info_requested',
-    allocatedBudgetLKR: Number(allocatedBudgetLKR) || 0,
-    rejectionReason,
-    dispatchedAt: new Date().toISOString(),
-  };
+  return response.data;
+};
+
+/**
+ * SPT-111/112 — Persist a fresh urgency computation for the pending queue.
+ * Unlike a plain refetch this writes recalculated scores to the server.
+ */
+export const recalculateTriageQueue = async (wardId = 'CMC-W01') => {
+  const response = await apiRequest('/admin/triage/recalculate', {
+    method: 'POST',
+    body: JSON.stringify({ wardId }),
+  });
+
+  if (!response?.success) {
+    throw new Error(response?.message || 'Urgency recalculation failed.');
+  }
+
+  return response.data;
 };
 
 /**
@@ -191,6 +196,7 @@ export default {
   fetchTriageMetrics,
   fetchReportDetails,
   dispatchDecision,
+  recalculateTriageQueue,
   addMockTriageReport,
   getMockReports,
   corroborateMockReport,

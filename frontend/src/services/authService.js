@@ -11,7 +11,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { apiRequest } from './api';
+import { apiRequest, setUnauthorizedHandler } from './api';
 import { validateEmail } from '../utils/validation';
 
 export const USER_ROLES = {
@@ -21,25 +21,29 @@ export const USER_ROLES = {
 
 const STORAGE_SESSION_KEY = '@unitymap_session';
 
-// Predefined Demo Profiles for offline & instant evaluation
+/**
+ * Seeded municipal demo accounts provisioned by the backend on first login.
+ * These are reference credentials only — the client never authenticates against
+ * them locally, it always exchanges them for a signed server token.
+ */
 export const DEMO_CREDENTIALS = {
   SUPER_ADMIN: {
     email: 'admin@unitymap.com',
-    password: '123456',
+    password: 'Admin@2026',
     name: 'Super Admin',
     role: USER_ROLES.ADMIN,
     isSuperAdmin: true,
   },
   NORMAL_ADMIN: {
-    email: 'staff.admin@unitymap.com',
-    password: '123456',
-    name: 'Municipal Admin Officer',
-    role: USER_ROLES.ADMIN,
+    email: 'k.perera@cmc.gov.lk',
+    password: 'CMC@2026',
+    name: 'Eng. K. Perera',
+    role: 'CHIEF_ENGINEER',
     isSuperAdmin: false,
   },
   REGULAR_USER: {
     email: 'user@unitymap.com',
-    password: '123456',
+    password: 'User@2026',
     name: 'Alex Morgan',
     role: USER_ROLES.REGULAR_USER,
     isSuperAdmin: false,
@@ -51,6 +55,15 @@ class AuthService {
     this.currentUser = null;
     this.listeners = [];
     this.isInitialized = false;
+
+    // A rejected token means the session is dead — clear it so the navigator
+    // drops the user back to the login screen instead of showing a broken portal.
+    setUnauthorizedHandler(() => {
+      if (this.currentUser) {
+        console.warn('[AuthService] Session rejected by server — signing out.');
+        this.logout();
+      }
+    });
   }
 
   /**
@@ -120,6 +133,11 @@ class AuthService {
 
   /**
    * Sign In with Email and Password
+   *
+   * Credentials are always verified by the backend, which returns a signed
+   * session token. There is deliberately no local fallback: fabricating a
+   * session when the API is unreachable would hand out admin clearance that
+   * the server never granted.
    */
   async login({ email, password }) {
     if (!email || !password) {
@@ -133,60 +151,30 @@ class AuthService {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Attempt Node.js backend authentication
+    let res;
     try {
-      const res = await apiRequest('/admin/auth/login', {
+      res = await apiRequest('/admin/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email: cleanEmail, password }),
       });
-
-      if (res?.success && res?.user) {
-        const userObj = {
-          ...res.user,
-          token: res.token,
-          sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        };
-
-        this.currentUser = userObj;
-        await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(userObj)).catch(() => {});
-        this.notify();
-        return this.currentUser;
-      }
-    } catch (_networkErr) {
-      console.warn('[AuthService] Backend login unreachable, falling back to local verification.');
+    } catch (err) {
+      if (err?.status === 401) throw new Error('Invalid email or password.');
+      if (err?.status === 403) throw new Error(err.message || 'This account has been deactivated.');
+      throw new Error('Unable to reach the UnityMap server. Check your connection and try again.');
     }
 
-    // 2. Offline / Local fallback simulation for presentation resilience
-    await new Promise((resolve) => setTimeout(resolve, 350));
-
-    const isSuper = cleanEmail === DEMO_CREDENTIALS.SUPER_ADMIN.email;
-    const isRegular = cleanEmail === DEMO_CREDENTIALS.REGULAR_USER.email;
-
-    let role = USER_ROLES.REGULAR_USER;
-    let name = cleanEmail.split('@')[0].toUpperCase();
-
-    if (isSuper || cleanEmail.includes('admin')) {
-      role = USER_ROLES.ADMIN;
-      name = isSuper ? DEMO_CREDENTIALS.SUPER_ADMIN.name : 'Municipal Administrator';
-    } else if (isRegular) {
-      name = DEMO_CREDENTIALS.REGULAR_USER.name;
+    if (!res?.success || !res?.user || !res?.token) {
+      throw new Error('Authentication failed. Please try again.');
     }
 
-    const fallbackUser = {
-      id: `UM-${Math.floor(100 + Math.random() * 900)}`,
-      name,
-      email: cleanEmail,
-      badgeNumber: `CIT-${Math.floor(1000 + Math.random() * 9000)}`,
-      role,
-      isSuperAdmin: isSuper,
-      assignedWardId: 'CMC-W01',
-      department: role === USER_ROLES.ADMIN ? 'Urban Accessibility & Civil Works Division' : 'Citizen & Accessibility Community',
-      token: `jwt-offline-${Date.now()}`,
+    const userObj = {
+      ...res.user,
+      token: res.token,
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
 
-    this.currentUser = fallbackUser;
-    await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(fallbackUser)).catch(() => {});
+    this.currentUser = userObj;
+    await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(userObj)).catch(() => {});
     this.notify();
     return this.currentUser;
   }
@@ -210,9 +198,9 @@ class AuthService {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Attempt Node.js backend registration
+    let res;
     try {
-      const res = await apiRequest('/admin/auth/register', {
+      res = await apiRequest('/admin/auth/register', {
         method: 'POST',
         body: JSON.stringify({
           firstName: firstName.trim(),
@@ -222,44 +210,24 @@ class AuthService {
           password,
         }),
       });
-
-      if (res?.success && res?.user) {
-        const userObj = {
-          ...res.user,
-          token: res.token,
-          sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        };
-
-        this.currentUser = userObj;
-        await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(userObj)).catch(() => {});
-        this.notify();
-        return this.currentUser;
-      }
-    } catch (networkErr) {
-      console.warn('[AuthService] Backend registration unreachable, using local fallback:', networkErr.message);
+    } catch (err) {
+      if (err?.status === 409) throw new Error('An account with this email already exists. Please sign in.');
+      if (err?.status === 400) throw new Error(err.message);
+      throw new Error('Unable to reach the UnityMap server. Check your connection and try again.');
     }
 
-    // 2. Offline fallback registration
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    const fullName = `${firstName.trim()} ${(lastName || '').trim()}`.trim();
-    const fallbackUser = {
-      id: `UM-REG-${Date.now().toString().slice(-4)}`,
-      name: fullName,
-      firstName: firstName.trim(),
-      lastName: (lastName || '').trim(),
-      email: cleanEmail,
-      phone: phone ? phone.trim() : '',
-      badgeNumber: `CIT-${Math.floor(1000 + Math.random() * 9000)}`,
-      role: USER_ROLES.REGULAR_USER,
-      isSuperAdmin: false,
-      assignedWardId: 'CMC-W01',
-      department: 'Citizen & Accessibility Community',
-      token: `jwt-registered-${Date.now()}`,
+    if (!res?.success || !res?.user || !res?.token) {
+      throw new Error('Registration failed. Please try again.');
+    }
+
+    const userObj = {
+      ...res.user,
+      token: res.token,
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
 
-    this.currentUser = fallbackUser;
-    await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(fallbackUser)).catch(() => {});
+    this.currentUser = userObj;
+    await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(userObj)).catch(() => {});
     this.notify();
     return this.currentUser;
   }
@@ -275,9 +243,9 @@ class AuthService {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Attempt Node.js backend Google authentication & registration
+    let res;
     try {
-      const res = await apiRequest('/admin/auth/google', {
+      res = await apiRequest('/admin/auth/google', {
         method: 'POST',
         body: JSON.stringify({
           email: cleanEmail,
@@ -289,45 +257,23 @@ class AuthService {
           idToken: idToken || '',
         }),
       });
-
-      if (res?.success && res?.user) {
-        const userObj = {
-          ...res.user,
-          token: res.token,
-          sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        };
-
-        this.currentUser = userObj;
-        await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(userObj)).catch(() => {});
-        this.notify();
-        return this.currentUser;
-      }
-    } catch (networkErr) {
-      console.warn('[AuthService] Backend Google auth unreachable, using local fallback:', networkErr.message);
+    } catch (err) {
+      if (err?.status === 403) throw new Error(err.message || 'This account has been deactivated.');
+      throw new Error('Unable to reach the UnityMap server. Check your connection and try again.');
     }
 
-    // 2. Offline fallback for presentation resilience
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    const fullName = (name || `${firstName || ''} ${lastName || ''}`.trim() || cleanEmail.split('@')[0]).trim();
-    const fallbackUser = {
-      id: `UM-GOOGLE-${Date.now().toString().slice(-4)}`,
-      name: fullName,
-      firstName: firstName || fullName.split(' ')[0],
-      lastName: lastName || fullName.split(' ').slice(1).join(' '),
-      email: cleanEmail,
-      phone: '',
-      photoUrl: photoUrl || '',
-      badgeNumber: `CIT-${Math.floor(1000 + Math.random() * 9000)}`,
-      role: USER_ROLES.REGULAR_USER,
-      isSuperAdmin: false,
-      assignedWardId: 'CMC-W01',
-      department: 'Citizen & Accessibility Community',
-      token: `jwt-google-${Date.now()}`,
+    if (!res?.success || !res?.user || !res?.token) {
+      throw new Error('Google sign-in failed. Please try again.');
+    }
+
+    const userObj = {
+      ...res.user,
+      token: res.token,
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
 
-    this.currentUser = fallbackUser;
-    await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(fallbackUser)).catch(() => {});
+    this.currentUser = userObj;
+    await AsyncStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(userObj)).catch(() => {});
     this.notify();
     return this.currentUser;
   }
@@ -347,32 +293,26 @@ class AuthService {
 
   /**
    * Admin: Get all users directory
+   * Throws on failure so the UI can distinguish "empty directory" from "request denied".
    */
   async getUsers() {
-    try {
-      const res = await apiRequest('/admin/auth/users');
-      if (res?.success && Array.isArray(res.users)) {
-        return res.users;
-      }
-    } catch (err) {
-      console.warn('[authService] Error loading user directory:', err.message);
+    const res = await apiRequest('/admin/auth/users');
+    if (res?.success && Array.isArray(res.users)) {
+      return res.users;
     }
-
-    return [];
+    throw new Error('Unexpected response loading the user directory.');
   }
 
   /**
    * Admin: Promote Regular User to Admin
+   * Errors propagate — a failed promotion must never render as a success.
    */
   async promoteUser(userId) {
-    try {
-      const res = await apiRequest(`/admin/auth/users/${userId}/promote`, {
-        method: 'PATCH',
-      });
-      if (res?.success) return res.user;
-    } catch (_err) {}
-
-    return { id: userId, role: USER_ROLES.ADMIN };
+    const res = await apiRequest(`/admin/auth/users/${userId}/promote`, {
+      method: 'PATCH',
+    });
+    if (res?.success) return res.user;
+    throw new Error(res?.message || 'Failed to promote user.');
   }
 
   /**

@@ -657,7 +657,7 @@ export const AdminAddReportModal = ({ visible, onClose, wardId = 'CMC-W01', onRe
                   <Text style={styles.pickerBtnSub}>Camera</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.pickerBtn} onPress={() => handlePickImage(false)} disabled={submitting} activeOpacity={0.7}>
-                  <Feather name="image" size={22} color="#1D4ED8" />
+                  <Feather name="image" size={22} color="#047857" />
                   <Text style={styles.pickerBtnText}>Choose</Text>
                   <Text style={styles.pickerBtnSub}>Gallery</Text>
                 </TouchableOpacity>
@@ -1392,9 +1392,9 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   autoPill: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#ECFDF5',
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: '#A7F3D0',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -1403,7 +1403,7 @@ const styles = StyleSheet.create({
   autoPillText: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#1D4ED8',
+    color: '#047857',
     letterSpacing: 0.5,
   },
   inputWrapper: {

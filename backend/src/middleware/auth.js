@@ -1,96 +1,94 @@
-const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
 const { MunicipalStaff } = require('../models');
 
 /**
- * Protect middleware — verifies JWT-style `jwt-session-*` token issued by adminAuthController
- * Expected header: Authorization: Bearer jwt-session-<base64(email:timestamp)>
- * Sets req.user = { _id, staffId, email, role, ... }
+ * Session middleware — verifies HMAC-signed JWTs issued by adminAuthController.
+ *
+ * Security contract:
+ *  - Token MUST verify against JWT_SECRET (signature + expiry enforced by jsonwebtoken).
+ *  - No synthetic/fallback identities: an unverifiable token is a 401, always.
+ *  - The account is re-read from the database on every request so role changes,
+ *    promotions and demotions take effect immediately instead of waiting for
+ *    the token to expire.
  */
+
+const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN', 'CHIEF_ENGINEER', 'WARD_INSPECTOR', 'BUDGET_OFFICER'];
+
+const extractToken = (req) => {
+  const header = req.headers.authorization || req.headers.Authorization;
+  if (!header || !header.startsWith('Bearer ')) return null;
+  return header.slice(7).trim() || null;
+};
+
 const protect = async (req, res, next) => {
+  const token = extractToken(req);
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Not authorized, no token provided' });
+  }
+
+  let payload;
   try {
-    const authHeader = req.headers.authorization || req.headers.Authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'Not authorized, no token provided' });
+    payload = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    const message =
+      err.name === 'TokenExpiredError' ? 'Session expired, please sign in again' : 'Not authorized, invalid token';
+    return res.status(401).json({ success: false, message });
+  }
+
+  try {
+    const staff = await MunicipalStaff.findOne({ email: payload.email }).select('-password');
+
+    if (!staff) {
+      return res.status(401).json({ success: false, message: 'Session account no longer exists' });
     }
 
-    const rawToken = authHeader.split(' ')[1];
-    if (!rawToken) {
-      return res.status(401).json({ success: false, message: 'Not authorized, token missing' });
+    if (staff.isActive === false) {
+      return res.status(403).json({ success: false, message: 'This account has been deactivated' });
     }
 
-    // Strip jwt-session- prefix if present
-    let base64Part = rawToken;
-    if (rawToken.startsWith('jwt-session-')) {
-      base64Part = rawToken.slice('jwt-session-'.length);
-    }
-
-    let email = null;
-    try {
-      const decoded = Buffer.from(base64Part, 'base64').toString('utf8');
-      // decoded format: email:timestamp
-      if (decoded.includes(':')) {
-        email = decoded.split(':')[0].trim().toLowerCase();
-      } else if (decoded.includes('@')) {
-        email = decoded.trim().toLowerCase();
-      }
-    } catch (_) {
-      // fall through
-    }
-
-    if (!email || !email.includes('@')) {
-      // Allow offline/demo tokens (jwt-offline-*, jwt-registered-*) or any non-base64 token for demo resilience
-      if (rawToken.startsWith('jwt-offline-') || rawToken.startsWith('jwt-registered-') || rawToken.startsWith('jwt-')) {
-        const anonUser = {
-          _id: new mongoose.Types.ObjectId(),
-          staffId: `SYN-ANON-${Date.now().toString().slice(-4)}`,
-          email: 'offline@unitymap.com',
-          role: 'REGULAR_USER',
-          name: 'Offline User',
-        };
-        req.user = anonUser;
-        return next();
-      }
-      return res.status(401).json({ success: false, message: 'Not authorized, invalid token' });
-    }
-
-    // Try to find user in DB
-    let user = null;
-    try {
-      user = await MunicipalStaff.findOne({ email });
-    } catch (dbErr) {
-      // DB not available, use synthetic user
-      user = null;
-    }
-
-    if (user) {
-      req.user = user;
-      // Ensure _id exists for controller logic (req.user._id)
-      if (!req.user._id && req.user.id) {
-        req.user._id = req.user.id;
-      }
-      return next();
-    }
-
-    // Fallback: check seed accounts or create synthetic user for testing without DB
-    // Allow any authenticated email to proceed — create virtual user identity
-    const syntheticUser = {
-      _id: new mongoose.Types.ObjectId(),
-      staffId: `SYN-${email.split('@')[0].toUpperCase()}`,
-      email,
-      role: email.includes('admin') ? 'ADMIN' : 'REGULAR_USER',
-      name: email.split('@')[0],
-    };
-    req.user = syntheticUser;
+    req.user = staff;
+    req.tokenPayload = payload;
     return next();
   } catch (error) {
-    console.error('Auth middleware error:', error);
-    return res.status(401).json({ success: false, message: 'Not authorized', error: error.message });
+    console.error('[auth] Session lookup error:', error.message);
+    return res.status(503).json({ success: false, message: 'Session verification unavailable' });
   }
 };
 
-// Alias for prompt naming compatibility
+/**
+ * Restricts a route to privileged municipal roles.
+ * Must be mounted after `protect` so `req.user` is populated.
+ */
+const adminOnly = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, message: 'Not authorized' });
+  }
+
+  if (!ADMIN_ROLES.includes(req.user.role) && !req.user.isSuperAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: 'Forbidden: municipal staff clearance required for this operation',
+    });
+  }
+
+  return next();
+};
+
+/** Narrower guard for the most destructive operations (role management). */
+const superAdminOnly = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, message: 'Not authorized' });
+  }
+  if (!req.user.isSuperAdmin && req.user.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({
+      success: false,
+      message: 'Forbidden: Super Admin clearance required to manage user roles',
+    });
+  }
+  return next();
+};
+
 const verifyToken = protect;
 
-module.exports = { protect, verifyToken };
-module.exports.protect = protect;
-module.exports.verifyToken = protect;
+module.exports = { protect, adminOnly, superAdminOnly, verifyToken, ADMIN_ROLES };

@@ -137,10 +137,10 @@ const BaseMap = ({
     .pin-bubble.amber { background: ${isHighContrast ? '#000000' : '#D97706'}; color: ${isHighContrast ? '#000000' : '#D97706'}; ${isHighContrast ? 'border: 2px solid #000000;' : ''} }
     .pin-bubble.amber svg { stroke: #FFFFFF; fill: none; }
 
-    .pin-bubble.node { background: ${isHighContrast ? '#000000' : '#2563EB'}; color: ${isHighContrast ? '#000000' : '#2563EB'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
+    .pin-bubble.node { background: ${isHighContrast ? '#000000' : '#059669'}; color: ${isHighContrast ? '#000000' : '#059669'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
     .pin-bubble.node svg { stroke: #FFFFFF; fill: none; }
 
-    .pin-bubble.elevator { background: ${isHighContrast ? '#000000' : '#7C3AED'}; color: ${isHighContrast ? '#000000' : '#7C3AED'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
+    .pin-bubble.elevator { background: ${isHighContrast ? '#000000' : '#065F46'}; color: ${isHighContrast ? '#000000' : '#065F46'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
     .pin-bubble.elevator svg { stroke: #FFFFFF; fill: none; }
 
     .pin-bubble.obstacle { background: ${isHighContrast ? '#000000' : '#DC2626'}; color: ${isHighContrast ? '#000000' : '#DC2626'}; ${isHighContrast ? 'border: 2px solid #FFFFFF;' : ''} }
@@ -183,7 +183,7 @@ const BaseMap = ({
       height: 0;
       border-left: 7px solid transparent;
       border-right: 7px solid transparent;
-      border-bottom: 16px solid ${isHighContrast ? '#000000' : '#2563EB'};
+      border-bottom: 16px solid ${isHighContrast ? '#000000' : '#059669'};
       top: -4px;
       left: 11px;
       transform-origin: center 18px;
@@ -195,15 +195,15 @@ const BaseMap = ({
       width: 22px;
       height: 22px;
       background: #FFFFFF;
-      border: 4px solid ${isHighContrast ? '#000000' : '#2563EB'};
+      border: 4px solid ${isHighContrast ? '#000000' : '#059669'};
       border-radius: 50%;
-      box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 5px rgba(37, 99, 235, 0.3), 0 3px 8px rgba(0,0,0,0.3)'};
+      box-shadow: ${isHighContrast ? '0 0 0 2px #000000, 0 0 0 6px rgba(0,0,0,0.6)' : '0 0 0 5px rgba(5, 150, 105, 0.3), 0 3px 8px rgba(0,0,0,0.3)'};
       animation: ${isReduceMotionEnabled ? 'none' : isHighContrast ? 'none' : 'pulse 2.2s infinite'};
     }
     @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5); }
-      70% { box-shadow: 0 0 0 16px rgba(37, 99, 235, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+      0% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.5); }
+      70% { box-shadow: 0 0 0 16px rgba(5, 150, 105, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(5, 150, 105, 0); }
     }
 
     /* Popup Styling */
@@ -388,9 +388,9 @@ const BaseMap = ({
         if (!isAccessible) {
           strokeColor = '#EF4444';
         } else if (p.pathType === 'walkway') {
-          strokeColor = '#3B82F6';
+          strokeColor = '#0B3D2E';
         } else if (p.pathType === 'elevator') {
-          strokeColor = '#8B5CF6';
+          strokeColor = '#065F46';
         }
 
         const pathLine = L.polyline(coords, {
@@ -436,7 +436,7 @@ const BaseMap = ({
     /**
      * Draw (or replace) the tap-route polyline.
      * @param {Array<[lat,lng]>} coords
-     * @param {string} color  hex colour string, e.g. '#3B82F6'
+     * @param {string} color  hex colour string, e.g. '#0B3D2E'
      * @param {boolean} fitBounds  whether to pan/zoom to fit the route
      */
     window.updateRoute = function(coords, color, fitBounds) {
@@ -447,7 +447,7 @@ const BaseMap = ({
         }
         if (!Array.isArray(coords) || coords.length < 2) return;
         _tapRouteLayer = L.polyline(coords, {
-          color: color || '#3B82F6',
+          color: color || '#0B3D2E',
           weight: 6,
           opacity: 0.95,
           lineCap: 'round',
@@ -580,7 +580,7 @@ const BaseMap = ({
         try {
           if (activeRoute && Array.isArray(activeRoute.coordinates) && activeRoute.coordinates.length >= 2) {
             if (typeof win.updateRoute === 'function') {
-              win.updateRoute(activeRoute.coordinates, activeRoute.color || '#3B82F6', true);
+              win.updateRoute(activeRoute.coordinates, activeRoute.color || '#0B3D2E', true);
             } else {
               win.eval?.(script);
             }
@@ -607,7 +607,7 @@ const BaseMap = ({
     let script;
     if (activeRoute && Array.isArray(activeRoute.coordinates) && activeRoute.coordinates.length >= 2) {
       const coordsJson = JSON.stringify(activeRoute.coordinates);
-      const color = activeRoute.color || '#3B82F6';
+      const color = activeRoute.color || '#0B3D2E';
       script = `
         if (typeof window.updateRoute === 'function') {
           window.updateRoute(${coordsJson}, '${color}', true);

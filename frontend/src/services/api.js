@@ -91,6 +91,12 @@ export const explicitApiUrl = () => {
   return null;
 };
 
+// --- Verified-host cache ----------------------------------------------------
+// Declared before getBaseUrl(): API_BASE_URL = getBaseUrl() runs at module init,
+// so reading these bindings any later would throw a TDZ ReferenceError.
+const VERIFIED_HOST_TTL_MS = 2 * 60 * 1000;
+let verifiedHost = null; // { host, at }
+
 export const getBaseUrl = (port = PRIMARY_PORT) => {
   const explicit = explicitApiUrl();
   if (explicit) return explicit;
@@ -100,17 +106,55 @@ export const getBaseUrl = (port = PRIMARY_PORT) => {
   return `http://${host}:${port}/api`;
 };
 
+/**
+ * Every base URL to try, in order, when the primary port is unreachable.
+ * `apiRequest` walks this chain for JSON calls; non-JSON downloads (e.g. the
+ * statutory audit PDF) must walk it too, otherwise they hit a dead port while
+ * the rest of the dashboard still renders fine.
+ */
+export const getApiBaseUrlCandidates = () => {
+  const candidates = [getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)];
+  if (Platform.OS !== 'web') {
+    candidates.push(`http://10.0.2.2:${PRIMARY_PORT}/api`, `http://localhost:${PRIMARY_PORT}/api`);
+  }
+  return [...new Set(candidates)];
+};
+
 export const API_BASE_URL = getBaseUrl();
+
+/**
+ * Invoked when the API rejects our credentials (401). Registered by authService to
+ * avoid a circular import between the API client and the session store.
+ */
+let unauthorizedHandler = null;
+export const setUnauthorizedHandler = (fn) => {
+  unauthorizedHandler = fn;
+};
+
+/**
+ * Single error type for every non-2xx response. Carries the server's own
+ * validation text (`detail` / `backendError`) so callers can render the exact
+ * field error, plus `isHttpError` so the host-fallback chain below can tell a
+ * dead host apart from a real HTTP verdict.
+ */
+export class ApiError extends Error {
+  constructor(message, status, extra = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = extra.detail || '';
+    this.backendError = extra.backendError || '';
+    this.isHttpError = true;
+  }
+}
 
 // --- Verified-host selection -----------------------------------------------
 // getHostAddress() can return a stale/unroutable host (DHCP churn, emulator alias
 // on physical hardware). warmApiHost() probes candidate hosts with a fast /health
 // check and caches the first one that answers. getBaseUrl() prefers the cached
 // winner while fresh; the apiRequest fallback chain remains as safety net.
-const VERIFIED_HOST_TTL_MS = 2 * 60 * 1000;
 const VERIFIED_HOST_STORE_KEY = '@unitymap/apiHost';
 const PROBE_TIMEOUT_MS = 2500;
-let verifiedHost = null; // { host, at }
 let warmingPromise = null;
 
 const candidateHosts = () => {
@@ -232,9 +276,14 @@ export const apiRequest = async (endpoint, options = {}) => {
 
   const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
 
+  // Attach the signed session token to every request so authenticated admin
+  // routes are reachable without each caller assembling headers by hand.
+  const authHeaders = await getAuthHeaders();
+
   const defaultHeaders = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     Accept: 'application/json',
+    ...authHeaders,
   };
 
   const tryFetch = async (baseUrl, timeoutOverride) => {
@@ -242,8 +291,6 @@ export const apiRequest = async (endpoint, options = {}) => {
     const controller = new AbortController();
     const attemptTimeout = typeof timeoutOverride === 'number' && timeoutOverride > 0 ? timeoutOverride : timeout;
     const timeoutId = setTimeout(() => controller.abort(), attemptTimeout);
-
-    console.log(`[API Request] Fetching: ${url}`);
 
     try {
       const response = await fetch(url, {
@@ -255,8 +302,9 @@ export const apiRequest = async (endpoint, options = {}) => {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        // Surface backend validation message (e.g. reportController 400s) instead of generic status text.
-        // Attaches structured fields so callers can render the exact field error without the wrapper.
+        // Surface the backend's own message (e.g. reportController 400s, "Invalid email
+        // or password") instead of generic status text, and keep the structured fields
+        // so callers can render the exact field error without the wrapper.
         let detail = '';
         let backendError = '';
         try {
@@ -264,20 +312,22 @@ export const apiRequest = async (endpoint, options = {}) => {
           const errBody = clone ? await clone.json() : null;
           detail = errBody?.message || '';
           backendError = errBody?.error || '';
-        } catch {}
+        } catch (_) {}
         const extra = [detail, backendError && backendError !== detail ? backendError : ''].filter(Boolean).join(' | ');
-        const suffix = extra ? ` — ${extra}` : '';
-        const httpErr = new Error(`API Request Failed: ${response.status} ${response.statusText}${suffix}`);
-        httpErr.status = response.status;
-        httpErr.detail = detail;
-        httpErr.backendError = backendError;
-        httpErr.isHttpError = true;
+        const httpErr = new ApiError(
+          detail || `API Request Failed: ${response.status} ${response.statusText}${extra ? ` — ${extra}` : ''}`,
+          response.status,
+          { detail, backendError }
+        );
+
+        if (response.status === 401 && unauthorizedHandler) {
+          unauthorizedHandler();
+        }
+
         throw httpErr;
       }
 
-      const data = await response.json();
-      console.log(`[API Success] ${cleanEndpoint} (from ${baseUrl})`);
-      return data;
+      return await response.json();
     } catch (err) {
       clearTimeout(timeoutId);
       throw err;
@@ -311,6 +361,10 @@ export const apiRequest = async (endpoint, options = {}) => {
   try {
     return await tryFetch(getBaseUrl(PRIMARY_PORT));
   } catch (primaryErr) {
+    // An auth verdict is port-independent — never replay credentials elsewhere.
+    if (primaryErr instanceof ApiError && (primaryErr.status === 401 || primaryErr.status === 403)) {
+      throw primaryErr;
+    }
     if (!isRetryableNetworkError(primaryErr)) throw primaryErr;
     if (shouldLogWarn) {
       console.warn(
@@ -322,6 +376,11 @@ export const apiRequest = async (endpoint, options = {}) => {
     try {
       return await tryFetch(getBaseUrl(FALLBACK_PORT));
     } catch (fallbackErr) {
+      // An auth verdict is port-independent — never replay credentials elsewhere.
+      if (fallbackErr instanceof ApiError && (fallbackErr.status === 401 || fallbackErr.status === 403)) {
+        throw fallbackErr;
+      }
+
       // Speculative emulator hosts get a short timeout and are skipped when they
       // duplicate a URL already attempted — they must fail fast, not hang per host.
       const tried = new Set([getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)]);
@@ -336,7 +395,12 @@ export const apiRequest = async (endpoint, options = {}) => {
           if (r) return r;
           const r2 = await trySpeculative(`http://localhost:${PRIMARY_PORT}/api`);
           if (r2) return r2;
-        } catch (_) {}
+        } catch (speculativeErr) {
+          // A rejected token must not be replayed against yet another host either.
+          if (speculativeErr instanceof ApiError && (speculativeErr.status === 401 || speculativeErr.status === 403)) {
+            throw speculativeErr;
+          }
+        }
       }
 
       if (shouldLogWarn) {
@@ -665,7 +729,7 @@ export const createBarrierReport = (reportData) =>
     timeoutMs: 30000,
   });
 
-const getAuthHeaders = async () => {
+export const getAuthHeaders = async () => {
   try {
     const stored = await AsyncStorage.getItem('@unitymap_session');
     if (stored) {
@@ -691,7 +755,11 @@ export const uncorroborateReport = async (reportId) => {
 export default {
   API_BASE_URL,
   getBaseUrl,
+  getApiBaseUrlCandidates,
   getHostAddress,
+  getAuthHeaders,
+  setUnauthorizedHandler,
+  ApiError,
   explicitApiUrl,
   warmApiHost,
   apiRequest,

@@ -124,7 +124,7 @@ export const AudioFirstLauncherScreen = ({ onNavigate }) => {
         style={({ pressed }) => [
           styles.touchTarget,
           {
-            backgroundColor: isListening ? (isHighContrast ? palette.surface : '#EFF6FF') : palette.surface,
+            backgroundColor: isListening ? (isHighContrast ? palette.surface : '#ECFDF5') : palette.surface,
             borderColor: isListening ? palette.primary : palette.cardBorder,
             borderWidth,
           },

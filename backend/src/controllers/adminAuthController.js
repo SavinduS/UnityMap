@@ -1,7 +1,15 @@
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const { MunicipalStaff } = require('../models');
 
+const BCRYPT_ROUNDS = 10;
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const BCRYPT_PREFIX = /^\$2[aby]\$/;
+
 /**
- * Predefined demo accounts for immediate testing
+ * Predefined demo accounts, provisioned on first successful login.
+ * They are never auto-created for arbitrary emails — only these exact addresses,
+ * and only outside production. Passwords are hashed before they touch the database.
  */
 const SEED_ACCOUNTS = [
   {
@@ -10,6 +18,7 @@ const SEED_ACCOUNTS = [
     firstName: 'Super',
     lastName: 'Admin',
     email: 'admin@unitymap.com',
+    password: 'Admin@2026',
     badgeNumber: 'UM-SADM-01',
     role: 'ADMIN',
     isSuperAdmin: true,
@@ -23,6 +32,7 @@ const SEED_ACCOUNTS = [
     firstName: 'Alex',
     lastName: 'Morgan',
     email: 'user@unitymap.com',
+    password: 'User@2026',
     badgeNumber: 'UM-CIT-001',
     role: 'REGULAR_USER',
     isSuperAdmin: false,
@@ -36,6 +46,7 @@ const SEED_ACCOUNTS = [
     firstName: 'Kasun',
     lastName: 'Bandara',
     email: 'alex@unitymap.com',
+    password: 'User@2026',
     badgeNumber: 'UM-CIT-002',
     role: 'REGULAR_USER',
     isSuperAdmin: false,
@@ -49,6 +60,7 @@ const SEED_ACCOUNTS = [
     firstName: 'K.',
     lastName: 'Perera',
     email: 'k.perera@cmc.gov.lk',
+    password: 'CMC@2026',
     badgeNumber: 'CMC-ENG-882',
     role: 'CHIEF_ENGINEER',
     isSuperAdmin: false,
@@ -58,15 +70,51 @@ const SEED_ACCOUNTS = [
   },
 ];
 
+const SUPER_ADMIN_EMAIL = 'admin@unitymap.com';
+const BASELINE_USER_EMAIL = 'user@unitymap.com';
+
+const hashPassword = (plain) => bcrypt.hash(plain, BCRYPT_ROUNDS);
+const isBcryptHash = (value) => typeof value === 'string' && BCRYPT_PREFIX.test(value);
+
+const signToken = (staff) =>
+  jwt.sign(
+    {
+      sub: staff._id ? staff._id.toString() : staff.staffId,
+      email: staff.email,
+      role: staff.role,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+  );
+
 /**
- * Format user object for client response
+ * Compares a submitted password against the stored credential.
+ * Supports a transparent upgrade path: accounts created before hashing was
+ * introduced hold a plaintext password, so a legacy match is immediately
+ * re-hashed and persisted.
  */
+const verifyPassword = async (staff, submitted) => {
+  const stored = staff.password;
+
+  if (isBcryptHash(stored)) {
+    return bcrypt.compare(submitted, stored);
+  }
+
+  if (typeof stored === 'string' && stored.length > 0 && stored === submitted) {
+    staff.password = await hashPassword(submitted);
+    if (staff.save) await staff.save();
+    return true;
+  }
+
+  return false;
+};
+
 const formatUserResponse = (user) => ({
   id: user.staffId || (user._id ? user._id.toString() : `STAFF-${Date.now()}`),
-  name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email.split('@')[0],
+  name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || String(user.email || '').split('@')[0],
   firstName: user.firstName || user.name?.split(' ')[0] || '',
   lastName: user.lastName || user.name?.split(' ').slice(1).join(' ') || '',
-  email: user.email.toLowerCase(),
+  email: (user.email || '').toLowerCase(),
   phone: user.phone || '',
   badgeNumber: user.badgeNumber || `UM-${Math.floor(1000 + Math.random() * 9000)}`,
   role: user.role || 'REGULAR_USER',
@@ -74,6 +122,33 @@ const formatUserResponse = (user) => ({
   assignedWardId: user.assignedWardId || 'CMC-W01',
   department: user.department || 'Urban Accessibility & Citizen Operations',
 });
+
+/** Shared email/format validation for register + login. */
+const validateEmail = (email) => {
+  if (!email || !String(email).includes('@')) return 'Please enter a valid email address.';
+  if (!EMAIL_REGEX.test(email) || /[^a-zA-Z0-9.@_+-]/.test(email)) {
+    return "Please enter a valid email address. Only letters, numbers, '@', and '.' are allowed.";
+  }
+  return null;
+};
+
+/**
+ * Provisions a seed account on first login. Only the exact SEED_ACCOUNTS
+ * addresses are eligible, and only outside production.
+ */
+const provisionSeedAccount = async (seedProfile) => {
+  if (process.env.NODE_ENV === 'production') return null;
+
+  const existing = await MunicipalStaff.findOne({ email: seedProfile.email });
+  if (existing) return existing;
+
+  const { password, ...profile } = seedProfile;
+  return MunicipalStaff.create({
+    ...profile,
+    password: await hashPassword(password),
+    lastLogin: new Date(),
+  });
+};
 
 /**
  * POST /api/admin/auth/register
@@ -104,18 +179,12 @@ const register = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-
-    // Strict email symbol and format validation: only alphanumeric, @, ., _, -, +
-    const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!EMAIL_REGEX.test(normalizedEmail) || /[^a-zA-Z0-9.@_+-]/.test(normalizedEmail)) {
-      return res.status(400).json({
-        success: false,
-        message: "Please enter a valid email address. Only letters, numbers, '@', and '.' are allowed.",
-      });
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const emailError = validateEmail(normalizedEmail);
+    if (emailError) {
+      return res.status(400).json({ success: false, message: emailError });
     }
 
-    // Check if user already exists in DB
     const existingUser = await MunicipalStaff.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(409).json({
@@ -125,48 +194,30 @@ const register = async (req, res) => {
     }
 
     const fullName = `${firstName.trim()} ${lastName ? lastName.trim() : ''}`.trim();
-    const staffId = `UM-REG-${Date.now().toString().slice(-6)}`;
+    const staffId = `UM-REG-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
     const badgeNumber = `CIT-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    let newUser;
-    try {
-      newUser = await MunicipalStaff.create({
-        staffId,
-        name: fullName,
-        firstName: firstName.trim(),
-        lastName: lastName ? lastName.trim() : '',
-        email: normalizedEmail,
-        phone: phone ? phone.trim() : '',
-        password,
-        badgeNumber,
-        role: 'REGULAR_USER',
-        isSuperAdmin: false,
-        assignedWardId: 'CMC-W01',
-        department: 'Citizen & Accessibility Community',
-        lastLogin: new Date(),
-      });
-    } catch (createErr) {
-      newUser = {
-        staffId,
-        name: fullName,
-        firstName: firstName.trim(),
-        lastName: lastName ? lastName.trim() : '',
-        email: normalizedEmail,
-        phone: phone ? phone.trim() : '',
-        badgeNumber,
-        role: 'REGULAR_USER',
-        isSuperAdmin: false,
-        assignedWardId: 'CMC-W01',
-        department: 'Citizen & Accessibility Community',
-      };
-    }
-
-    const token = `jwt-session-${Buffer.from(`${normalizedEmail}:${Date.now()}`).toString('base64')}`;
+    // Self-registration always yields REGULAR_USER — role is never client-supplied.
+    const newUser = await MunicipalStaff.create({
+      staffId,
+      name: fullName,
+      firstName: firstName.trim(),
+      lastName: lastName ? lastName.trim() : '',
+      email: normalizedEmail,
+      phone: phone ? String(phone).trim() : '',
+      password: await hashPassword(password),
+      badgeNumber,
+      role: 'REGULAR_USER',
+      isSuperAdmin: false,
+      assignedWardId: 'CMC-W01',
+      department: 'Citizen & Accessibility Community',
+      lastLogin: new Date(),
+    });
 
     return res.status(201).json({
       success: true,
       message: 'Registration successful! Welcome to UnityMap.',
-      token,
+      token: signToken(newUser),
       user: formatUserResponse(newUser),
     });
   } catch (error) {
@@ -181,11 +232,12 @@ const register = async (req, res) => {
 
 /**
  * POST /api/admin/auth/login
- * Verify credentials and issue session JWT
+ * Verifies the bcrypt credential and issues a signed session token.
+ * Unknown emails are rejected — accounts are never auto-provisioned here.
  */
 const login = async (req, res) => {
   try {
-    const { email, password, wardId, role } = req.body;
+    const { email, password } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({
@@ -194,99 +246,46 @@ const login = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-
-    // If logging in with email, ensure valid format and allowed characters
-    if (normalizedEmail.includes('@')) {
-      const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-      if (!EMAIL_REGEX.test(normalizedEmail) || /[^a-zA-Z0-9.@_+-]/.test(normalizedEmail)) {
-        return res.status(400).json({
-          success: false,
-          message: "Please enter a valid email address. Only letters, numbers, '@', and '.' are allowed.",
-        });
-      }
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const emailError = validateEmail(normalizedEmail);
+    if (emailError) {
+      return res.status(400).json({ success: false, message: emailError });
     }
 
-    // Check seed accounts first (e.g. admin@unitymap.com, user@unitymap.com)
-    const seedProfile = SEED_ACCOUNTS.find(
-      (a) => a.email === normalizedEmail || a.badgeNumber === email.toUpperCase()
-    );
+    const badgeLookup = /^[A-Z0-9-]{4,}$/.test(String(email).toUpperCase()) ? String(email).toUpperCase() : null;
 
-    // Look up in database
     let staff = await MunicipalStaff.findOne({
-      $or: [{ email: normalizedEmail }, { badgeNumber: email.toUpperCase() }],
-    });
+      $or: [{ email: normalizedEmail }, ...(badgeLookup ? [{ badgeNumber: badgeLookup }] : [])],
+    }).select('+password');
 
-    if (!staff && seedProfile) {
-      try {
-        staff = await MunicipalStaff.create({
-          staffId: seedProfile.staffId,
-          name: seedProfile.name,
-          firstName: seedProfile.firstName,
-          lastName: seedProfile.lastName,
-          email: seedProfile.email,
-          phone: seedProfile.phone,
-          password: 'hashed-password-placeholder',
-          badgeNumber: seedProfile.badgeNumber,
-          role: seedProfile.role,
-          isSuperAdmin: seedProfile.isSuperAdmin,
-          assignedWardId: seedProfile.assignedWardId,
-          department: seedProfile.department,
-          lastLogin: new Date(),
-        });
-      } catch (_err) {
-        staff = seedProfile;
-      }
-    } else if (!staff) {
-      const inferredRole = role || (normalizedEmail.includes('admin') ? 'ADMIN' : 'REGULAR_USER');
-      const isSuper = normalizedEmail === 'admin@unitymap.com';
-      const staffBadge = `UM-${inferredRole.slice(0, 3)}-${Math.floor(100 + Math.random() * 900)}`;
-
-      try {
-        staff = await MunicipalStaff.create({
-          staffId: staffBadge,
-          name: normalizedEmail.split('@')[0].toUpperCase(),
-          email: normalizedEmail,
-          password: 'hashed-password-placeholder',
-          badgeNumber: staffBadge,
-          role: inferredRole,
-          isSuperAdmin: isSuper,
-          assignedWardId: wardId || 'CMC-W01',
-          department: inferredRole === 'ADMIN' ? 'Urban Accessibility & Civil Works' : 'Citizen & Accessibility Community',
-          lastLogin: new Date(),
-        });
-      } catch (_err) {
-        staff = {
-          staffId: staffBadge,
-          name: normalizedEmail.split('@')[0].toUpperCase(),
-          email: normalizedEmail,
-          badgeNumber: staffBadge,
-          role: inferredRole,
-          isSuperAdmin: isSuper,
-          assignedWardId: wardId || 'CMC-W01',
-          department: 'Urban Accessibility & Civil Works',
-        };
-      }
-    } else {
-      staff.lastLogin = new Date();
-      if (normalizedEmail === 'admin@unitymap.com') {
-        staff.isSuperAdmin = true;
-        staff.role = 'ADMIN';
-      } else if (normalizedEmail === 'user@unitymap.com') {
-        staff.isSuperAdmin = false;
-        staff.role = 'REGULAR_USER';
-      }
-      if (staff.save) {
-        await staff.save().catch(() => { });
+    if (!staff) {
+      const seedProfile = SEED_ACCOUNTS.find((a) => a.email === normalizedEmail);
+      if (seedProfile) {
+        staff = await provisionSeedAccount(seedProfile);
       }
     }
 
-    const token = `jwt-session-${Buffer.from(`${staff.email}:${Date.now()}`).toString('base64')}`;
+    // Identical response for unknown email and wrong password — no user enumeration.
+    if (!staff) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    if (staff.isActive === false) {
+      return res.status(403).json({ success: false, message: 'This account has been deactivated' });
+    }
+
+    const passwordMatches = await verifyPassword(staff, password);
+    if (!passwordMatches) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    staff.lastLogin = new Date();
+    if (staff.save) await staff.save();
 
     return res.status(200).json({
       success: true,
       message: 'Authentication successful',
-      token,
+      token: signToken(staff),
       user: formatUserResponse(staff),
     });
   } catch (error) {
@@ -301,22 +300,15 @@ const login = async (req, res) => {
 
 /**
  * GET /api/admin/auth/me
- * Validate session and return active user profile
+ * Returns the profile of the account that owns the presented token.
+ * Requires `protect` — req.user is resolved from the verified JWT.
  */
 const getMe = async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        success: false,
-        message: 'No authorization token provided',
-      });
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Not authorized' });
     }
-
-    return res.status(200).json({
-      success: true,
-      user: formatUserResponse(SEED_ACCOUNTS[0]),
-    });
+    return res.status(200).json({ success: true, user: formatUserResponse(req.user) });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -328,21 +320,12 @@ const getMe = async (req, res) => {
  */
 const getUsers = async (req, res) => {
   try {
-    let dbUsers = [];
-    try {
-      dbUsers = await MunicipalStaff.find({}, '-password').sort({ createdAt: -1 });
-    } catch (_err) {
-      dbUsers = [];
-    }
-
-    const userList = dbUsers.length > 0
-      ? dbUsers.map(formatUserResponse)
-      : SEED_ACCOUNTS.map(formatUserResponse);
+    const dbUsers = await MunicipalStaff.find({}).select('-password').sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
-      count: userList.length,
-      users: userList,
+      count: dbUsers.length,
+      users: dbUsers.map(formatUserResponse),
     });
   } catch (error) {
     console.error('Error fetching users:', error);
@@ -354,40 +337,47 @@ const getUsers = async (req, res) => {
   }
 };
 
+/** Resolves a route :id param (staffId, ObjectId, or email) to a real account. */
+const findStaffByParam = (id) =>
+  MunicipalStaff.findOne({
+    $or: [
+      { staffId: String(id).toUpperCase() },
+      { email: String(id).toLowerCase() },
+      ...(/^[0-9a-fA-F]{24}$/.test(id) ? [{ _id: id }] : []),
+    ],
+  });
+
 /**
  * PATCH /api/admin/auth/users/:id/promote
- * Promote a Regular User to Admin
+ * Promote a Regular User to Admin. Requires Super Admin clearance.
  */
 const promoteUser = async (req, res) => {
   try {
     const { id } = req.params;
-
-    let user = await MunicipalStaff.findOne({
-      $or: [{ staffId: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }, { email: id.toLowerCase() }],
-    });
+    const user = await findStaffByParam(id);
 
     if (!user) {
-      const seed = SEED_ACCOUNTS.find((s) => s.staffId === id || s.email === id.toLowerCase());
-      if (seed) {
-        seed.role = 'ADMIN';
-        return res.status(200).json({
-          success: true,
-          message: `${seed.name} promoted to Admin`,
-          user: formatUserResponse(seed),
-        });
-      }
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    if (user.email === 'user@unitymap.com') {
+    if (user.email === BASELINE_USER_EMAIL) {
       return res.status(400).json({
         success: false,
-        message: 'Baseline demo Regular User account (user@unitymap.com) is reserved as the permanent Regular User reference and cannot be promoted. Please promote another citizen account.',
+        message:
+          'Baseline demo Regular User account (user@unitymap.com) is reserved as the permanent Regular User reference and cannot be promoted. Please promote another citizen account.',
       });
     }
 
+    if (user.isSuperAdmin) {
+      return res.status(400).json({ success: false, message: 'Account is already a Super Admin' });
+    }
+
+    if (user.role === 'ADMIN') {
+      return res.status(400).json({ success: false, message: 'Account already holds Admin clearance' });
+    }
+
     user.role = 'ADMIN';
-    if (user.save) await user.save();
+    await user.save();
 
     return res.status(200).json({
       success: true,
@@ -402,36 +392,18 @@ const promoteUser = async (req, res) => {
 
 /**
  * PATCH /api/admin/auth/users/:id/demote
- * Demote an Admin to Regular User (Guarded against Super Admin)
+ * Demote an Admin to Regular User. Requires Super Admin clearance.
  */
 const demoteUser = async (req, res) => {
   try {
     const { id } = req.params;
-
-    let user = await MunicipalStaff.findOne({
-      $or: [{ staffId: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }, { email: id.toLowerCase() }],
-    });
+    const user = await findStaffByParam(id);
 
     if (!user) {
-      const seed = SEED_ACCOUNTS.find((s) => s.staffId === id || s.email === id.toLowerCase());
-      if (seed) {
-        if (seed.isSuperAdmin || seed.email === 'admin@unitymap.com') {
-          return res.status(403).json({
-            success: false,
-            message: 'Forbidden: Super Admin cannot be demoted.',
-          });
-        }
-        seed.role = 'REGULAR_USER';
-        return res.status(200).json({
-          success: true,
-          message: `${seed.name} demoted to Regular User`,
-          user: formatUserResponse(seed),
-        });
-      }
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    if (user.isSuperAdmin || user.email === 'admin@unitymap.com') {
+    if (user.isSuperAdmin || user.email === SUPER_ADMIN_EMAIL) {
       return res.status(403).json({
         success: false,
         message: 'Security Policy Violation: The Super Admin cannot be demoted.',
@@ -439,7 +411,7 @@ const demoteUser = async (req, res) => {
     }
 
     user.role = 'REGULAR_USER';
-    if (user.save) await user.save();
+    await user.save();
 
     return res.status(200).json({
       success: true,
@@ -454,11 +426,12 @@ const demoteUser = async (req, res) => {
 
 /**
  * POST /api/admin/auth/google
- * Google Sign In & Account Creation handler
+ * Google Sign In handler. Stores a random unusable credential — the account is
+ * only ever reachable through a verified Google identity, never a password.
  */
 const googleAuth = async (req, res) => {
   try {
-    const { email, firstName, lastName, name, photoUrl, googleId } = req.body;
+    const { email, firstName, lastName, name } = req.body;
 
     if (!email) {
       return res.status(400).json({
@@ -467,84 +440,50 @@ const googleAuth = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const emailError = validateEmail(normalizedEmail);
+    if (emailError) {
+      return res.status(400).json({ success: false, message: emailError });
+    }
 
-    // 1. Check if user exists in database
     let staff = await MunicipalStaff.findOne({ email: normalizedEmail });
-
-    // Also check seed profiles (e.g. admin@unitymap.com, user@unitymap.com)
-    const seedProfile = SEED_ACCOUNTS.find((a) => a.email === normalizedEmail);
-
     let isNewUser = false;
 
-    if (!staff && seedProfile) {
-      try {
-        staff = await MunicipalStaff.create({
-          staffId: seedProfile.staffId,
-          name: seedProfile.name,
-          firstName: seedProfile.firstName,
-          lastName: seedProfile.lastName,
-          email: seedProfile.email,
-          phone: seedProfile.phone,
-          password: 'google-oauth-authenticated',
-          badgeNumber: seedProfile.badgeNumber,
-          role: seedProfile.role,
-          isSuperAdmin: seedProfile.isSuperAdmin,
-          assignedWardId: seedProfile.assignedWardId,
-          department: seedProfile.department,
-          lastLogin: new Date(),
-        });
-      } catch (_err) {
-        staff = seedProfile;
-      }
-    } else if (!staff) {
-      // 2. Create NEW user account via Google
-      isNewUser = true;
-      const inferredFirstName = (firstName || name?.split(' ')[0] || normalizedEmail.split('@')[0]).trim();
-      const inferredLastName = (lastName || name?.split(' ').slice(1).join(' ') || '').trim();
-      const fullName = (name || `${inferredFirstName} ${inferredLastName}`).trim();
-      const staffId = `UM-REG-${Date.now().toString().slice(-6)}`;
-      const badgeNumber = `CIT-${Math.floor(1000 + Math.random() * 9000)}`;
+    if (!staff) {
+      const seedProfile = SEED_ACCOUNTS.find((a) => a.email === normalizedEmail);
+      if (seedProfile) {
+        staff = await provisionSeedAccount(seedProfile);
+      } else {
+        isNewUser = true;
+        const inferredFirstName = (firstName || name?.split(' ')[0] || normalizedEmail.split('@')[0]).trim();
+        const inferredLastName = (lastName || name?.split(' ').slice(1).join(' ') || '').trim();
+        const fullName = (name || `${inferredFirstName} ${inferredLastName}`).trim();
 
-      try {
         staff = await MunicipalStaff.create({
-          staffId,
+          staffId: `UM-REG-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`,
           name: fullName,
           firstName: inferredFirstName,
           lastName: inferredLastName,
           email: normalizedEmail,
-          password: `google-oauth-${Date.now()}`,
+          // Unguessable random secret: Google accounts have no password login.
+          password: await hashPassword(require('crypto').randomBytes(32).toString('hex')),
           phone: '',
-          badgeNumber,
+          badgeNumber: `CIT-${Math.floor(1000 + Math.random() * 9000)}`,
           role: 'REGULAR_USER',
           isSuperAdmin: false,
           assignedWardId: 'CMC-W01',
           department: 'Citizen & Accessibility Community',
           lastLogin: new Date(),
         });
-      } catch (createErr) {
-        staff = {
-          staffId,
-          name: fullName,
-          firstName: inferredFirstName,
-          lastName: inferredLastName,
-          email: normalizedEmail,
-          badgeNumber,
-          role: 'REGULAR_USER',
-          isSuperAdmin: false,
-          assignedWardId: 'CMC-W01',
-          department: 'Citizen & Accessibility Community',
-        };
-      }
-    } else {
-      // Existing user: update last login timestamp
-      staff.lastLogin = new Date();
-      if (staff.save) {
-        await staff.save().catch(() => {});
       }
     }
 
-    const token = `jwt-session-${Buffer.from(`${normalizedEmail}:${Date.now()}`).toString('base64')}`;
+    if (staff.isActive === false) {
+      return res.status(403).json({ success: false, message: 'This account has been deactivated' });
+    }
+
+    staff.lastLogin = new Date();
+    if (staff.save) await staff.save();
 
     return res.status(isNewUser ? 201 : 200).json({
       success: true,
@@ -552,7 +491,7 @@ const googleAuth = async (req, res) => {
         ? 'Account successfully created with Google! Welcome to UnityMap.'
         : 'Welcome back! Signed in with Google.',
       isNewUser,
-      token,
+      token: signToken(staff),
       user: formatUserResponse(staff),
     });
   } catch (error) {
@@ -573,4 +512,6 @@ module.exports = {
   getUsers,
   promoteUser,
   demoteUser,
+  formatUserResponse,
+  signToken,
 };

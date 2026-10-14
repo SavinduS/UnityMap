@@ -698,14 +698,14 @@ export const LiveTurnByTurnNavigationScreen = ({
               style={[
                 styles.miniPill,
                 {
-                  backgroundColor: isHighContrast ? '#FFFFFF' : '#EFF6FF',
-                  borderColor: isHighContrast ? '#000000' : '#BFDBFE',
+                  backgroundColor: isHighContrast ? '#FFFFFF' : '#ECFDF5',
+                  borderColor: isHighContrast ? '#000000' : '#A7F3D0',
                   borderWidth,
                 },
               ]}
             >
-              <MaterialCommunityIcons name="angle-acute" size={13} color={isHighContrast ? '#000000' : '#2563EB'} />
-              <Text style={[styles.miniPillText, { color: isHighContrast ? '#000000' : '#1D4ED8' }]}>{currentStep?.slope || 0}°</Text>
+              <MaterialCommunityIcons name="angle-acute" size={13} color={isHighContrast ? '#000000' : '#059669'} />
+              <Text style={[styles.miniPillText, { color: isHighContrast ? '#000000' : '#047857' }]}>{currentStep?.slope || 0}°</Text>
             </View>
           </View>
         </View>

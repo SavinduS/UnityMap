@@ -21,7 +21,7 @@ import {
   Alert,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { fetchWardCompliance, exportAuditReport } from '../../services/wardComplianceService';
+import { fetchWardCompliance, exportAuditReport, downloadAuditReportPdf } from '../../services/wardComplianceService';
 import adminAuthService from '../../services/adminAuthService';
 import { MUNICIPAL_WARDS, getWardById } from '../../utils/wardJurisdictions';
 
@@ -35,17 +35,26 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [auditModalData, setAuditModalData] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   const activeWard = getWardById(selectedWardId);
 
   const loadCompliance = useCallback(async (wardId) => {
+    setLoadError(null);
     try {
       const data = await fetchWardCompliance(wardId);
       if (data) {
         setComplianceData(data);
       }
     } catch (err) {
-      console.warn('[WardComplianceScreen] Error loading compliance:', err.message);
+      // Surface the real reason instead of rendering stale or zeroed figures.
+      setComplianceData(null);
+      setLoadError(
+        err?.status === 403
+          ? 'Your municipal clearance does not permit viewing ward compliance data.'
+          : err?.message || 'Could not load ward compliance data from the server.'
+      );
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -72,9 +81,29 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
       const report = await exportAuditReport(selectedWardId);
       setAuditModalData(report);
     } catch (err) {
-      Alert.alert('Export Error', 'Failed to generate audit report.');
+      Alert.alert('Export Error', err?.message || 'Failed to generate audit report.');
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handleDownloadAuditPdf = async () => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const result = await downloadAuditReportPdf(selectedWardId);
+      setAuditModalData(null);
+      Alert.alert(
+        'Download Started',
+        `${result.fileName} is being saved for council presentation.`
+      );
+    } catch (err) {
+      Alert.alert(
+        'Download Failed',
+        err?.message || 'The audit PDF could not be downloaded. Please try again.'
+      );
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -132,7 +161,7 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
         </View>
         <View style={styles.topBarTitleRow}>
           <Text style={styles.topBarTitle}>Ward Compliance & Budget</Text>
-          <Text style={styles.topBarSub}>
+          <Text style={styles.topBarSub} numberOfLines={1} ellipsizeMode="tail">
             {activeWard.name} • Ward {activeWard.wardNumber}
           </Text>
         </View>
@@ -165,10 +194,29 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#0B3D2E" />}
         showsVerticalScrollIndicator={false}
       >
-        {isLoading || !complianceData ? (
+        {isLoading ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#0B3D2E" />
             <Text style={styles.loadingText}>Compiling Ward Accessibility Metrics...</Text>
+          </View>
+        ) : loadError ? (
+          <View style={styles.loadingBox}>
+            <Feather name="alert-triangle" size={30} color="#DC2626" />
+            <Text style={styles.errorTitle}>Compliance Data Unavailable</Text>
+            <Text style={styles.errorDetail}>{loadError}</Text>
+            <TouchableOpacity
+              style={styles.errorRetryBtn}
+              onPress={onRefresh}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading compliance data"
+            >
+              <Feather name="refresh-cw" size={14} color="#FFFFFF" style={{ marginRight: 7 }} />
+              <Text style={styles.errorRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : !complianceData ? (
+          <View style={styles.loadingBox}>
+            <Text style={styles.loadingText}>No compliance data available for this ward.</Text>
           </View>
         ) : (
           <>
@@ -193,13 +241,17 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                       {scoreTheme.label}
                     </Text>
                   </View>
-                  <Text style={styles.scoreHeroWardName}>{complianceData.name}</Text>
-                  <Text style={styles.scoreInspector}>
+                  <Text style={styles.scoreHeroWardName} numberOfLines={2}>
+                    {complianceData.name}
+                  </Text>
+                  <Text style={styles.scoreInspector} numberOfLines={1} ellipsizeMode="tail">
                     Assigned: {complianceData.assignedInspector}
                   </Text>
                   <View style={styles.slaRow}>
                     <Feather name="target" size={11} color="#047857" style={{ marginRight: 4 }} />
-                    <Text style={styles.scoreTargetSla}>Target SLA: 85% minimum council benchmark</Text>
+                    <Text style={styles.scoreTargetSla} numberOfLines={2}>
+                      Target SLA: 85% minimum council benchmark
+                    </Text>
                   </View>
                 </View>
               </View>
@@ -222,7 +274,9 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                 <View style={styles.statPillDivider} />
                 <View style={styles.statPill}>
                   <Text style={styles.statPillVal}>
-                    {complianceData.meanTimeToRepairDays}d
+                    {complianceData.meanTimeToRepairDays != null
+                      ? `${complianceData.meanTimeToRepairDays}d`
+                      : '—'}
                   </Text>
                   <Text style={styles.statPillLbl}>Avg Repair Time</Text>
                 </View>
@@ -369,7 +423,9 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                       <View style={styles.workOrderDetails}>
                         <View style={styles.contractorRow}>
                           <Feather name="user" size={12} color="#475569" style={{ marginRight: 5 }} />
-                          <Text style={styles.contractorText}>{wo.contractor}</Text>
+                          <Text style={styles.contractorText} numberOfLines={1} ellipsizeMode="tail">
+                            {wo.contractor}
+                          </Text>
                         </View>
                         <View style={styles.workOrderFooterRow}>
                           <Text style={styles.workOrderBudget}>
@@ -459,13 +515,19 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
               <ScrollView showsVerticalScrollIndicator={false}>
                 <View style={styles.auditReferenceBox}>
                   <Text style={styles.auditRefKey}>Official Audit Reference</Text>
-                  <Text style={styles.auditRefVal}>{auditModalData.reportReference}</Text>
-                  <Text style={styles.auditAuth}>{auditModalData.issuingAuthority}</Text>
+                  <Text style={styles.auditRefVal} numberOfLines={1} ellipsizeMode="middle">
+                    {auditModalData.reportReference}
+                  </Text>
+                  <Text style={styles.auditAuth} numberOfLines={2}>
+                    {auditModalData.issuingAuthority}
+                  </Text>
                 </View>
 
                 <View style={styles.auditDetailRow}>
                   <Text style={styles.auditDetailKey}>Ward Authority</Text>
-                  <Text style={styles.auditDetailVal}>{auditModalData.wardName}</Text>
+                  <Text style={styles.auditDetailVal} numberOfLines={2}>
+                    {auditModalData.wardName}
+                  </Text>
                 </View>
 
                 <View style={styles.auditDetailRow}>
@@ -502,20 +564,22 @@ export const WardComplianceScreen = ({ onBack, initialWardId }) => {
                 </View>
 
                 <TouchableOpacity
-                  style={styles.downloadReportBtn}
-                  onPress={() => {
-                    Alert.alert(
-                      'Report Ready',
-                      `Municipal compliance document ${auditModalData.reportReference}.pdf generated for council presentation.`
-                    );
-                    setAuditModalData(null);
-                  }}
+                  style={[styles.downloadReportBtn, isDownloading && styles.downloadReportBtnDisabled]}
+                  onPress={handleDownloadAuditPdf}
+                  disabled={isDownloading}
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityLabel="Download official PDF audit"
+                  accessibilityState={{ disabled: isDownloading, busy: isDownloading }}
                 >
-                  <Feather name="download" size={15} color="#FFFFFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.downloadReportText}>Download Official PDF Audit</Text>
+                  {isDownloading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                  ) : (
+                    <Feather name="download" size={15} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  )}
+                  <Text style={styles.downloadReportText}>
+                    {isDownloading ? 'Preparing PDF…' : 'Download Official PDF Audit'}
+                  </Text>
                 </TouchableOpacity>
               </ScrollView>
             )}
@@ -639,6 +703,36 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 13,
     fontWeight: '600',
+  },
+  errorTitle: {
+    marginTop: 14,
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  errorDetail: {
+    marginTop: 8,
+    color: '#64748B',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingHorizontal: 12,
+    lineHeight: 19,
+  },
+  errorRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    backgroundColor: '#0B3D2E',
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderRadius: 12,
+    minHeight: 44,
+  },
+  errorRetryText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   scoreHeroCard: {
     backgroundColor: '#FFFFFF',
@@ -1110,6 +1204,10 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 20,
     minHeight: 52,
+  },
+  downloadReportBtnDisabled: {
+    backgroundColor: '#5B7A6E',
+    opacity: 0.85,
   },
   downloadReportText: {
     color: '#FFFFFF',

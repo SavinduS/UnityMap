@@ -77,7 +77,7 @@ export const SettingsScreen = () => {
             ]}
           >
             <View style={styles.userHeaderRow}>
-              <View style={[styles.avatarCircle, { backgroundColor: isHighContrast ? '#000000' : '#E0F2FE' }]}>
+              <View style={[styles.avatarCircle, { backgroundColor: isHighContrast ? '#000000' : '#DCFCE7' }]}>
                 <Feather name="user-check" size={22} color={palette.primary} />
               </View>
               <View style={{ flex: 1 }}>

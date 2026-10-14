@@ -8,6 +8,18 @@ const apiRoutes = require('./routes');
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
+// Fail fast rather than running with unsigned/guessable session tokens.
+if (!process.env.JWT_SECRET) {
+  console.error('❌ JWT_SECRET is not set. Sessions cannot be signed securely.');
+  console.error('   Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"');
+  console.error('   then add JWT_SECRET=<value> to backend/.env');
+  process.exit(1);
+}
+if (process.env.JWT_SECRET.length < 32) {
+  console.error('❌ JWT_SECRET must be at least 32 characters long.');
+  process.exit(1);
+}
+
 // Connect to MongoDB
 connectDB().catch((err) => {
   console.error('❌ Failed to connect to MongoDB:', err);
