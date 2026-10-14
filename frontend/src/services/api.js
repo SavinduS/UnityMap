@@ -148,6 +148,19 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * True when `err` is an abort/cancel rather than a real HTTP verdict.
+ * Expo's native fetch (SDK 54+) surfaces our AbortController.abort() as
+ * "fetch failed: Fetch request has been canceled"; browsers/RN report AbortError.
+ * ApiErrors are never aborts — they carry a server verdict we must preserve.
+ */
+const isAbortLike = (err) => {
+  if (!err || err instanceof ApiError) return false;
+  if (err.timedOut === true) return true;
+  if (err.name === 'AbortError') return true;
+  return /abort|canceled|cancelled/i.test(String(err.message || ''));
+};
+
 // --- Verified-host selection -----------------------------------------------
 // getHostAddress() can return a stale/unroutable host (DHCP churn, emulator alias
 // on physical hardware). warmApiHost() probes candidate hosts with a fast /health
@@ -290,7 +303,20 @@ export const apiRequest = async (endpoint, options = {}) => {
     const url = `${baseUrl}${cleanEndpoint}`;
     const controller = new AbortController();
     const attemptTimeout = typeof timeoutOverride === 'number' && timeoutOverride > 0 ? timeoutOverride : timeout;
-    const timeoutId = setTimeout(() => controller.abort(), attemptTimeout);
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, attemptTimeout);
+
+    // One line per attempt in Metro so a hung host is obvious without a packet capture.
+    const devLog = (outcome) => {
+      try {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log(`[API] ${method} ${url} → ${outcome}`);
+        }
+      } catch {}
+    };
 
     try {
       const response = await fetch(url, {
@@ -324,12 +350,29 @@ export const apiRequest = async (endpoint, options = {}) => {
           unauthorizedHandler();
         }
 
+        devLog(`HTTP ${response.status}`);
         throw httpErr;
       }
 
+      devLog('ok');
       return await response.json();
     } catch (err) {
       clearTimeout(timeoutId);
+      // An abort we triggered is a timeout — rebrand the cryptic native
+      // "Fetch request has been canceled" into an actionable ApiError that
+      // names the host we actually tried.
+      if (timedOut || isAbortLike(err)) {
+        const seconds = Math.max(1, Math.round(attemptTimeout / 1000));
+        const timeoutErr = new ApiError(
+          `Connection timeout (${seconds}s) — no response from ${baseUrl}.`,
+          504
+        );
+        timeoutErr.timedOut = true;
+        timeoutErr.baseUrl = baseUrl;
+        devLog(`timeout after ${seconds}s`);
+        throw timeoutErr;
+      }
+      devLog(`error: ${err?.message || err}`);
       throw err;
     }
   };
@@ -357,9 +400,35 @@ export const apiRequest = async (endpoint, options = {}) => {
     return /network|fetch|abort|offline|failed to fetch|econn|etimedout|timeout|unreachable|all connection attempts failed|load failed/.test(raw);
   };
 
+  // Mutations (POST/PUT/PATCH/DELETE) probe candidate hosts first via the fast
+  // /health check (2.5s each). A dead host then fails in seconds with a clear
+  // message instead of burning the full request timeout per candidate — which
+  // previously surfaced to users as "Fetch request has been canceled" after ~56s.
+  let primaryBase = getBaseUrl(PRIMARY_PORT);
+  if (method !== 'GET') {
+    let verified = null;
+    try {
+      verified = await warmApiHost();
+    } catch {}
+    if (!verified) {
+      const candidates = getApiBaseUrlCandidates();
+      const unreachable = new ApiError(
+        `All UnityMap backend hosts unreachable (${candidates.join(', ')}). ` +
+          'Start the backend (cd backend && npm run dev) and make sure this device is on the same network as the PC.',
+        503
+      );
+      unreachable.unreachable = true;
+      if (shouldLogWarn) {
+        console.error(`[API Error] ${method} ${cleanEndpoint}: ${unreachable.message}`);
+      }
+      throw unreachable;
+    }
+    primaryBase = verified;
+  }
+
   // Try primary configured port
   try {
-    return await tryFetch(getBaseUrl(PRIMARY_PORT));
+    return await tryFetch(primaryBase);
   } catch (primaryErr) {
     // An auth verdict is port-independent — never replay credentials elsewhere.
     if (primaryErr instanceof ApiError && (primaryErr.status === 401 || primaryErr.status === 403)) {
@@ -383,7 +452,7 @@ export const apiRequest = async (endpoint, options = {}) => {
 
       // Speculative emulator hosts get a short timeout and are skipped when they
       // duplicate a URL already attempted — they must fail fast, not hang per host.
-      const tried = new Set([getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)]);
+      const tried = new Set([primaryBase, getBaseUrl(PRIMARY_PORT), getBaseUrl(FALLBACK_PORT)]);
       const trySpeculative = async (baseUrl) => {
         if (tried.has(baseUrl)) return null;
         tried.add(baseUrl);

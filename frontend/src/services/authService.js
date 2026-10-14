@@ -160,6 +160,12 @@ class AuthService {
     } catch (err) {
       if (err?.status === 401) throw new Error('Invalid email or password.');
       if (err?.status === 403) throw new Error(err.message || 'This account has been deactivated.');
+      // Connectivity failures already carry an actionable message naming the host
+      // that timed out (e.g. "Connection timeout (10s) — no response from http://…")
+      // — pass it through instead of hiding it behind a generic string.
+      if (err?.unreachable || err?.timedOut) {
+        throw new Error(err.message);
+      }
       throw new Error('Unable to reach the UnityMap server. Check your connection and try again.');
     }
 
@@ -213,6 +219,9 @@ class AuthService {
     } catch (err) {
       if (err?.status === 409) throw new Error('An account with this email already exists. Please sign in.');
       if (err?.status === 400) throw new Error(err.message);
+      if (err?.unreachable || err?.timedOut) {
+        throw new Error(err.message);
+      }
       throw new Error('Unable to reach the UnityMap server. Check your connection and try again.');
     }
 

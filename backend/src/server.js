@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const os = require('os');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 const apiRoutes = require('./routes');
@@ -77,11 +78,64 @@ app.use((err, req, res, next) => {
 
 const initialPort = parseInt(process.env.PORT, 10) || 5001;
 
+/**
+ * LAN IP for the startup hint printed below. Prefers the OS default-route source
+ * address (a UDP "connect" to 8.8.8.8 sends no traffic — it only asks the routing
+ * table which address a phone would reach us on), then falls back to the first
+ * non-virtual NIC, skipping VMware/Hyper-V/Bluetooth adapters that would give a
+ * useless address like 192.168.83.1.
+ */
+const VIRTUAL_NIC = /VMware|vEthernet|Loopback|Bluetooth|Hyper-V|Teredo|isatap|Wi-Fi Direct/i;
+const REAL_NIC = /^(Wi-Fi|Ethernet|WLAN|eth\d)/i;
+
+const lanAddressFromNics = () => {
+  const interfaces = os.networkInterfaces();
+  let firstReal = null;
+  for (const name of Object.keys(interfaces)) {
+    if (VIRTUAL_NIC.test(name)) continue;
+    for (const net of interfaces[name] || []) {
+      if (net.family !== 'IPv4' || net.internal) continue;
+      if (REAL_NIC.test(name)) return net.address;
+      firstReal = firstReal || net.address;
+    }
+  }
+  return firstReal || 'localhost';
+};
+
+const printLanHint = (port) => {
+  const print = (lan) => {
+    console.log(`📡 LAN URL (put this in frontend/.env → EXPO_PUBLIC_API_URL): http://${lan}:${port}/api`);
+    console.log(`   Phone check: open http://${lan}:${port}/api/health in the mobile browser`);
+  };
+  try {
+    const dgram = require('dgram');
+    const socket = dgram.createSocket('udp4');
+    const timer = setTimeout(() => {
+      try { socket.close(); } catch {}
+      print(lanAddressFromNics());
+    }, 400);
+    const done = (addr) => {
+      clearTimeout(timer);
+      try { socket.close(); } catch {}
+      print(addr || lanAddressFromNics());
+    };
+    socket.on('error', () => done(null));
+    socket.connect(53, '8.8.8.8', () => {
+      let addr = null;
+      try { addr = socket.address().address; } catch {}
+      done(addr && addr !== '0.0.0.0' ? addr : null);
+    });
+  } catch {
+    print(lanAddressFromNics());
+  }
+};
+
 const startServer = (port) => {
   const server = app.listen(port, () => {
     console.log(`🚀 UnityMap Backend Server listening on port ${port}`);
     console.log(`📡 Health Check URL: http://localhost:${port}/api/health`);
-    console.log(`📦 API Base URL:     http://localhost:${port}/api`);
+    console.log(`📡 API Base URL:     http://localhost:${port}/api`);
+    printLanHint(port);
   });
 
   server.on('error', (err) => {
