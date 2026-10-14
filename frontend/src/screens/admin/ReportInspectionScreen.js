@@ -118,6 +118,17 @@ export const ReportInspectionScreen = ({
 
   const triage = report?.triage || {};
   const factors = triage.formulaFactors || {};
+
+  // Urgency factors render as an em dash when the engine has not supplied a
+  // value. A fabricated placeholder (a made-up severity of 4, an invented "3d"
+  // age) is indistinguishable from a real measurement in an inspection report,
+  // which is the one screen a municipal officer uses to authorise spending.
+  const severityWeight = factors.barrierSeverityWeight ?? report?.rating ?? null;
+  const severityFactor = severityWeight !== null ? `${severityWeight}/5` : '—';
+  const ageFactor = factors.reportAgeDays != null ? `${factors.reportAgeDays}d` : '—';
+  const corridorFactor =
+    factors.vitalCorridorMultiplier != null ? `${factors.vitalCorridorMultiplier}x` : '—';
+
   const crossRef = triage.crossReferencedAsset || null;
   const activeWard = getWardById(report?.wardId || currentUser?.assignedWardId || 'CMC-W01');
 
@@ -373,7 +384,7 @@ export const ReportInspectionScreen = ({
           {/* Factor Breakdown Grid */}
           <View style={styles.factorsGrid}>
             <View style={styles.factorItem}>
-              <Text style={styles.factorValue}>{factors.barrierSeverityWeight || report.rating || 4}/5</Text>
+              <Text style={styles.factorValue}>{severityFactor}</Text>
               <Text style={styles.factorLabel}>Severity (40%)</Text>
             </View>
             <View style={styles.factorDivider} />
@@ -384,14 +395,14 @@ export const ReportInspectionScreen = ({
             <View style={styles.factorDivider} />
             <View style={styles.factorItem}>
               <Text style={styles.factorValue}>
-                {factors.reportAgeDays !== undefined ? `${factors.reportAgeDays}d` : '3d'}
+                {ageFactor}
               </Text>
               <Text style={styles.factorLabel}>Age Decay (25%)</Text>
             </View>
             <View style={styles.factorDivider} />
             <View style={styles.factorItem}>
               <Text style={styles.factorValue}>
-                {factors.vitalCorridorMultiplier ? `${factors.vitalCorridorMultiplier}x` : '1.0x'}
+                {corridorFactor}
               </Text>
               <Text style={styles.factorLabel}>Corridor Boost</Text>
             </View>

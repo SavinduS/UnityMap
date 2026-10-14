@@ -531,7 +531,7 @@ export const TriageQueueScreen = ({ onBack, onSelectReport, selectedWardId: prop
                   {/* Card Action Footer */}
                   <View style={styles.cardFooter}>
                     <Text style={styles.cardDate}>
-                      {factors.reportAgeDays ? `${factors.reportAgeDays}d ago` : 'Recently submitted'}
+                      {factors.reportAgeDays != null ? `${factors.reportAgeDays}d ago` : '—'}
                     </Text>
                     <TouchableOpacity
                       style={styles.inspectButton}
