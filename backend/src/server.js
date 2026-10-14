@@ -76,7 +76,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-const initialPort = parseInt(process.env.PORT, 10) || 5001;
+const initialPort = parseInt(process.env.PORT, 10) || 5000;
 
 /**
  * LAN IP for the startup hint printed below. Prefers the OS default-route source
@@ -131,7 +131,9 @@ const printLanHint = (port) => {
 };
 
 const startServer = (port) => {
-  const server = app.listen(port, () => {
+  // Bind 0.0.0.0 so the Android emulator (10.0.2.2) and physical devices
+  // (PC LAN IP) can reach the API.
+  const server = app.listen(port, '0.0.0.0', () => {
     console.log(`🚀 UnityMap Backend Server listening on port ${port}`);
     console.log(`📡 Health Check URL: http://localhost:${port}/api/health`);
     console.log(`📡 API Base URL:     http://localhost:${port}/api`);
@@ -140,8 +142,11 @@ const startServer = (port) => {
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      console.warn(`⚠️ Port ${port} is already in use (e.g. macOS AirPlay Receiver). Retrying on port ${port + 1}...`);
-      startServer(port + 1);
+      // Fail loudly: silently drifting to another port strands the mobile app,
+      // whose PRIMARY_PORT/FALLBACK_PORT fallback chain only covers known ports.
+      // Free the port (e.g. kill the orphan `node src/server.js`) and restart.
+      console.error(`❌ Port ${port} is already in use. Kill the process holding it, then restart (backend stays on ${port}).`);
+      process.exit(1);
     } else {
       console.error('❌ Server startup error:', err);
     }
