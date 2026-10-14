@@ -23,8 +23,10 @@
     "ios": {
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "UnityMap uses speech recognition to let you speak your destination hands-free.",
-        "NSMicrophoneUsageDescription": "UnityMap needs microphone access to transcribe your spoken destination."
-      }
+        "NSMicrophoneUsageDescription": "UnityMap needs microphone access to transcribe your spoken destination.",
+        "NSLocationWhenInUseUsageDescription": "UnityMap uses your location to find accessibility barriers and plan accessible routes near you."
+      },
+      "bundleIdentifier": "com.anonymous.frontend"
     },
     "plugins": [
       "expo-speech-recognition",

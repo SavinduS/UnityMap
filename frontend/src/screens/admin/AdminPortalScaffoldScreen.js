@@ -10,7 +10,7 @@
  * - Ward Jurisdiction selector and live infrastructure KPI summary
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,20 +20,28 @@ import {
   SafeAreaView,
   StatusBar,
   Platform,
+  ActivityIndicator,
+  Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import authService from '../../services/authService';
 import adminAuthService from '../../services/adminAuthService';
 import { MUNICIPAL_WARDS, getWardById } from '../../utils/wardJurisdictions';
 import { fetchTriageMetrics } from '../../services/triageService';
-import { fetchWardCompliance } from '../../services/wardComplianceService';
+import { fetchWardCompliance, downloadAuditReportPdf } from '../../services/wardComplianceService';
 import TriageQueueScreen from './TriageQueueScreen';
 import ReportInspectionScreen from './ReportInspectionScreen';
 import WardComplianceScreen from './WardComplianceScreen';
 import UserManagementSection from '../../components/admin/UserManagementSection';
 import AdminDrawer from '../../components/admin/AdminDrawer';
+import DonutChart, { DONUT_PALETTE } from '../../components/admin/DonutChart';
 
 export const AdminPortalScaffoldScreen = () => {
+  const { width } = useWindowDimensions();
+  // Single breakpoint: below it the donut and its legend stack, above it they sit
+  // side by side. Keeps the hub readable from a 320pt phone up to a tablet.
+  const isWideLayout = width >= 400;
   const [currentUser, setCurrentUser] = useState(authService.getCurrentUser());
   const [selectedWardId, setSelectedWardId] = useState(
     currentUser?.assignedWardId || 'CMC-W01'
@@ -44,8 +52,16 @@ export const AdminPortalScaffoldScreen = () => {
   const [wardMetrics, setWardMetrics] = useState({
     activeBarriers: 0,
     complianceScore: 100,
-    allocatedBudgetLKR: 1850000,
+    allocatedBudgetLKR: null,
+    spentBudgetLKR: null,
+    categoryBreakdown: [],
+    priorityCounts: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+    resolvedBarriers: 0,
+    meanTimeToRepairDays: null,
+    inspector: null,
+    lastUpdatedAt: null,
     isLoading: true,
+    hasError: false,
   });
 
   useEffect(() => {
@@ -69,11 +85,30 @@ export const AdminPortalScaffoldScreen = () => {
         setWardMetrics({
           activeBarriers: triageData?.totalPendingReports ?? complianceData?.activeBarrierCount ?? 0,
           complianceScore: complianceData?.complianceScorePercent ?? 100,
-          allocatedBudgetLKR: complianceData?.allocatedBudgetLKR ?? 1850000,
+          allocatedBudgetLKR: complianceData?.allocatedBudgetLKR ?? null,
+          spentBudgetLKR: complianceData?.spentBudgetLKR ?? null,
+          categoryBreakdown: Array.isArray(complianceData?.categoryBreakdown)
+            ? complianceData.categoryBreakdown
+            : [],
+          priorityCounts: {
+            CRITICAL: triageData?.criticalPriorityCount ?? 0,
+            HIGH: triageData?.highPriorityCount ?? 0,
+            MEDIUM: triageData?.mediumPriorityCount ?? 0,
+            LOW: triageData?.lowPriorityCount ?? 0,
+          },
+          resolvedBarriers: complianceData?.resolvedBarrierCount ?? 0,
+          meanTimeToRepairDays: complianceData?.meanTimeToRepairDays ?? null,
+          inspector: complianceData?.assignedInspector ?? null,
+          lastUpdatedAt: complianceData?.generatedAt ?? null,
           isLoading: false,
+          hasError: false,
         });
       } catch (err) {
+        if (!isMounted) return;
+        // Distinguish "no data" from "backend unreachable" — a silent catch left
+        // the dashboard rendering zeros, which read as a genuinely perfect ward.
         console.warn('[AdminPortalScaffold] Failed to load live metrics:', err.message);
+        setWardMetrics((prev) => ({ ...prev, isLoading: false, hasError: true }));
       }
     };
     loadLiveMetrics();
@@ -88,6 +123,66 @@ export const AdminPortalScaffoldScreen = () => {
   const handleWardChange = (wardId) => {
     setSelectedWardId(wardId);
     adminAuthService.switchWard(wardId);
+  };
+
+  // ── Hub analytics (all derived from the live API response, never invented) ──
+  const categorySegments = useMemo(
+    () =>
+      (wardMetrics.categoryBreakdown || [])
+        .map((row, i) => ({
+          label: row.category,
+          value: Number(row.activeCount) || 0,
+          color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+        })),
+    [wardMetrics.categoryBreakdown]
+  );
+
+  const activeDefectTotal = categorySegments.reduce((sum, s) => sum + s.value, 0);
+
+  const prioritySegments = useMemo(() => {
+    const p = wardMetrics.priorityCounts || {};
+    const order = [
+      { label: 'Critical', value: Number(p.CRITICAL) || 0, color: '#DC2626' },
+      { label: 'High', value: Number(p.HIGH) || 0, color: '#F59E0B' },
+      { label: 'Medium', value: Number(p.MEDIUM) || 0, color: '#0EA5E9' },
+      { label: 'Low', value: Number(p.LOW) || 0, color: '#10B981' },
+    ];
+    return order;
+  }, [wardMetrics.priorityCounts]);
+
+  const priorityTotal = prioritySegments.reduce((sum, s) => sum + s.value, 0);
+
+  const budgetPct =
+    wardMetrics.allocatedBudgetLKR > 0
+      ? Math.min(
+          100,
+          Math.round(((wardMetrics.spentBudgetLKR || 0) / wardMetrics.allocatedBudgetLKR) * 100)
+        )
+      : null;
+
+  const complianceTone =
+    wardMetrics.complianceScore >= 75
+      ? { bg: '#D1FAE5', fg: '#065F46', label: 'Compliant' }
+      : wardMetrics.complianceScore >= 50
+      ? { bg: '#FEF3C7', fg: '#92400E', label: 'Under Review' }
+      : { bg: '#FEE2E2', fg: '#991B1B', label: 'Under Surveillance' };
+
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadAudit = async () => {
+    if (isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const result = await downloadAuditReportPdf(selectedWardId);
+      Alert.alert(
+        'Audit Report Downloaded',
+        `${result.fileName}\n\nSaved to the app's cache and opened in the viewer.`
+      );
+    } catch (err) {
+      Alert.alert('Download Failed', err.message || 'The audit report could not be generated.');
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   // If unauthenticated, RootNavigator handles redirect to LoginScreen
@@ -311,13 +406,191 @@ export const AdminPortalScaffoldScreen = () => {
               <View style={styles.kpiBox}>
                 <View style={[styles.kpiAccentBar, { backgroundColor: '#0B3D2E' }]} />
                 <Text style={[styles.kpiNumber, { color: '#0B3D2E' }]}>
-                  {((wardMetrics.allocatedBudgetLKR || 1850000) / 1000000).toFixed(1)}M
+                  {wardMetrics.allocatedBudgetLKR != null
+                    ? `${(wardMetrics.allocatedBudgetLKR / 1000000).toFixed(1)}M`
+                    : '—'}
                 </Text>
                 <Text style={styles.kpiCaption} numberOfLines={1}>Budget (LKR)</Text>
                 <View style={{ height: 12 }} />
               </View>
             </View>
+
+            {/* Live-data provenance. Without this a failed fetch and a genuinely
+                perfect ward look identical on screen. */}
+            {wardMetrics.hasError && (
+              <View style={styles.errorStrip}>
+                <Feather name="wifi-off" size={13} color="#991B1B" />
+                <Text style={styles.errorStripText} numberOfLines={2}>
+                  Live metrics unavailable — figures below may be stale.
+                </Text>
+              </View>
+            )}
           </View>
+        </View>
+
+        {/* ── Command Centre: donut analytics ── */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconBox}>
+                <Feather name="pie-chart" size={13} color="#047857" />
+              </View>
+              <Text style={styles.sectionTitle}>Defect Distribution</Text>
+            </View>
+            {!!wardMetrics.lastUpdatedAt && !wardMetrics.isLoading && (
+              <Text style={styles.sectionSubtitle}>
+                {new Date(wardMetrics.lastUpdatedAt).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </Text>
+            )}
+          </View>
+
+          {wardMetrics.isLoading ? (
+            <View style={styles.chartLoading}>
+              <ActivityIndicator color="#0B3D2E" />
+            </View>
+          ) : (
+            <>
+              {/* Active defects by asset category */}
+              <View style={[styles.chartRow, isWideLayout && styles.chartRowWide]}>
+                <View style={styles.chartCanvasWrap}>
+                  <DonutChart
+                    segments={categorySegments}
+                    size={isWideLayout ? 172 : 146}
+                    thickness={26}
+                    centerValue={String(activeDefectTotal)}
+                    centerLabel="Active defects"
+                    emptyLabel="No active defects"
+                  />
+                </View>
+
+                <View style={styles.legendWrap}>
+                  {categorySegments.length === 0 ? (
+                    <Text style={styles.legendEmpty}>No defect data for this ward yet.</Text>
+                  ) : (
+                    categorySegments.map((seg) => (
+                      <View key={seg.label} style={styles.legendRow}>
+                        <View style={[styles.legendSwatch, { backgroundColor: seg.color }]} />
+                        <Text style={styles.legendLabel} numberOfLines={1}>
+                          {seg.label}
+                        </Text>
+                        <Text style={styles.legendValue}>{seg.value}</Text>
+                      </View>
+                    ))
+                  )}
+                </View>
+              </View>
+
+              {/* Urgency band mix from the triage engine */}
+              <View style={styles.priorityBlock}>
+                <Text style={styles.priorityBlockTitle}>URGENCY INDEX DISTRIBUTION</Text>
+                {priorityTotal === 0 ? (
+                  <Text style={styles.legendEmpty}>No scored reports in the queue.</Text>
+                ) : (
+                  <>
+                    <View style={styles.priorityBarTrack}>
+                      {prioritySegments
+                        .filter((s) => s.value > 0)
+                        .map((seg) => (
+                          <View
+                            key={seg.label}
+                            style={{
+                              flex: seg.value,
+                              backgroundColor: seg.color,
+                              height: '100%',
+                            }}
+                          />
+                        ))}
+                    </View>
+                    <View style={styles.priorityLegendRow}>
+                      {prioritySegments.map((seg) => (
+                        <View key={seg.label} style={styles.priorityLegendItem}>
+                          <View style={[styles.legendSwatch, { backgroundColor: seg.color }]} />
+                          <Text style={styles.priorityLegendText}>
+                            {seg.label} {seg.value}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </>
+                )}
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* ── Compliance & budget ── */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconBox}>
+                <Feather name="shield" size={13} color="#047857" />
+              </View>
+              <Text style={styles.sectionTitle}>Compliance &amp; Budget</Text>
+            </View>
+            <View style={[styles.statusPill, { backgroundColor: complianceTone.bg }]}>
+              <Text style={[styles.statusPillText, { color: complianceTone.fg }]}>
+                {complianceTone.label}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.complianceScoreRow}>
+            <Text style={styles.complianceBigScore}>
+              {wardMetrics.isLoading ? '—' : `${wardMetrics.complianceScore}%`}
+            </Text>
+            <View style={styles.complianceScoreMeta}>
+              <Text style={styles.complianceMetaLine}>
+                {wardMetrics.resolvedBarriers} resolved barrier
+                {wardMetrics.resolvedBarriers === 1 ? '' : 's'} on record
+              </Text>
+              <Text style={styles.complianceMetaLine}>
+                Mean time to repair:{' '}
+                {wardMetrics.meanTimeToRepairDays != null
+                  ? `${wardMetrics.meanTimeToRepairDays} days`
+                  : 'not yet measurable'}
+              </Text>
+              {!!wardMetrics.inspector && (
+                <Text style={styles.complianceMetaLine} numberOfLines={1}>
+                  Inspector: {wardMetrics.inspector}
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {budgetPct != null && (
+            <View style={styles.budgetBlock}>
+              <View style={styles.budgetHeaderRow}>
+                <Text style={styles.budgetLabel}>Capital budget committed</Text>
+                <Text style={styles.budgetValue}>{budgetPct}%</Text>
+              </View>
+              <View style={styles.budgetTrack}>
+                <View style={[styles.budgetFill, { width: `${budgetPct}%` }]} />
+              </View>
+              <Text style={styles.budgetSub}>
+                LKR {((wardMetrics.spentBudgetLKR || 0) / 1000000).toFixed(2)}M committed of LKR{' '}
+                {((wardMetrics.allocatedBudgetLKR || 0) / 1000000).toFixed(2)}M allocated
+              </Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[styles.downloadBtn, isDownloading && styles.downloadBtnDisabled]}
+            onPress={handleDownloadAudit}
+            disabled={isDownloading || wardMetrics.isLoading}
+            activeOpacity={0.8}
+          >
+            {isDownloading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Feather name="download" size={15} color="#FFFFFF" style={{ marginRight: 7 }} />
+            )}
+            <Text style={styles.downloadBtnText}>
+              {isDownloading ? 'Generating official audit PDF…' : 'Download Official Audit Report'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Municipal Operational Workflows */}
@@ -398,9 +671,6 @@ export const AdminPortalScaffoldScreen = () => {
             </View>
           </TouchableOpacity>
         </View>
-
-        {/* User Role Management Section */}
-        <UserManagementSection />
       </ScrollView>
 
       {/* Slide-in Side Navigation Drawer */}
@@ -418,7 +688,7 @@ export const AdminPortalScaffoldScreen = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F0F4F0',
+    backgroundColor: '#0B3D2E',
   },
   standaloneView: {
     flex: 1,
@@ -426,6 +696,200 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+    backgroundColor: '#F0F4F0',
+  },
+
+  // ── Command centre analytics ──
+  errorStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  errorStripText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#991B1B',
+    lineHeight: 15,
+  },
+  chartLoading: {
+    height: 150,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chartRow: {
+    alignItems: 'center',
+    gap: 14,
+    marginTop: 4,
+  },
+  chartRowWide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+  },
+  chartCanvasWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  legendWrap: {
+    flex: 1,
+    width: '100%',
+    gap: 8,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  legendSwatch: {
+    width: 10,
+    height: 10,
+    borderRadius: 3,
+  },
+  legendLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  legendValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0B3D2E',
+  },
+  legendEmpty: {
+    fontSize: 12,
+    color: '#94A3B8',
+    textAlign: 'center',
+    paddingVertical: 8,
+  },
+  priorityBlock: {
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  priorityBlockTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: '#64748B',
+    marginBottom: 8,
+  },
+  priorityBarTrack: {
+    flexDirection: 'row',
+    height: 10,
+    borderRadius: 5,
+    overflow: 'hidden',
+    backgroundColor: '#E2E8F0',
+  },
+  priorityLegendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 10,
+  },
+  priorityLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  priorityLegendText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+
+  // ── Compliance & budget ──
+  statusPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  statusPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  complianceScoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginTop: 6,
+  },
+  complianceBigScore: {
+    fontSize: 40,
+    fontWeight: '800',
+    color: '#0B3D2E',
+    letterSpacing: -1,
+  },
+  complianceScoreMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  complianceMetaLine: {
+    fontSize: 11,
+    color: '#64748B',
+    lineHeight: 15,
+  },
+  budgetBlock: {
+    marginTop: 16,
+  },
+  budgetHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 7,
+  },
+  budgetLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  budgetValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0B3D2E',
+  },
+  budgetTrack: {
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  budgetFill: {
+    height: '100%',
+    borderRadius: 5,
+    backgroundColor: '#10B981',
+  },
+  budgetSub: {
+    marginTop: 7,
+    fontSize: 10,
+    color: '#94A3B8',
+  },
+  downloadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#0B3D2E',
+  },
+  downloadBtnDisabled: {
+    opacity: 0.6,
+  },
+  downloadBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   content: {
     paddingHorizontal: 16,
