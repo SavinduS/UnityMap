@@ -136,6 +136,16 @@ const barrierReportSchema = new mongoose.Schema(
     reporterId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
+      // Schema-level guard: demo/offline ids (e.g. 'UM-123') are coerced to
+      // undefined so they save anonymously instead of throwing a CastError 500.
+      // Volunteer flow also sanitizes upstream; this protects every caller.
+      set: function setReporterId(v) {
+        if (v === undefined || v === null || v === '') return undefined;
+        try {
+          if (mongoose.Types.ObjectId.isValid(v)) return v;
+        } catch (_) {}
+        return undefined;
+      },
     },
     upvotedBy: {
       type: [

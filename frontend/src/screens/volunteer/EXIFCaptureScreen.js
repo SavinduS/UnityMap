@@ -5,57 +5,108 @@ import Button from '../../components/Button';
 import { useTheme } from '../../theme/ThemeContext';
 import { getTextStyle, textProps } from '../../theme/typography';
 import { extractExifData } from '../../utils/exifHelper';
-import { saveVolunteerDraft, clearVolunteerDraft } from '../../theme/storage';
+import { saveVolunteerDraft, clearVolunteerDraft, loadVolunteerDraft } from '../../theme/storage';
 
 /**
- * EXIF Capture & Geotagging Screen — SPT-108 minimal web-standard solution
+ * EXIF Capture & Geotagging Screen — SPT-108
  * - Custom viewfinder UI (reuses Card/Button, ThemeContext, tokens)
- * - Hidden <input type="file" accept="image/*" capture="environment"> triggered by prominent Button
- * - File directly passed to SPT-008 extractExifData(file) — no expo-image-picker
+ * - Supports Camera Capture + Pick from Gallery (Expo ImagePicker / web input)
+ * - File directly passed to extractExifData — handles EXIF GPS & timestamp
+ * - Automatic fallback to device geolocation + system timestamp when EXIF missing (soft warning, no block)
  * - Preview via URL.createObjectURL with revoke on replace/unmount
- * - Handles cancel, missing/invalid GPS/timestamp, unsupported image, camera unavailable
  */
-export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = false }) => {
+export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = false, initialUri = null, initialExifResult = null }) => {
   const { palette, borderWidth, isHighContrast } = useTheme();
-  const [imageUri, setImageUri] = useState(null);
+  const [imageUri, setImageUri] = useState(initialUri);
   const [errorMsg, setErrorMsg] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [exifLoading, setExifLoading] = useState(false);
-  const [exifResult, setExifResult] = useState(null);
+  const [exifResult, setExifResult] = useState(initialExifResult);
+  const [fallbackMsg, setFallbackMsg] = useState(null);
   const isMountedRef = useRef(true);
   const previewUrlRef = useRef(null);
   const cancelFallbackRef = useRef(null);
+  // True only for blob URLs created by THIS mount via URL.createObjectURL.
+  // Parent-owned URIs (file://, content://, or a blob URL handed down as initialUri)
+  // must never be revoked here — the parent still needs them after unmount (Step 2 → 3).
+  const ownsPreviewRef = useRef(false);
+
+  // Hydrate from parent unified state when navigating back — preserves photo across steps
+  useEffect(() => {
+    if (initialUri && initialUri !== imageUri) {
+      setImageUri(initialUri);
+      // Display-only: never take ownership of a parent URI, so unmount/replace
+      // can never invalidate a blob URL the parent still references at submit time.
+    }
+    if (initialExifResult && initialExifResult !== exifResult) {
+      let ex = initialExifResult;
+      if (ex.capturedAt && typeof ex.capturedAt === 'string') {
+        const d = new Date(ex.capturedAt);
+        ex = { ...ex, capturedAt: Number.isNaN(d.getTime()) ? null : d };
+      }
+      setExifResult(ex);
+    }
+  }, [initialUri, initialExifResult]);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      // Clear fallback timeout on unmount to avoid state updates after unmount
       if (cancelFallbackRef.current) {
         clearTimeout(cancelFallbackRef.current);
         cancelFallbackRef.current = null;
       }
-      // Clean up object URL when leaving screen/component
-      if (previewUrlRef.current) {
-        try {
-          URL.revokeObjectURL(previewUrlRef.current);
-        } catch {}
-        previewUrlRef.current = null;
-      }
+      // Intentionally NOT revoking previewUrlRef here: Step 2 → Step 3 unmounts this
+      // screen while the parent still holds the URI for preview + submit. Revoking an
+      // owned blob URL here used to break submit-time fetch(blob:) with
+      // "Could not read selected image". Replacement revokes the old URL instead.
     };
   }, []);
 
   const revokePreview = useCallback(() => {
     if (previewUrlRef.current) {
-      try {
-        URL.revokeObjectURL(previewUrlRef.current);
-      } catch {}
+      if (ownsPreviewRef.current) {
+        try {
+          URL.revokeObjectURL(previewUrlRef.current);
+        } catch {}
+        ownsPreviewRef.current = false;
+      }
       previewUrlRef.current = null;
     }
   }, []);
 
+  // Fallback: get device location when EXIF GPS missing — never blocks, soft warning only
+  const getDeviceLocationFallback = useCallback(async () => {
+    // Try expo-location first (native), fallback to navigator.geolocation (web)
+    if (Platform.OS !== 'web') {
+      try {
+        const Location = await import('expo-location');
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return null;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (pos?.coords?.latitude && pos?.coords?.longitude) {
+          return { latitude: pos.coords.latitude, longitude: pos.coords.longitude, altitude: pos.coords.altitude ?? null };
+        }
+      } catch {}
+    }
+    // Web: navigator.geolocation
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 });
+        });
+        if (pos?.coords) {
+          return { latitude: pos.coords.latitude, longitude: pos.coords.longitude, altitude: pos.coords.altitude ?? null };
+        }
+      } catch {}
+    }
+    return null;
+  }, []);
+
   const persistDraft = useCallback(async (uri, exif, file) => {
     try {
+      let existing = null;
+      try { existing = await loadVolunteerDraft(); } catch {}
       const draft = {
         imageUri: uri,
         exifResult: exif
@@ -68,24 +119,61 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
               capturedAt: exif.capturedAt ? exif.capturedAt.toISOString() : null,
             }
           : null,
+        category: existing?.category ?? null,
+        rating: existing?.rating ?? null,
+        notes: existing?.notes ?? '',
+        name: existing?.name ?? '',
+        condition: existing?.condition ?? 'bad',
+        locationName: existing?.locationName ?? '',
+        capturedAt: existing?.capturedAt ?? null,
+        manualCoords: existing?.manualCoords ?? null,
         updatedAt: new Date().toISOString(),
       };
       await saveVolunteerDraft(draft);
       if (typeof onCaptured === 'function') {
-        // Include original file for upstream upload (SPT-109 triage integration)
         onCaptured({ ...draft, file: file || null, exifRaw: exif || null });
       }
     } catch {}
   }, [onCaptured]);
 
+  const enrichWithFallback = useCallback(async (exif) => {
+    let enriched = { ...exif };
+    let fallbackUsed = false;
+    let fallbackMsgText = null;
+
+    // GPS fallback
+    if (!enriched.hasGps || typeof enriched.latitude !== 'number' || typeof enriched.longitude !== 'number') {
+      const fallbackLoc = await getDeviceLocationFallback();
+      if (fallbackLoc) {
+        enriched.latitude = fallbackLoc.latitude;
+        enriched.longitude = fallbackLoc.longitude;
+        if (typeof fallbackLoc.altitude === 'number') enriched.altitude = fallbackLoc.altitude;
+        enriched.hasGps = true;
+        enriched.isFallbackGps = true;
+        fallbackUsed = true;
+        fallbackMsgText = 'EXIF GPS unavailable — using device location';
+      } else {
+        // Still no GPS, but don't block — keep hasGps false, parent will use manualCoords fallback
+        fallbackMsgText = 'GPS unavailable — will use device location at submission';
+      }
+    }
+    // Timestamp fallback — always provide current time if missing
+    if (!enriched.hasTimestamp || !(enriched.capturedAt instanceof Date) || Number.isNaN(enriched.capturedAt.getTime())) {
+      enriched.capturedAt = new Date();
+      enriched.hasTimestamp = true;
+      enriched.isFallbackTimestamp = true;
+      if (!fallbackMsgText) fallbackMsgText = 'Timestamp unavailable — using current time';
+      else fallbackMsgText += ' • Timestamp set to now';
+      fallbackUsed = true;
+    }
+    return { enriched, fallbackUsed, fallbackMsgText };
+  }, [getDeviceLocationFallback]);
+
   const processFile = useCallback(async (file) => {
     if (!file) {
-      // User cancellation / no file selected — graceful no-op
       if (isMountedRef.current) setIsLoading(false);
       return;
     }
-
-    // Validate image type
     if (!file.type || !file.type.startsWith('image/')) {
       if (isMountedRef.current) {
         setErrorMsg('Unsupported image format. Please select a valid image file (JPEG, PNG, HEIC).');
@@ -93,8 +181,6 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       }
       return;
     }
-
-    // Validate file size / non-empty
     if (file.size === 0) {
       if (isMountedRef.current) {
         setErrorMsg('Invalid image file is empty. Please try another photo.');
@@ -103,7 +189,6 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       return;
     }
 
-    // Revoke previous preview before creating new one
     revokePreview();
     let previewUrl;
     try {
@@ -122,20 +207,23 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
     }
 
     previewUrlRef.current = previewUrl;
+    ownsPreviewRef.current = true;
     setImageUri(previewUrl);
     setErrorMsg(null);
+    setFallbackMsg(null);
     setExifLoading(true);
 
     try {
-      // SPT-008: pass File directly — supports File/Blob/ArrayBuffer
       const exif = await extractExifData(file);
       if (!isMountedRef.current) return;
-      // Validate GPS/timestamp are already normalized to null if invalid by helper
-      setExifResult(exif);
-      await persistDraft(previewUrl, exif, file);
+      // Apply automatic fallback for missing GPS/timestamp — soft warning, not blocking
+      const { enriched, fallbackMsgText } = await enrichWithFallback(exif);
+      if (!isMountedRef.current) return;
+      setExifResult(enriched);
+      if (fallbackMsgText) setFallbackMsg(fallbackMsgText);
+      await persistDraft(previewUrl, enriched, file);
     } catch (exifErr) {
       if (!isMountedRef.current) return;
-      // Unsupported/invalid image fallback — do not claim GPS/timestamp
       const fallback = {
         latitude: null,
         longitude: null,
@@ -144,25 +232,25 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
         hasGps: false,
         hasTimestamp: false,
       };
-      setExifResult(fallback);
-      await persistDraft(previewUrl, fallback, file);
-      // If exif error was due to corrupt image, surface generic message only if no preview
-      if (!exifErr || /unsupported|invalid|exif/i.test(exifErr.message || '')) {
-        // Keep preview but ensure badges show missing data — no additional error needed
-      }
+      const { enriched, fallbackMsgText } = await enrichWithFallback(fallback);
+      if (!isMountedRef.current) return;
+      setExifResult(enriched);
+      if (fallbackMsgText) setFallbackMsg(fallbackMsgText);
+      else setFallbackMsg('EXIF unavailable — using device location & current time');
+      await persistDraft(previewUrl, enriched, file);
     } finally {
       if (isMountedRef.current) {
         setExifLoading(false);
         setIsLoading(false);
       }
     }
-  }, [persistDraft, revokePreview]);
+  }, [persistDraft, revokePreview, enrichWithFallback]);
 
   const handleCapture = useCallback(async () => {
     setErrorMsg(null);
+    setFallbackMsg(null);
     setIsLoading(true);
 
-    // Native path: use expo-image-picker (supports Android/iOS via Expo Go)
     if (Platform.OS !== 'web') {
       try {
         let ImagePicker;
@@ -184,9 +272,11 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           return;
         }
         const result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          // SDK 57: MediaTypeOptions deprecated in favour of the MediaType string union
+          mediaTypes: 'images',
           allowsEditing: false,
-          quality: 1,
+          // 0.8 keeps captures under the backend 10MB cap and bounds base64 memory
+          quality: 0.8,
           exif: true,
         });
         if (!isMountedRef.current) return;
@@ -200,7 +290,6 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           setIsLoading(false);
           return;
         }
-        // Show preview directly from file uri (no createObjectURL)
         revokePreview();
         if (!isMountedRef.current) return;
         previewUrlRef.current = null;
@@ -208,25 +297,28 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
         setErrorMsg(null);
         setExifLoading(true);
         try {
-          // exifHelper supports { uri } via fetch → ArrayBuffer
           const exif = await extractExifData({ uri: asset.uri });
           if (!isMountedRef.current) return;
-          setExifResult(exif);
-          const assetFile = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' };
-          await persistDraft(asset.uri, exif, assetFile);
+          const { enriched, fallbackMsgText } = await enrichWithFallback(exif);
+          if (!isMountedRef.current) return;
+          setExifResult(enriched);
+          if (fallbackMsgText) setFallbackMsg(fallbackMsgText);
+          // Proper FormData part for Expo native: { uri, name, type }
+          const assetFile = {
+            uri: asset.uri,
+            name: asset.fileName || `photo_${Date.now()}.jpg`,
+            type: asset.mimeType || asset.type || 'image/jpeg',
+          };
+          await persistDraft(asset.uri, enriched, assetFile);
         } catch (exifErr) {
           if (!isMountedRef.current) return;
-          const fallback = {
-            latitude: null,
-            longitude: null,
-            capturedAt: null,
-            altitude: null,
-            hasGps: false,
-            hasTimestamp: false,
-          };
-          setExifResult(fallback);
-          const assetFileFallback = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' };
-          await persistDraft(asset.uri, fallback, assetFileFallback);
+          const fallback = { latitude: null, longitude: null, capturedAt: null, altitude: null, hasGps: false, hasTimestamp: false };
+          const { enriched, fallbackMsgText } = await enrichWithFallback(fallback);
+          if (!isMountedRef.current) return;
+          setExifResult(enriched);
+          if (fallbackMsgText) setFallbackMsg(fallbackMsgText);
+          const assetFileFallback = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || asset.type || 'image/jpeg' };
+          await persistDraft(asset.uri, enriched, assetFileFallback);
         } finally {
           if (isMountedRef.current) {
             setExifLoading(false);
@@ -248,6 +340,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       }
     }
 
+    // Web: camera capture via <input capture>
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
       setErrorMsg('Camera is unavailable on this device. Please try on a device with a camera or use a browser that supports file capture.');
       setIsLoading(false);
@@ -258,18 +351,13 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = 'image/*';
-      // capture="environment" hints mobile browsers to open camera directly, falls back to file picker if unavailable
       input.setAttribute('capture', 'environment');
       input.style.display = 'none';
 
       input.onchange = async (e) => {
-        if (cancelFallbackRef.current) {
-          clearTimeout(cancelFallbackRef.current);
-          cancelFallbackRef.current = null;
-        }
+        if (cancelFallbackRef.current) { clearTimeout(cancelFallbackRef.current); cancelFallbackRef.current = null; }
         const file = e.target.files && e.target.files[0];
         if (!file) {
-          // User cancelled picker — handle gracefully
           if (isMountedRef.current) setIsLoading(false);
           if (input.parentNode) input.parentNode.removeChild(input);
           return;
@@ -279,25 +367,16 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       };
 
       input.oncancel = () => {
-        if (cancelFallbackRef.current) {
-          clearTimeout(cancelFallbackRef.current);
-          cancelFallbackRef.current = null;
-        }
-        // Modern browsers fire cancel on dialog close without selection
+        if (cancelFallbackRef.current) { clearTimeout(cancelFallbackRef.current); cancelFallbackRef.current = null; }
         if (isMountedRef.current) setIsLoading(false);
         if (input.parentNode) input.parentNode.removeChild(input);
       };
 
-      // Fallback: if onchange/oncancel not fired within timeout, handle cancellation
-      // Some browsers don't fire cancel event — use ref to avoid stale isLoading closure
-      if (cancelFallbackRef.current) {
-        clearTimeout(cancelFallbackRef.current);
-      }
+      if (cancelFallbackRef.current) clearTimeout(cancelFallbackRef.current);
       cancelFallbackRef.current = setTimeout(() => {
         cancelFallbackRef.current = null;
         if (!isMountedRef.current) return;
         if (input.parentNode) input.parentNode.removeChild(input);
-        // processFile clears isLoading on success; if still pending, unlock UI
         setIsLoading(false);
       }, 30000);
 
@@ -312,13 +391,126 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
       }
       if (isMountedRef.current) setIsLoading(false);
     }
-  }, [processFile]);
+  }, [processFile, enrichWithFallback, persistDraft, revokePreview]);
+
+  // Gallery picker — supports both native (ImagePicker) and web (file input without capture)
+  const handlePickFromGallery = useCallback(async () => {
+    setErrorMsg(null);
+    setFallbackMsg(null);
+    setIsLoading(true);
+
+    if (Platform.OS !== 'web') {
+      try {
+        let ImagePicker;
+        try {
+          ImagePicker = await import('expo-image-picker');
+        } catch {
+          if (isMountedRef.current) { setErrorMsg('Gallery module unavailable.'); setIsLoading(false); }
+          return;
+        }
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (perm.status !== 'granted') {
+          if (isMountedRef.current) { setErrorMsg('Gallery permission denied. Please allow photo access.'); setIsLoading(false); }
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          // SDK 57: MediaTypeOptions deprecated in favour of the MediaType string union
+          mediaTypes: 'images',
+          allowsEditing: false,
+          // 0.8 keeps uploads under the backend 10MB cap and bounds base64 memory
+          quality: 0.8,
+          exif: true,
+        });
+        if (!isMountedRef.current) return;
+        if (result.canceled) { setIsLoading(false); return; }
+        const asset = result.assets && result.assets[0];
+        if (!asset || !asset.uri) { setErrorMsg('Failed to pick image.'); setIsLoading(false); return; }
+        revokePreview();
+        if (!isMountedRef.current) return;
+        previewUrlRef.current = null;
+        setImageUri(asset.uri);
+        setErrorMsg(null);
+        setExifLoading(true);
+        try {
+          const exif = await extractExifData({ uri: asset.uri });
+          if (!isMountedRef.current) return;
+          const { enriched, fallbackMsgText } = await enrichWithFallback(exif);
+          if (!isMountedRef.current) return;
+          setExifResult(enriched);
+          if (fallbackMsgText) setFallbackMsg(fallbackMsgText);
+          const assetFile = {
+            uri: asset.uri,
+            name: asset.fileName || `photo_${Date.now()}.jpg`,
+            type: asset.mimeType || asset.type || 'image/jpeg',
+          };
+          await persistDraft(asset.uri, enriched, assetFile);
+        } catch {
+          if (!isMountedRef.current) return;
+          const fallback = { latitude: null, longitude: null, capturedAt: null, altitude: null, hasGps: false, hasTimestamp: false };
+          const { enriched, fallbackMsgText } = await enrichWithFallback(fallback);
+          if (!isMountedRef.current) return;
+          setExifResult(enriched);
+          if (fallbackMsgText) setFallbackMsg(fallbackMsgText);
+          const assetFileFallback = { uri: asset.uri, name: asset.fileName || `photo_${Date.now()}.jpg`, type: asset.mimeType || asset.type || 'image/jpeg' };
+          await persistDraft(asset.uri, enriched, assetFileFallback);
+        } finally {
+          if (isMountedRef.current) { setExifLoading(false); setIsLoading(false); }
+        }
+        return;
+      } catch (e) {
+        if (isMountedRef.current) { setErrorMsg('Failed to open gallery.'); setIsLoading(false); }
+        return;
+      }
+    }
+
+    // Web: file input without capture attribute -> OS gallery/file picker
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
+      setErrorMsg('Gallery unavailable on this device.');
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.style.display = 'none';
+      // No capture attribute → gallery/file picker
+
+      input.onchange = async (e) => {
+        if (cancelFallbackRef.current) { clearTimeout(cancelFallbackRef.current); cancelFallbackRef.current = null; }
+        const file = e.target.files && e.target.files[0];
+        if (!file) {
+          if (isMountedRef.current) setIsLoading(false);
+          if (input.parentNode) input.parentNode.removeChild(input);
+          return;
+        }
+        if (input.parentNode) input.parentNode.removeChild(input);
+        await processFile(file);
+      };
+      input.oncancel = () => {
+        if (cancelFallbackRef.current) { clearTimeout(cancelFallbackRef.current); cancelFallbackRef.current = null; }
+        if (isMountedRef.current) setIsLoading(false);
+        if (input.parentNode) input.parentNode.removeChild(input);
+      };
+      if (cancelFallbackRef.current) clearTimeout(cancelFallbackRef.current);
+      cancelFallbackRef.current = setTimeout(() => {
+        cancelFallbackRef.current = null;
+        if (!isMountedRef.current) return;
+        if (input.parentNode) input.parentNode.removeChild(input);
+        setIsLoading(false);
+      }, 30000);
+      document.body.appendChild(input);
+      input.click();
+    } catch (e) {
+      setErrorMsg('Failed to open gallery picker.');
+      if (isMountedRef.current) setIsLoading(false);
+    }
+  }, [processFile, enrichWithFallback, persistDraft, revokePreview]);
 
   const handleRetake = useCallback(() => {
     setExifResult(null);
     setErrorMsg(null);
-    // Revoke previous preview before new capture
-    // Do not revoke here yet — processFile will revoke, but ensure stale badge cleared
+    setFallbackMsg(null);
     handleCapture();
   }, [handleCapture]);
 
@@ -327,21 +519,18 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
     setImageUri(null);
     setExifResult(null);
     setErrorMsg(null);
+    setFallbackMsg(null);
     setIsLoading(false);
     setExifLoading(false);
     if (!preserveDraftOnBack) {
-      try {
-        await clearVolunteerDraft();
-      } catch {}
+      try { await clearVolunteerDraft(); } catch {}
     }
-    if (typeof onBack === 'function') {
-      onBack();
-    }
+    if (typeof onBack === 'function') onBack();
   }, [onBack, revokePreview, preserveDraftOnBack]);
 
   const hasImage = !!imageUri;
 
-  // Derived validation — never claim GPS/timestamp when missing/invalid
+  // Derived validation — never claim GPS/timestamp when missing/invalid, but fallback ensures soft handling
   const hasGps = !!(exifResult && exifResult.hasGps && typeof exifResult.latitude === 'number' && typeof exifResult.longitude === 'number');
   const hasTimestamp = !!(exifResult && exifResult.hasTimestamp && exifResult.capturedAt instanceof Date && !Number.isNaN(exifResult.capturedAt.getTime()));
   const timestampIsFuture = hasTimestamp && exifResult.capturedAt > new Date();
@@ -350,11 +539,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
   const formatCoord = (v) => (typeof v === 'number' ? v.toFixed(5) : '—');
   const formatTimestamp = (d) => {
     if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
-    try {
-      return d.toLocaleString();
-    } catch {
-      return d.toISOString();
-    }
+    try { return d.toLocaleString(); } catch { return d.toISOString(); }
   };
 
   return (
@@ -367,14 +552,9 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
         ]}
       >
         <View style={styles.headerRow}>
-          <Text
-            {...textProps}
-            style={[styles.title, getTextStyle('lg', { isHighContrast }), { color: palette.textPrimary }]}
-            accessibilityRole="header"
-          >
+          <Text {...textProps} style={[styles.title, getTextStyle('lg', { isHighContrast }), { color: palette.textPrimary }]} accessibilityRole="header">
             EXIF Metadata Capture
           </Text>
-          {/* Safe cancel/go back — always 48dp, accessible */}
           <TouchableOpacity
             onPress={handleCancel}
             disabled={isLoading || exifLoading}
@@ -384,48 +564,20 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
             accessibilityLabel={hasImage ? 'Cancel and go back' : 'Go back to reporting'}
             accessibilityHint="Clears captured photo and returns to previous screen"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={[
-              styles.cancelBtn,
-              {
-                borderColor: palette.secondaryBorder,
-                borderWidth,
-                backgroundColor: palette.secondaryBg,
-                opacity: isLoading || exifLoading ? 0.5 : 1,
-                minHeight: 48,
-                minWidth: 48,
-              },
-            ]}
+            style={[styles.cancelBtn, { borderColor: palette.secondaryBorder, borderWidth, backgroundColor: palette.secondaryBg, opacity: isLoading || exifLoading ? 0.5 : 1, minHeight: 48, minWidth: 48 }]}
           >
             <Text {...textProps} style={[styles.cancelText, getTextStyle('sm', { isHighContrast }), { color: palette.secondaryText }]}>
               {hasImage ? 'Cancel' : 'Back'}
             </Text>
           </TouchableOpacity>
         </View>
-        <Text
-          {...textProps}
-          style={[styles.description, getTextStyle('sm', { isHighContrast }), { color: palette.textMuted }]}
-        >
+        <Text {...textProps} style={[styles.description, getTextStyle('sm', { isHighContrast }), { color: palette.textMuted }]}>
           Extracts embedded GPS coordinates, camera orientation, and timestamp from photo EXIF metadata for verification.
         </Text>
 
-        {/* Custom viewfinder — camera-oriented frame with corner brackets (not raw input) */}
         {hasImage ? (
-          <View
-            style={[
-              styles.previewWrapper,
-              { borderColor: palette.cardBorder, borderWidth, backgroundColor: palette.surfaceAlt },
-            ]}
-            accessible
-            accessibilityLabel="Captured barrier photo preview with viewfinder overlay"
-          >
-            <Image
-              source={{ uri: imageUri }}
-              style={styles.previewImage}
-              resizeMode="cover"
-              accessible
-              accessibilityLabel="Captured image"
-            />
-            {/* Viewfinder overlay — does not block image, purely visual/assistive */}
+          <View style={[styles.previewWrapper, { borderColor: palette.cardBorder, borderWidth, backgroundColor: palette.surfaceAlt }]} accessible accessibilityLabel="Captured barrier photo preview with viewfinder overlay">
+            <Image source={{ uri: imageUri }} style={styles.previewImage} resizeMode="cover" accessible accessibilityLabel="Captured image" />
             <View pointerEvents="none" style={styles.viewfinderOverlay} accessible={false}>
               <View style={[styles.corner, styles.cornerTL, { borderColor: palette.focusRing, borderWidth: isHighContrast ? 3 : 2 }]} />
               <View style={[styles.corner, styles.cornerTR, { borderColor: palette.focusRing, borderWidth: isHighContrast ? 3 : 2 }]} />
@@ -436,16 +588,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
             </View>
           </View>
         ) : (
-          <View
-            style={[
-              styles.placeholder,
-              { borderColor: palette.border, borderWidth: isHighContrast ? borderWidth : 1, backgroundColor: palette.surfaceAlt },
-              !isHighContrast && { borderStyle: 'dashed' },
-            ]}
-            accessible
-            accessibilityLabel="Custom camera viewfinder — no image captured yet"
-          >
-            {/* Viewfinder frame even when empty — guides user where photo will appear */}
+          <View style={[styles.placeholder, { borderColor: palette.border, borderWidth: isHighContrast ? borderWidth : 1, backgroundColor: palette.surfaceAlt }, !isHighContrast && { borderStyle: 'dashed' }]} accessible accessibilityLabel="Custom camera viewfinder — no image captured yet">
             <View style={[styles.viewfinderFrame, { borderColor: palette.borderStrong, borderWidth: isHighContrast ? 2 : 1 }]}>
               <View style={[styles.corner, styles.cornerTL, { borderColor: palette.focusRing, borderWidth: isHighContrast ? 3 : 2 }]} />
               <View style={[styles.corner, styles.cornerTR, { borderColor: palette.focusRing, borderWidth: isHighContrast ? 3 : 2 }]} />
@@ -455,7 +598,7 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
               <View style={[styles.crosshairV, { backgroundColor: palette.focusRing, opacity: isHighContrast ? 1 : 0.35 }]} />
             </View>
             <Text {...textProps} style={[styles.placeholderText, getTextStyle('sm', { isHighContrast }), { color: palette.textMuted }]}>
-              No photo captured yet. Tap Capture to open the camera.
+              No photo captured yet. Tap Capture or Pick from Gallery.
             </Text>
             <Text {...textProps} style={[styles.viewfinderHint, getTextStyle('xs', { isHighContrast }), { color: palette.textMuted }]}>
               Center barrier within viewfinder for best EXIF GPS capture
@@ -463,164 +606,49 @@ export const EXIFCaptureScreen = ({ onBack, onCaptured, preserveDraftOnBack = fa
           </View>
         )}
 
-        {/* EXIF loading */}
         {exifLoading && hasImage && (
           <View style={styles.loadingRow} accessible accessibilityLabel="Extracting EXIF metadata">
             <ActivityIndicator color={palette.primary} />
-            <Text {...textProps} style={[styles.loadingText, getTextStyle('sm', { isHighContrast }), { color: palette.textSecondary }]}>
-              Extracting GPS & timestamp...
-            </Text>
+            <Text {...textProps} style={[styles.loadingText, getTextStyle('sm', { isHighContrast }), { color: palette.textSecondary }]}>Extracting GPS & timestamp...</Text>
           </View>
         )}
 
-        {/* GPS Badge — auto-filled from EXIF */}
-        {hasImage && !exifLoading && exifResult && (
-          <View
-            style={[
-              styles.badge,
-              hasGps
-                ? { backgroundColor: isHighContrast ? palette.surface : '#ECFDF5', borderColor: isHighContrast ? palette.borderStrong : '#A7F3D0', borderWidth }
-                : { backgroundColor: palette.errorBg, borderColor: palette.error, borderWidth },
-            ]}
-            accessible
-            accessibilityLabel={hasGps ? `GPS detected ${formatCoord(exifResult.latitude)}, ${formatCoord(exifResult.longitude)}` : 'GPS unavailable'}
-            accessibilityRole="text"
-          >
-            <Text
-              {...textProps}
-              style={[
-                styles.badgeTitle,
-                getTextStyle('sm', { isHighContrast }),
-                { color: hasGps ? (isHighContrast ? palette.textPrimary : '#065F46') : palette.error },
-              ]}
-            >
-              {hasGps ? '✓ GPS detected' : '⚠ GPS unavailable'}
-            </Text>
-            <Text
-              {...textProps}
-              style={[
-                styles.badgeDetail,
-                getTextStyle('sm', { isHighContrast }),
-                { color: hasGps ? (isHighContrast ? palette.textPrimary : '#047857') : palette.error },
-              ]}
-            >
-              {hasGps
-                ? `${formatCoord(exifResult.latitude)}, ${formatCoord(exifResult.longitude)}${typeof exifResult.altitude === 'number' ? ` • Alt ${Math.round(exifResult.altitude)}m` : ''}`
-                : 'Photo has no location data — enable Location for Camera and retake.'}
-            </Text>
-          </View>
-        )}
+        {/* EXIF status badges hidden per UI cleanup — GPS/timestamp extraction still runs silently in background via extractExifData/enrichWithFallback */}
 
-        {/* Timestamp validator */}
-        {hasImage && !exifLoading && exifResult && (
-          <View
-            style={[
-              styles.badge,
-              hasTimestamp && timestampIsValid
-                ? { backgroundColor: isHighContrast ? palette.surface : '#ECFDF5', borderColor: isHighContrast ? palette.borderStrong : '#A7F3D0', borderWidth }
-                : hasTimestamp && timestampIsFuture
-                ? { backgroundColor: palette.errorBg, borderColor: palette.error, borderWidth }
-                : { backgroundColor: palette.errorBg, borderColor: palette.error, borderWidth },
-            ]}
-            accessible
-            accessibilityLabel={
-              hasTimestamp && timestampIsValid
-                ? `Timestamp valid ${formatTimestamp(exifResult.capturedAt)}`
-                : hasTimestamp && timestampIsFuture
-                ? 'Timestamp invalid future date'
-                : 'Timestamp unavailable'
-            }
-            accessibilityRole="text"
-          >
-            <Text
-              {...textProps}
-              style={[
-                styles.badgeTitle,
-                getTextStyle('sm', { isHighContrast }),
-                {
-                  color:
-                    hasTimestamp && timestampIsValid
-                      ? isHighContrast
-                        ? palette.textPrimary
-                        : '#065F46'
-                      : palette.error,
-                },
-              ]}
-            >
-              {hasTimestamp && timestampIsValid
-                ? '✓ Timestamp valid'
-                : hasTimestamp && timestampIsFuture
-                ? '⚠ Timestamp invalid — future date'
-                : '⚠ Timestamp unavailable'}
-            </Text>
-            <Text
-              {...textProps}
-              style={[
-                styles.badgeDetail,
-                getTextStyle('sm', { isHighContrast }),
-                {
-                  color:
-                    hasTimestamp && timestampIsValid
-                      ? isHighContrast
-                        ? palette.textPrimary
-                        : '#047857'
-                      : palette.error,
-                },
-              ]}
-            >
-              {hasTimestamp ? formatTimestamp(exifResult.capturedAt) : 'EXIF DateTimeOriginal missing — check camera date/time settings.'}
-            </Text>
-          </View>
-        )}
-
-        {/* Loading indicator — camera opening */}
         {isLoading && !exifLoading && (
           <View style={styles.loadingRow} accessible accessibilityLabel="Opening camera">
             <ActivityIndicator color={palette.primary} />
-            <Text {...textProps} style={[styles.loadingText, getTextStyle('sm', { isHighContrast }), { color: palette.textSecondary }]}>
-              Opening camera...
-            </Text>
+            <Text {...textProps} style={[styles.loadingText, getTextStyle('sm', { isHighContrast }), { color: palette.textSecondary }]}>Opening camera/gallery...</Text>
           </View>
         )}
 
-        {/* Error / permission denial / unavailable device */}
         {errorMsg && (
-          <View
-            style={[styles.errorBox, { backgroundColor: palette.errorBg, borderColor: palette.error, borderWidth }]}
-            accessible
-            accessibilityLiveRegion="polite"
-          >
-            <Text {...textProps} style={[styles.errorText, getTextStyle('sm', { isHighContrast }), { color: palette.error }]}>
-              {errorMsg}
-            </Text>
+          <View style={[styles.errorBox, { backgroundColor: palette.errorBg, borderColor: palette.error, borderWidth }]} accessible accessibilityLiveRegion="polite">
+            <Text {...textProps} style={[styles.errorText, getTextStyle('sm', { isHighContrast }), { color: palette.error }]}>{errorMsg}</Text>
           </View>
         )}
 
-        {/* Capture / Retake actions — prominent 48dp primary */}
         <View style={styles.actions}>
           {!hasImage ? (
-            <Button
-              title={isLoading ? 'Opening Camera...' : 'Capture Geotagged Image'}
-              onPress={handleCapture}
-              disabled={isLoading || exifLoading}
-              accessibilityLabel="Capture geotagged image"
-            />
+            <View style={styles.dualActions}>
+              <View style={{ flex: 1 }}>
+                <Button title={isLoading ? 'Opening Camera...' : 'Capture Geotagged Image'} onPress={handleCapture} disabled={isLoading || exifLoading} accessibilityLabel="Capture geotagged image" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Button title="Pick from Gallery" onPress={handlePickFromGallery} disabled={isLoading || exifLoading} variant="secondary" accessibilityLabel="Pick image from gallery" accessibilityHint="Select existing image from device gallery, EXIF will be extracted if present" />
+              </View>
+            </View>
           ) : (
             <>
-              <Button
-                title={isLoading ? 'Opening Camera...' : 'Retake Photo'}
-                onPress={handleRetake}
-                disabled={isLoading || exifLoading}
-                accessibilityLabel="Retake photo"
-              />
-              <Button
-                title="Capture New"
-                onPress={handleCapture}
-                disabled={isLoading || exifLoading}
-                variant="secondary"
-                accessibilityLabel="Capture new image"
-                style={styles.secondaryAction}
-              />
+              <Button title={isLoading ? 'Opening...' : 'Retake Photo'} onPress={handleRetake} disabled={isLoading || exifLoading} accessibilityLabel="Retake photo" />
+              <View style={styles.dualActions}>
+                <View style={{ flex: 1 }}>
+                  <Button title="Capture New" onPress={handleCapture} disabled={isLoading || exifLoading} variant="secondary" accessibilityLabel="Capture new image" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button title="Pick from Gallery" onPress={handlePickFromGallery} disabled={isLoading || exifLoading} variant="secondary" accessibilityLabel="Pick image from gallery" />
+                </View>
+              </View>
             </>
           )}
         </View>
@@ -634,153 +662,35 @@ const styles = StyleSheet.create({
   card: { borderColor: '#BBF7D0', borderWidth: 1 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 12 },
   title: { fontSize: 20, fontWeight: '700', color: '#1E293B', flex: 1 },
-  cancelBtn: {
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  cancelBtn: { borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' },
   cancelText: { fontWeight: '700', textAlign: 'center' },
   description: { fontSize: 14, color: '#475569', lineHeight: 20, marginBottom: 14 },
-  previewWrapper: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 12,
-    minHeight: 220,
-  },
-  previewImage: {
-    width: '100%',
-    height: 240,
-  },
-  placeholder: {
-    borderRadius: 12,
-    minHeight: 180,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    marginBottom: 12,
-  },
-  viewfinderFrame: {
-    width: '78%',
-    height: 110,
-    borderRadius: 10,
-    marginBottom: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  viewfinderOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  corner: {
-    position: 'absolute',
-    width: 22,
-    height: 22,
-    backgroundColor: 'transparent',
-  },
-  cornerTL: {
-    top: 10,
-    left: 10,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderRightWidth: 0,
-    borderBottomWidth: 0,
-    borderTopLeftRadius: 6,
-  },
-  cornerTR: {
-    top: 10,
-    right: 10,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderLeftWidth: 0,
-    borderBottomWidth: 0,
-    borderTopRightRadius: 6,
-  },
-  cornerBL: {
-    bottom: 10,
-    left: 10,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderTopWidth: 0,
-    borderRightWidth: 0,
-    borderBottomLeftRadius: 6,
-  },
-  cornerBR: {
-    bottom: 10,
-    right: 10,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderTopWidth: 0,
-    borderLeftWidth: 0,
-    borderBottomRightRadius: 6,
-  },
-  crosshairH: {
-    position: 'absolute',
-    width: 28,
-    height: 2,
-    borderRadius: 1,
-    top: '50%',
-    marginTop: -1,
-  },
-  crosshairV: {
-    position: 'absolute',
-    height: 28,
-    width: 2,
-    borderRadius: 1,
-    left: '50%',
-    marginLeft: -1,
-  },
-  placeholderText: {
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  viewfinderHint: {
-    textAlign: 'center',
-    lineHeight: 16,
-    marginTop: 2,
-    fontStyle: 'italic',
-  },
-  badge: {
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 10,
-  },
-  badgeTitle: {
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  badgeDetail: {
-    lineHeight: 18,
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  loadingText: {
-    marginLeft: 8,
-  },
-  errorBox: {
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 12,
-  },
-  errorText: {
-    fontWeight: '600',
-  },
-  actions: {
-    marginTop: 4,
-  },
-  secondaryAction: {
-    marginTop: 8,
-  },
+  previewWrapper: { borderRadius: 12, overflow: 'hidden', marginBottom: 12, minHeight: 220 },
+  previewImage: { width: '100%', height: 240 },
+  placeholder: { borderRadius: 12, minHeight: 180, alignItems: 'center', justifyContent: 'center', padding: 16, marginBottom: 12 },
+  viewfinderFrame: { width: '78%', height: 110, borderRadius: 10, marginBottom: 10, alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' },
+  viewfinderOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  corner: { position: 'absolute', width: 22, height: 22, backgroundColor: 'transparent' },
+  cornerTL: { top: 10, left: 10, borderTopWidth: 3, borderLeftWidth: 3, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 6 },
+  cornerTR: { top: 10, right: 10, borderTopWidth: 3, borderRightWidth: 3, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 6 },
+  cornerBL: { bottom: 10, left: 10, borderBottomWidth: 3, borderLeftWidth: 3, borderTopWidth: 0, borderRightWidth: 0, borderBottomLeftRadius: 6 },
+  cornerBR: { bottom: 10, right: 10, borderBottomWidth: 3, borderRightWidth: 3, borderTopWidth: 0, borderLeftWidth: 0, borderBottomRightRadius: 6 },
+  crosshairH: { position: 'absolute', width: 28, height: 2, borderRadius: 1, top: '50%', marginTop: -1 },
+  crosshairV: { position: 'absolute', height: 28, width: 2, borderRadius: 1, left: '50%', marginLeft: -1 },
+  placeholderText: { textAlign: 'center', lineHeight: 20 },
+  viewfinderHint: { textAlign: 'center', lineHeight: 16, marginTop: 2, fontStyle: 'italic' },
+  badge: { borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 10 },
+  badgeTitle: { fontWeight: '700', marginBottom: 2 },
+  badgeDetail: { lineHeight: 18 },
+  fallbackSoftBox: { borderRadius: 10, padding: 10, marginBottom: 12, backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FCD34D' },
+  fallbackSoftText: { fontWeight: '600', textAlign: 'center' },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 },
+  loadingText: { marginLeft: 8 },
+  errorBox: { borderRadius: 10, padding: 10, marginBottom: 12 },
+  errorText: { fontWeight: '600' },
+  actions: { marginTop: 4 },
+  dualActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  secondaryAction: { marginTop: 8 },
 });
 
 export default EXIFCaptureScreen;
