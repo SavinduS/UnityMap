@@ -179,7 +179,7 @@ export const UserManagementSection = ({ onBack, isStandalone = false }) => {
             accessibilityRole="button"
             accessibilityLabel="Back to Admin Hub"
           >
-            <Feather name="arrow-left" size={20} color="#0B3D2E" />
+            <Feather name="arrow-left" size={20} color="#FFFFFF" />
             <Text style={styles.backButtonText}>Dashboard</Text>
           </TouchableOpacity>
           <Text style={styles.standaloneTitle}>User Management</Text>
@@ -437,7 +437,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginHorizontal: -16,
+    marginTop: -16,
     marginBottom: 8,
+    backgroundColor: '#0B3D2E',
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
   },
   backButton: {
     flexDirection: 'row',
@@ -448,13 +454,13 @@ const styles = StyleSheet.create({
   backButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#0B3D2E',
+    color: '#FFFFFF',
     marginLeft: 4,
   },
   standaloneTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#0F172A',
+    color: '#FFFFFF',
   },
   card: {
     backgroundColor: '#FFFFFF',

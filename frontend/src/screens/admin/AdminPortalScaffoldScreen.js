@@ -692,7 +692,7 @@ const styles = StyleSheet.create({
   },
   standaloneView: {
     flex: 1,
-    backgroundColor: '#F0F4F0',
+    backgroundColor: '#0B3D2E',
   },
   container: {
     flex: 1,
