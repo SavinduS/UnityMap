@@ -88,7 +88,8 @@ export const AdminDrawer = ({
         />
 
         {/* Drawer Content Panel */}
-        <SafeAreaView style={styles.drawerContainer}>
+        <SafeAreaView style={styles.drawerSafeArea}>
+          <View style={styles.drawerContainer}>
           <View style={styles.drawerInner}>
             {/* Header / Brand */}
             <View style={styles.brandHeader}>
@@ -208,6 +209,7 @@ export const AdminDrawer = ({
               </Text>
             </View>
           </View>
+          </View>
         </SafeAreaView>
       </View>
     </Modal>
@@ -227,10 +229,17 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
-  drawerContainer: {
+  // The safe-area wrapper carries the emerald brand colour so the iOS notch /
+  // status-bar strip above the drawer reads as part of the green brand header.
+  // The panel below it stays white, since the menu rows sit on white.
+  drawerSafeArea: {
     width: '84%',
     maxWidth: 340,
     height: '100%',
+    backgroundColor: '#0B3D2E',
+  },
+  drawerContainer: {
+    flex: 1,
     backgroundColor: '#FFFFFF',
     shadowColor: '#000',
     shadowOffset: { width: 4, height: 0 },
